@@ -6,8 +6,6 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -30,22 +28,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
+@androidx.compose.runtime.Composable
 fun AppNavigation() {
     val navController = rememberNavController()
     
     NavHost(navController = navController, startDestination = Screen.Search.route) {
-        composable(Screen.Search.route) {
-            // هنا بنستدعي صفحة البحث لاحقاً
-            Text("هذي صفحة البحث عن الرحلات")
-        }
-        composable(Screen.Passengers.route) {
-            // هنا بنستدعي صفحة المسافرين لاحقاً
-            Text("هذي صفحة المسافرين")
-        }
-        composable(Screen.Flights.route) {
-            // هنا بنستدعي صفحة الرحلات لاحقاً
-            Text("هذي صفحة الرحلات والنتائج")
-        }
+        composable(Screen.Search.route) { SearchScreen(navController) }
+        composable(Screen.Passengers.route) { PassengersScreen(navController) }
+        composable(Screen.Flights.route) { FlightsScreen(navController) }
     }
 }
