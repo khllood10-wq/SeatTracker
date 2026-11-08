@@ -8,13 +8,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 enum class SearchState {
     IDLE,
     SEARCHING,
     FOUND,
     ERROR,
-    TOKEN_EXPIRED // حالة جديدة لانتهاء التوكن
+    TOKEN_EXPIRED
 }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
@@ -24,13 +27,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    fun saveTokens(auth: String, xDToken: String) {
+    // ⚠️ الدالة المحدثة لاستقبال 3 قيم (حل مشكلة Too many arguments)
+    fun saveTokens(auth: String, xDToken: String, sessionId: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("auth_token", auth)
             .putString("xd_token", xDToken)
+            .putString("session_id", sessionId)
             .apply()
-        addLog("✅ تم التقاط التوكن وتخزينه بنجاح!")
+        addLog("✅ تم التقاط التوكن ورقم الجلسة بنجاح!")
     }
 
     private fun getSavedAuthToken(): String? {
@@ -42,6 +47,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         return prefs.getString("xd_token", null)
     }
+    
+    private fun getSavedSessionId(): String? {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("session_id", null)
+    }
 
     fun startSearchingFlight(flightNumber: String) {
         if (_uiState.value == SearchState.SEARCHING) return
@@ -51,7 +61,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         if (authToken == null) {
             addLog("❌ لا يوجد توكن! جاري التحديث...")
-            _uiState.value = SearchState.TOKEN_EXPIRED // إذا ما فيه توكن أصلاً، نطلب تحديثه
+            _uiState.value = SearchState.TOKEN_EXPIRED
             return
         }
 
@@ -63,12 +73,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             var attempts = 1
             val maxAttempts = 15 
             
-            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-            val todayDate = sdf.format(java.util.Date())
-            val departureDateString = "${todayDate}T00:00:00.000"
+            // 📅 تعديل التاريخ: جلب تاريخ اليوم وإضافة يومين
+            val calendar = Calendar.getInstance()
+            calendar.add(Calendar.DAY_OF_YEAR, 2) // إضافة يومين
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val futureDate = sdf.format(calendar.time)
+            val departureDateString = "${futureDate}T00:00:00.000"
+            
+            addLog("تاريخ البحث المحدد: $futureDate")
 
             while (attempts <= maxAttempts && _uiState.value == SearchState.SEARCHING) {
-                addLog("المحاولة $attempts: جاري الاتصال بسيرفر الخطوط السعودية...")
+                addLog("المحاولة $attempts: جاري الاتصال...")
                 
                 try {
                     val request = SaudiaSearchRequest(
@@ -94,25 +109,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                     if (response.isSuccessful) {
                         addLog("✅ استجابة ناجحة! رمز الحالة: ${response.code()}")
-                        val responseBody = response.body()?.string() ?: ""
-                        
-                        val preview = if (responseBody.length > 100) responseBody.take(100) else responseBody
-                        addLog("📄 مقتطف: $preview...")
-                        
-                        // محاكاة العثور على مقعد
-                        if (attempts == 3) {
-                            addLog("🎉 توفر مقعد! جاري الانتقال...")
-                            _uiState.value = SearchState.FOUND
-                            return@launch
-                        } else {
-                            addLog("الرحلة ممتلئة، انتظار 5 ثوانٍ...")
-                        }
-
+                        _uiState.value = SearchState.FOUND
+                        return@launch
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
-                        if (response.code() == 401) {
-                            addLog("⚠️ انتهت صلاحية التوكن! جاري تحديثه تلقائياً...")
-                            _uiState.value = SearchState.TOKEN_EXPIRED // إطلاق إشارة التجديد
+                        if (response.code() == 401 || response.code() == 403) {
+                            addLog("⚠️ انتهت الصلاحية أو رُفض الطلب! جاري تحديث التوكن...")
+                            _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         }
                     }
