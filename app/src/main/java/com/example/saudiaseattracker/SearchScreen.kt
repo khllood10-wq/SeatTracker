@@ -30,12 +30,24 @@ fun SearchScreen(
     var flightNumber by remember { mutableStateOf("") }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val searchLogs by viewModel.searchLogs.collectAsStateWithLifecycle()
-    val foundDetails by viewModel.foundFlightDetails.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("البحث عن رحلة", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(16.dp))
+
+        // عرض إعدادات البحث الحالية
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("إعدادات الرحلة الحالية:", fontWeight = FontWeight.Bold)
+                Text("من: ${viewModel.searchOrigin}  ✈️  إلى: ${viewModel.searchDestination}")
+                Text("التاريخ: ${viewModel.searchDate}")
+                Text("النوع: ذهاب فقط")
+            }
+        }
 
         OutlinedTextField(
             value = flightNumber,
@@ -47,29 +59,13 @@ fun SearchScreen(
         
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (uiState == SearchState.FOUND) {
-            // عرض تفاصيل الرحلة التي تم العثور عليها
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("🎉 تم العثور على الرحلة!", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(foundDetails ?: "", style = MaterialTheme.typography.bodyLarge)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("يمكنك الآن المتابعة لإدخال بيانات المسافرين والدفع.", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
         if (uiState != SearchState.SEARCHING) {
             Button(
                 onClick = { viewModel.startSearchingFlight(flightNumber) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = flightNumber.isNotBlank()
             ) {
-                Text(if (uiState == SearchState.FOUND) "بحث جديد" else "بدء البحث التلقائي")
+                Text("بدء البحث التلقائي")
             }
         } else {
             Button(
