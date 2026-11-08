@@ -33,11 +33,9 @@ fun SearchScreen(
 
     LaunchedEffect(uiState) {
         if (uiState == SearchState.FOUND) {
-            viewModel.stopSearch()
             navController.navigate(Screen.Passengers.route)
-        } else if (uiState == SearchState.TOKEN_EXPIRED) {
-            // ✅ ينتقل للـ Login (السلوك القديم الذي كان يعمل)
             viewModel.stopSearch()
+        } else if (uiState == SearchState.TOKEN_EXPIRED) {
             navController.navigate(Screen.Login.route)
         }
     }
