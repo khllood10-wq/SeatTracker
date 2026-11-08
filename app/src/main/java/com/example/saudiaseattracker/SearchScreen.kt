@@ -14,7 +14,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
@@ -28,16 +30,8 @@ fun SearchScreen(
     var flightNumber by remember { mutableStateOf("") }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val searchLogs by viewModel.searchLogs.collectAsStateWithLifecycle()
+    val foundDetails by viewModel.foundFlightDetails.collectAsStateWithLifecycle()
     val context = LocalContext.current
-
-    LaunchedEffect(uiState) {
-        if (uiState == SearchState.FOUND) {
-            navController.navigate(Screen.Passengers.route)
-            viewModel.stopSearch() 
-        } else if (uiState == SearchState.TOKEN_EXPIRED) {
-            navController.navigate(Screen.Login.route) 
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("البحث عن رحلة", style = MaterialTheme.typography.headlineMedium)
@@ -46,12 +40,28 @@ fun SearchScreen(
         OutlinedTextField(
             value = flightNumber,
             onValueChange = { flightNumber = it },
-            label = { Text("رقم الرحلة (مثال: SV123)") },
+            label = { Text("رقم الرحلة (مثال: SV8844)") },
             modifier = Modifier.fillMaxWidth(),
             enabled = uiState != SearchState.SEARCHING
         )
         
         Spacer(modifier = Modifier.height(16.dp))
+
+        if (uiState == SearchState.FOUND) {
+            // عرض تفاصيل الرحلة التي تم العثور عليها
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("🎉 تم العثور على الرحلة!", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(foundDetails ?: "", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("يمكنك الآن المتابعة لإدخال بيانات المسافرين والدفع.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
 
         if (uiState != SearchState.SEARCHING) {
             Button(
@@ -59,7 +69,7 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = flightNumber.isNotBlank()
             ) {
-                Text("بدء البحث التلقائي")
+                Text(if (uiState == SearchState.FOUND) "بحث جديد" else "بدء البحث التلقائي")
             }
         } else {
             Button(
@@ -79,15 +89,12 @@ fun SearchScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("سجل الاتصال:", style = MaterialTheme.typography.titleMedium)
-            
-            Button(
-                onClick = {
-                    val fullLog = searchLogs.joinToString(separator = "\n")
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Logs", fullLog))
-                    Toast.makeText(context, "تم نسخ السجل بالكامل!", Toast.LENGTH_SHORT).show()
-                }
-            ) {
+            Button(onClick = {
+                val fullLog = searchLogs.joinToString(separator = "\n")
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Logs", fullLog))
+                Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
+            }) {
                 Icon(Icons.Default.ContentCopy, contentDescription = "نسخ")
                 Text(" نسخ")
             }
@@ -102,7 +109,11 @@ fun SearchScreen(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
-                        Text(text = log, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = log, 
+                            modifier = Modifier.padding(12.dp), 
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
