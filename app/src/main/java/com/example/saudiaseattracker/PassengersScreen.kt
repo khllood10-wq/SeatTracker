@@ -29,9 +29,10 @@ fun PassengersScreen(
     navController: NavController,
     viewModel: FlightViewModel
 ) {
-    val cartId by viewModel.cartId.collectAsStateWithLifecycle()
-    val rawCartResponse by viewModel.rawCartResponse.collectAsStateWithLifecycle()
-    val foundFlight by viewModel.foundFlight.collectAsStateWithLifecycle()
+    // ✅ الحل: rawCartResponse قد يكون null → نستخدم orEmpty()
+    val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
+    val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
+    val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
     // إنشاء السلة عند الدخول
@@ -71,14 +72,18 @@ fun PassengersScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (cartId == null) {
+            if (cartId.isNullOrEmpty()) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp),
                     strokeWidth = 2.dp
                 )
                 Text("جاري إنشاء السلة...")
             } else {
-                Text("✅ cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                Text(
+                    "✅ cartId: $cartId",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp
+                )
             }
         }
 
@@ -125,7 +130,7 @@ fun PassengersScreen(
         Button(
             onClick = { navController.navigate(Screen.Payment.route) },
             modifier = Modifier.fillMaxWidth(),
-            enabled = cartId != null
+            enabled = !cartId.isNullOrEmpty()
         ) {
             Text("الانتقال للدفع")
         }
