@@ -7,10 +7,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.JsonParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
 
@@ -21,7 +23,7 @@ data class FoundFlightDetails(
     val destination: String,
     val price: Double,
     val fareFamily: String,
-    val airBoundId: String // 🔥 مهم جداً لإنشاء السلة
+    val airBoundId: String
 )
 
 enum class SearchState {
@@ -42,7 +44,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
-    // حفظ رقم السلة
     private val _cartId = MutableStateFlow<String?>(null)
     val cartId: StateFlow<String?> = _cartId
 
@@ -62,6 +63,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
+    // 🔥 دالة لحفظ الكوكيز التي يرسلها السيرفر
+    private fun saveCookiesFromResponse(response: Response<*>) {
+        val setCookieHeaders = response.headers().values("Set-Cookie")
+        if (setCookieHeaders.isNotEmpty()) {
+            val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+            val currentCookies = prefs.getString("dynamic_cookies", "") ?: ""
+            
+            // استخراج اسم وقيمة الكوكي فقط (تجاهل Path و Domain و Expires)
+            val newCookies = setCookieHeaders.joinToString("; ") { it.split(";").first() }
+            
+            // دمج الجديد مع القديم لتجنب التكرار (يمكن تحسينه لاحقاً)
+            val updatedCookies = if (currentCookies.isEmpty()) newCookies else "$currentCookies; $newCookies"
+            
+            prefs.edit().putString("dynamic_cookies", updatedCookies).apply()
+            addLog("🍪 تم التقاط كوكيز جديدة من السيرفر.")
+        }
+    }
+
+    private fun getSavedDynamicCookies(): String? {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("dynamic_cookies", null)
+    }
+
     private fun buildHeaders(): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
@@ -71,11 +95,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         
-        return mapOf(
+        val headers = mutableMapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
-            "x-api-version" to "3", // تم تغييره حسب ملف الالتقاط الأخير
+            "x-api-version" to "3", 
             "platform" to "Web",
             "version" to "27.0",
             "Accept" to "application/json",
@@ -91,6 +115,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
+
+        // 🔥 إضافة الكوكيز المحفوظة للطلب
+        val dynamicCookies = getSavedDynamicCookies()
+        if (!dynamicCookies.isNullOrEmpty()) {
+            headers["Cookie"] = dynamicCookies
+        }
+
+        return headers
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -98,7 +130,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         val authToken = getSavedAuthToken()
         if (authToken == null) {
-            addLog("❌ لا يوجد توكن! جاري التحديث...")
+            addLog("❌ لا يوجد توكن!")
             _uiState.value = SearchState.TOKEN_EXPIRED
             return
         }
@@ -135,6 +167,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         headers = buildHeaders(),
                         request = request
                     )
+                    
+                    // التقاط الكوكيز من الرد
+                    saveCookiesFromResponse(response)
 
                     if (response.isSuccessful) {
                         val responseData = response.body()
@@ -144,7 +179,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         if (matchingGroups.isNullOrEmpty()) {
-                            addLog("⚠️ لم يتم العثور على الرحلة $flightNumber. جاري المحاولة...")
+                            addLog("⚠️ لم يتم العثور على الرحلة $flightNumber.")
                         } else {
                             val targetGroup = matchingGroups.first()
                             val availableFares = targetGroup.airBounds?.filter { it.status?.value != "soldOut" } ?: emptyList()
@@ -161,7 +196,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                                     destination = targetGroup.boundDetails?.destination ?: searchDestination,
                                     price = finalPrice,
                                     fareFamily = cheapestFare?.fareFamilyCode ?: "غير معروف",
-                                    airBoundId = cheapestFare?.airBoundId ?: "" // 🔥 حفظ الـ airBoundId
+                                    airBoundId = cheapestFare?.airBoundId ?: ""
                                 )
                                 
                                 addLog("🎉 مبروك! تم العثور على مقعد متاح.")
@@ -188,11 +223,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // 🔥 دالة جديدة: إنشاء السلة والانتقال للمسافرين
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
         
-        addLog("جاري إنشاء السلة وحجز الرحلة مؤقتاً...")
+        addLog("جاري إنشاء السلة...")
         
         viewModelScope.launch {
             try {
@@ -202,17 +236,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     request = request
                 )
                 
+                // التقاط الكوكيز من رد إنشاء السلة
+                saveCookiesFromResponse(response)
+
                 if (response.isSuccessful) {
-                    // بما أن الرد غير مقروء في الملف، سنفترض أننا سنحتاج لاستخراج الـ ID
-                    // أو قد يكون موجوداً في الترويسات. للحل السريع، سنستخدم الـ ID اللي طلع في الالتقاط
-                    // كخطوة أولى، ثم نعدلها لاحقاً إذا لزم الأمر.
+                    val responseBody = response.body()?.string() ?: ""
+                    addLog("📄 رد إنشاء السلة: $responseBody")
                     
-                    // ⚠️ ملاحظة: هنا نحتاج لقراءة الـ ResponseBody لاستخراج cartId
-                    // بما أننا لا نعرف شكل الـ JSON، سنستخدم رقم السلة اللي طلع في الالتقاط مؤقتاً
-                    val fakeCartId = "1P6DHK8GUVPBX6LV" // سنستبدله بالقراءة الفعلية لاحقاً
-                    
-                    _cartId.value = fakeCartId
-                    addLog("✅ تم إنشاء السلة بنجاح! رقم السلة: $fakeCartId")
+                    // محاولة استخراج cartId من الرد (غالباً يكون في حقل اسمه cartId)
+                    try {
+                        val jsonObject = JsonParser.parseString(responseBody).asJsonObject
+                        val extractedCartId = jsonObject.get("cartId")?.asString 
+                            ?: jsonObject.get("id")?.asString 
+                            ?: ""
+                        
+                        if (extractedCartId.isNotEmpty()) {
+                            _cartId.value = extractedCartId
+                            addLog("✅ تم إنشاء السلة بنجاح! رقم السلة: $extractedCartId")
+                        } else {
+                            addLog("⚠️ لم نتمكن من قراءة رقم السلة من الرد.")
+                        }
+                    } catch (e: Exception) {
+                         addLog("⚠️ فشل تحليل الرد: ${e.message}")
+                    }
                     
                 } else {
                     addLog("❌ فشل إنشاء السلة. رمز الخطأ: ${response.code()}")
