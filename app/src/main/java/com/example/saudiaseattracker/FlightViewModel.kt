@@ -36,10 +36,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("✅ تم حفظ التوكن و User-Agent بنجاح!")
     }
 
+    // 🔥 دوال جديدة لحفظ واسترجاع كوكي Imperva (تذكرة المرور)
+    fun saveImpervaCookie(cookie: String) {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("imperva_cookie", cookie).apply()
+        addLog("🛡️ تم حفظ تذكرة مرور Imperva بنجاح!")
+    }
+
+    private fun getImpervaCookie(): String? {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("imperva_cookie", null)
+    }
+
     private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
     private fun getSavedXDToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
     private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
+
+    // 🔥 دوال مساعدة عشان شاشة البحث تقدر توصل للتوكنات
+    fun getSavedAuthTokenForJs() = getSavedAuthToken()
+    fun getSavedXDTokenForJs() = getSavedXDToken()
+    fun getSavedSessionIdForJs() = getSavedSessionId()
+    fun addLogToScreen(msg: String) = addLog(msg)
+    fun onFlightFound() { _uiState.value = SearchState.FOUND }
 
     private fun buildHeaders(authToken: String, xDToken: String, sessionId: String, userAgent: String): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
@@ -49,7 +68,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
 
-        return mapOf(
+        val headers = mutableMapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
@@ -69,6 +88,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to ddTraceId
         )
+
+        // 🔥 إضافة كوكي Imperva إذا كان موجوداً في الذاكرة
+        val impervaCookie = getImpervaCookie()
+        if (!impervaCookie.isNullOrEmpty()) {
+            headers["Cookie"] = impervaCookie
+            // addLog("🍪 تم إضافة كوكي Imperva للطلب.")
+        }
+
+        return headers
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -77,6 +105,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val authToken = getSavedAuthToken()
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
+        val userAgent = getSavedUserAgent() ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         if (authToken == null) {
             addLog("❌ لا يوجد توكن! جاري التحديث...")
@@ -99,7 +128,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val departureDateString = "${futureDate}T00:00:00.000"
 
             while (attempts <= maxAttempts && _uiState.value == SearchState.SEARCHING) {
-                addLog("المحاولة $attempts: جاري الاتصال...")
+                addLog("المحاولة $attempts: جاري الاتصال عبر API...")
                 
                 try {
                     val request = SaudiaSearchRequest(
@@ -117,7 +146,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
-                    val headers = buildHeaders(authToken, xDToken, sessionId, getSavedUserAgent() ?: "")
+                    val headers = buildHeaders(authToken, xDToken, sessionId, userAgent)
 
                     val response = RetrofitClient.api.searchAirBounds(
                         headers = headers,
@@ -126,22 +155,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                     if (response.isSuccessful) {
                         addLog("✅ استجابة ناجحة! رمز الحالة: ${response.code()}")
+                        addLog("🎉 يوجد مقعد متاح!")
                         _uiState.value = SearchState.FOUND
                         return@launch
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
                         
-                        // 🔥 هنا السحر: قراءة جسم الرد بالكامل حتى لو كان خطأ
-                        val errorBodyText = response.errorBody()?.string() ?: "لا يوجد رد من السيرفر"
+                        val errorBodyText = response.errorBody()?.string() ?: "لا يوجد رد"
                         addLog("📄 تفاصيل الرد من السيرفر:")
-                        addLog(errorBodyText)
+                        addLog(errorBodyText.take(500)) // نعرض أول 500 حرف فقط لتجنب ثقل الشاشة
                         
                         if (response.code() == 401) {
                             addLog("⚠️ انتهت الصلاحية (401)! جاري تحديث التوكن...")
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب.")
+                            addLog("❌ ممنوع (403)! الكوكيز أو الترويسات غير متطابقة.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
