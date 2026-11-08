@@ -21,7 +21,7 @@ interface SaudiaApi {
         @Body request: SaudiaSearchRequest
     ): Response<SaudiaResponse>
 
-    // 2. إنشاء السلة (Cart)
+    // 2. إنشاء السلة (Cart) - تأكد من وجود كلمة shopping/
     @POST("shopping/carts")
     suspend fun createCart(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -43,7 +43,7 @@ interface SaudiaApi {
     ): Response<ResponseBody>
 }
 
-// نموذج بسيط لإرسال الـ airBoundId
+// نموذج إرسال الـ airBoundId
 data class CreateCartRequest(
     val airBoundIds: List<String>
 )
