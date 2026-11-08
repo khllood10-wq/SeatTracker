@@ -49,7 +49,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
 
-        // 🚀 الترويسات بالضبط كما في تطبيق الويندوز (بدون كوكيز)
         return mapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
@@ -61,7 +60,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
             "Referer" to "https://www.saudia.com/",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", // 🚀 User-Agent ويندوز
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "request-id" to requestId,
             "traceparent" to traceparent,
@@ -98,8 +97,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
             val futureDate = sdf.format(calendar.time)
             val departureDateString = "${futureDate}T00:00:00.000"
-            
-            addLog("تاريخ البحث المحدد: $futureDate")
 
             while (attempts <= maxAttempts && _uiState.value == SearchState.SEARCHING) {
                 addLog("المحاولة $attempts: جاري الاتصال...")
@@ -120,15 +117,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
-                    // بناء الترويسات بدون كوكيز
                     val headers = buildHeaders(authToken, xDToken, sessionId, getSavedUserAgent() ?: "")
-
-                    addLog("--- تفاصيل ما نرسله الآن ---")
-                    addLog("Authorization: ${authToken.take(30)}...")
-                    addLog("x-d-token: ${xDToken.take(30)}...")
-                    addLog("saa-session-id: $sessionId")
-                    addLog("User-Agent: ويندوز")
-                    addLog("----------------------------")
 
                     val response = RetrofitClient.api.searchAirBounds(
                         headers = headers,
@@ -141,6 +130,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
+                        
+                        // 🔥 هنا السحر: قراءة جسم الرد بالكامل حتى لو كان خطأ
+                        val errorBodyText = response.errorBody()?.string() ?: "لا يوجد رد من السيرفر"
+                        addLog("📄 تفاصيل الرد من السيرفر:")
+                        addLog(errorBodyText)
                         
                         if (response.code() == 401) {
                             addLog("⚠️ انتهت الصلاحية (401)! جاري تحديث التوكن...")
