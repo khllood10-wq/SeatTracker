@@ -33,12 +33,22 @@ fun PassengersScreen(
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val paymentReady = viewModel.paymentReady.collectAsStateWithLifecycle().value
+    val needWebView = viewModel.needPassengerWebView.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
+    // إنشاء السلة
     LaunchedEffect(Unit) {
         viewModel.createCartAndProceedToPassenger()
     }
 
+    // إذا احتجنا WebView → انتقل
+    LaunchedEffect(needWebView) {
+        if (needWebView) {
+            navController.navigate(Screen.PassengerWebView.route)
+        }
+    }
+
+    // إذا الدفع جاهز → انتقل
     LaunchedEffect(paymentReady) {
         if (paymentReady) {
             navController.navigate(Screen.Payment.route) {
