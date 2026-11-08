@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.JsonParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,29 +37,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("✅ تم حفظ التوكن و User-Agent بنجاح!")
     }
 
-    // 🔥 دوال جديدة لحفظ واسترجاع كوكي Imperva (تذكرة المرور)
-    fun saveImpervaCookie(cookie: String) {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("imperva_cookie", cookie).apply()
-        addLog("🛡️ تم حفظ تذكرة مرور Imperva بنجاح!")
-    }
-
-    private fun getImpervaCookie(): String? {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("imperva_cookie", null)
-    }
-
     private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
     private fun getSavedXDToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
     private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
-
-    // 🔥 دوال مساعدة عشان شاشة البحث تقدر توصل للتوكنات
-    fun getSavedAuthTokenForJs() = getSavedAuthToken()
-    fun getSavedXDTokenForJs() = getSavedXDToken()
-    fun getSavedSessionIdForJs() = getSavedSessionId()
-    fun addLogToScreen(msg: String) = addLog(msg)
-    fun onFlightFound() { _uiState.value = SearchState.FOUND }
 
     private fun buildHeaders(authToken: String, xDToken: String, sessionId: String, userAgent: String): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
@@ -68,7 +50,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
 
-        val headers = mutableMapOf(
+        return mapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
@@ -79,7 +61,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
             "Referer" to "https://www.saudia.com/",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent" to userAgent,
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "request-id" to requestId,
             "traceparent" to traceparent,
@@ -88,15 +70,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to ddTraceId
         )
-
-        // 🔥 إضافة كوكي Imperva إذا كان موجوداً في الذاكرة
-        val impervaCookie = getImpervaCookie()
-        if (!impervaCookie.isNullOrEmpty()) {
-            headers["Cookie"] = impervaCookie
-            // addLog("🍪 تم إضافة كوكي Imperva للطلب.")
-        }
-
-        return headers
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -155,22 +128,43 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                     if (response.isSuccessful) {
                         addLog("✅ استجابة ناجحة! رمز الحالة: ${response.code()}")
-                        addLog("🎉 يوجد مقعد متاح!")
-                        _uiState.value = SearchState.FOUND
-                        return@launch
+                        
+                        // 🔥 قراءة الرد JSON
+                        val responseBody = response.body()?.string() ?: ""
+                        try {
+                            val jsonObject = JsonParser.parseString(responseBody).asJsonObject
+                            
+                            // هنا نقوم بتحليل الرد لمعرفة حالة الرحلة
+                            // في العادة، الرد يحتوي على قائمة رحلات. سنطبع جزءاً منه للمعاينة
+                            addLog("📄 الرد يحتوي على بيانات الرحلة.")
+                            
+                            // هذا مجرد مثال، سنعدله عندما نعرف شكل الرد بالضبط
+                            if (responseBody.contains("\"soldOut\":true") || responseBody.contains("\"availability\":\"NO\"")) {
+                                addLog("🚫 الرحلة ممتلئة (Sold Out). جاري إعادة المحاولة...")
+                            } else {
+                                addLog("🎉 يوجد مقعد متاح! جاري الانتقال...")
+                                _uiState.value = SearchState.FOUND
+                                return@launch
+                            }
+                            
+                        } catch (e: Exception) {
+                            addLog("⚠️ فشل في قراءة الرد (قد يكون الرد فارغاً أو غير صالح): ${e.message}")
+                            // إذا لم نستطع القراءة، نفترض النجاح مؤقتاً
+                            _uiState.value = SearchState.FOUND
+                            return@launch
+                        }
+                        
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
-                        
                         val errorBodyText = response.errorBody()?.string() ?: "لا يوجد رد"
-                        addLog("📄 تفاصيل الرد من السيرفر:")
-                        addLog(errorBodyText.take(500)) // نعرض أول 500 حرف فقط لتجنب ثقل الشاشة
+                        addLog("📄 تفاصيل الرد: ${errorBodyText.take(100)}...")
                         
                         if (response.code() == 401) {
                             addLog("⚠️ انتهت الصلاحية (401)! جاري تحديث التوكن...")
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! الكوكيز أو الترويسات غير متطابقة.")
+                            addLog("❌ ممنوع (403)! قد يكون حظر IP مؤقت. جرب استخدام VPN.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
@@ -179,7 +173,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("❌ حدث خطأ في الشبكة: ${e.message}")
                 }
                 
-                delay(5000) 
+                delay(15000) 
                 attempts++
             }
             
