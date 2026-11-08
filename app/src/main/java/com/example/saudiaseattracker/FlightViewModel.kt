@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.JsonParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +41,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
+    private fun saveCookiesFromResponse(cookies: String) {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val currentCookies = prefs.getString("dynamic_cookies", "") ?: ""
+        val newCookies = if (currentCookies.isEmpty()) cookies else "$currentCookies; $cookies"
+        prefs.edit().putString("dynamic_cookies", newCookies).apply()
+    }
+
+    private fun getSavedDynamicCookies(): String? {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("dynamic_cookies", null)
+    }
+
     private fun buildHeaders(authToken: String, xDToken: String, sessionId: String, userAgent: String): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
@@ -50,7 +61,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
 
-        return mapOf(
+        val headers = mutableMapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
@@ -70,6 +81,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to ddTraceId
         )
+
+        val dynamicCookies = getSavedDynamicCookies()
+        if (!dynamicCookies.isNullOrEmpty()) {
+            headers["Cookie"] = dynamicCookies
+        }
+
+        return headers
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -126,38 +144,40 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         request = request
                     )
 
+                    // التقاط الكوكيز
+                    val setCookieHeaders = response.headers().values("Set-Cookie")
+                    if (setCookieHeaders.isNotEmpty()) {
+                        val newCookies = setCookieHeaders.joinToString("; ") { it.split(";").first() }
+                        saveCookiesFromResponse(newCookies)
+                        addLog("🍪 تم التقاط كوكيز جديدة من السيرفر.")
+                    }
+
                     if (response.isSuccessful) {
                         addLog("✅ استجابة ناجحة! رمز الحالة: ${response.code()}")
                         
-                        // 🔥 قراءة الرد JSON
-                        val responseBody = response.body()?.string() ?: ""
-                        try {
-                            val jsonObject = JsonParser.parseString(responseBody).asJsonObject
-                            
-                            // هنا نقوم بتحليل الرد لمعرفة حالة الرحلة
-                            // في العادة، الرد يحتوي على قائمة رحلات. سنطبع جزءاً منه للمعاينة
-                            addLog("📄 الرد يحتوي على بيانات الرحلة.")
-                            
-                            // هذا مجرد مثال، سنعدله عندما نعرف شكل الرد بالضبط
-                            if (responseBody.contains("\"soldOut\":true") || responseBody.contains("\"availability\":\"NO\"")) {
-                                addLog("🚫 الرحلة ممتلئة (Sold Out). جاري إعادة المحاولة...")
-                            } else {
-                                addLog("🎉 يوجد مقعد متاح! جاري الانتقال...")
-                                _uiState.value = SearchState.FOUND
-                                return@launch
-                            }
-                            
-                        } catch (e: Exception) {
-                            addLog("⚠️ فشل في قراءة الرد (قد يكون الرد فارغاً أو غير صالح): ${e.message}")
-                            // إذا لم نستطع القراءة، نفترض النجاح مؤقتاً
-                            _uiState.value = SearchState.FOUND
-                            return@launch
-                        }
+                        // 🔥 قراءة الرد JSON بالكامل
+                        val fullResponseBody = response.body()?.string() ?: "الرد فارغ!"
+                        
+                        addLog("═══════════════════════════════════")
+                        addLog("📥 الرد الكامل من السيرفر:")
+                        addLog("═══════════════════════════════════")
+                        addLog(fullResponseBody)
+                        addLog("═══════════════════════════════════")
+                        
+                        // إيقاف البحث بعد استلام الرد الأول لمراجعته
+                        addLog("⏸️ تم إيقاف البحث مؤقتاً لمراجعة الرد.")
+                        _uiState.value = SearchState.IDLE
+                        return@launch
                         
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
                         val errorBodyText = response.errorBody()?.string() ?: "لا يوجد رد"
-                        addLog("📄 تفاصيل الرد: ${errorBodyText.take(100)}...")
+                        
+                        addLog("═══════════════════════════════════")
+                        addLog("📥 الرد الكامل للخطأ:")
+                        addLog("═══════════════════════════════════")
+                        addLog(errorBodyText)
+                        addLog("═══════════════════════════════════")
                         
                         if (response.code() == 401) {
                             addLog("⚠️ انتهت الصلاحية (401)! جاري تحديث التوكن...")
