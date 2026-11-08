@@ -161,11 +161,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                                 val rawFlightId = targetGroup.boundDetails?.segments?.firstOrNull()?.flightId ?: ""
                                 val actualFlightNum = rawFlightId.split("-").getOrNull(1) ?: flightNumber
 
+                                // ⚠️ تصحيح الأسماء هنا: استخدمنا origin و destination بدلاً من originLocationCode و destinationLocationCode
                                 _foundFlight.value = FoundFlightDetails(
                                     flightNumber = actualFlightNum,
                                     date = searchDate,
-                                    origin = targetGroup.boundDetails?.originLocationCode ?: searchOrigin,
-                                    destination = targetGroup.boundDetails?.destinationLocationCode ?: searchDestination,
+                                    origin = targetGroup.boundDetails?.origin ?: searchOrigin,
+                                    destination = targetGroup.boundDetails?.destination ?: searchDestination,
                                     price = finalPrice,
                                     fareFamily = fareFamily
                                 )
