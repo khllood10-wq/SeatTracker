@@ -45,11 +45,9 @@ enum class SearchState {
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // ── Preferences ────────────────────────────────────────
     private val prefs = application.getSharedPreferences(
         "saudia_prefs", Context.MODE_PRIVATE
     )
-
     private val gson = Gson()
 
     // ═══════════════════════════════════════════════════════
@@ -71,19 +69,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _rawCartResponse = MutableStateFlow<String>("")
     val rawCartResponse: StateFlow<String> = _rawCartResponse.asStateFlow()
 
-    // ── حالات جديدة للتدفق التلقائي ────────────────────────
+    // ── حالات التدفق التلقائي ──────────────────────────────
     private val _seatsReady = MutableStateFlow(false)
     val seatsReady: StateFlow<Boolean> = _seatsReady.asStateFlow()
 
     private val _paymentReady = MutableStateFlow(false)
     val paymentReady: StateFlow<Boolean> = _paymentReady.asStateFlow()
 
+    // ── ✨ حقول البحث (تستخدمها SearchScreen و FlightDetailsScreen) ──
+    private val _searchOrigin = MutableStateFlow("JED")
+    val searchOrigin: StateFlow<String> = _searchOrigin.asStateFlow()
+
+    private val _searchDestination = MutableStateFlow("RUH")
+    val searchDestination: StateFlow<String> = _searchDestination.asStateFlow()
+
+    private val _searchDate = MutableStateFlow("2026-11-15")
+    val searchDate: StateFlow<String> = _searchDate.asStateFlow()
+
+    fun updateSearchOrigin(value: String) { _searchOrigin.value = value }
+    fun updateSearchDestination(value: String) { _searchDestination.value = value }
+    fun updateSearchDate(value: String) { _searchDate.value = value }
+
     // ── حالة البحث ─────────────────────────────────────────
     private var searchJob: Job? = null
-
-    // ═══════════════════════════════════════════════════════
-    //   ثوابت
-    // ═══════════════════════════════════════════════════════
 
     companion object {
         private const val TAG = "SaudiaVM"
@@ -102,7 +110,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         private const val SEARCH_INTERVAL_MS = 15_000L
 
-        // بيانات المسافر التجريبية
         const val TEST_DOCUMENT_NUMBER = "1071580342"
         const val TEST_DATE_OF_BIRTH   = "1991-05-10"
         const val FIRST_TRAVELER_ID    = "SKH-1-EXT"
@@ -116,7 +123,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════
-    //   حفظ / استرجاع البيانات الحساسة
+    //   حفظ / استرجاع البيانات
     // ═══════════════════════════════════════════════════════
 
     fun saveTokens(
@@ -220,14 +227,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════
-    //   البحث الدوري عن الرحلات
+    //   البحث الدوري
     // ═══════════════════════════════════════════════════════
 
     fun startSearchingFlight(
         flightNumber: String,
-        origin: String = "JED",
-        destination: String = "RUH",
-        date: String = "2026-11-15T00:00:00"
+        origin: String = _searchOrigin.value,
+        destination: String = _searchDestination.value,
+        date: String = "${_searchDate.value}T00:00:00"
     ) {
         searchJob?.cancel()
         _uiState.value = SearchState.SEARCHING
@@ -272,21 +279,20 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             return@launch
                         }
                         resp.code() == 403 -> {
-                            addLog("🚫 403 — Imperva رفض الطلب (VPN أو انتظر)")
+                            addLog("🚫 403 — Imperva رفض الطلب")
                         }
                         !resp.isSuccessful -> {
                             addLog("❌ فشل HTTP ${resp.code()}")
                         }
                         else -> {
-                            val body = resp.body()
-                            val found = parseSearchResponse(body, flightNumber)
+                            val found = parseSearchResponse(resp.body(), flightNumber)
                             if (found != null) {
                                 _foundFlight.value = found
                                 _uiState.value = SearchState.FOUND
-                                addLog("✅ وُجد مقعد! السعر: ${found.price} SAR — ${found.fareFamily}")
+                                addLog("✅ وُجد مقعد! ${found.price} SAR — ${found.fareFamily}")
                                 return@launch
                             } else {
-                                addLog("⏳ لا يوجد مقعد متاح بعد — سأعيد بعد ${SEARCH_INTERVAL_MS / 1000}ث")
+                                addLog("⏳ لا يوجد مقعد — إعادة بعد ${SEARCH_INTERVAL_MS / 1000}ث")
                             }
                         }
                     }
@@ -313,21 +319,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         for (group in groups) {
             val bounds = group.airBounds ?: continue
             for (bound in bounds) {
-                val statusValue = bound.status?.value
-                val isSoldOut = statusValue == "soldOut"
-                if (isSoldOut) continue
+                if (bound.status?.value == "soldOut") continue
                 val price = bound.airOffer?.totalPrice?.value ?: continue
-                val fareFamily = bound.fareFamilyCode ?: "UNKNOWN"
                 val airBoundId = bound.airBoundId ?: continue
-                val origin = group.boundDetails?.origin ?: ""
-                val destination = group.boundDetails?.destination ?: ""
                 return FoundFlightDetails(
                     flightNumber = flightNumber,
                     date = "",
-                    origin = origin,
-                    destination = destination,
+                    origin = group.boundDetails?.origin ?: "",
+                    destination = group.boundDetails?.destination ?: "",
                     price = price / 100.0,
-                    fareFamily = fareFamily,
+                    fareFamily = bound.fareFamilyCode ?: "UNKNOWN",
                     airBoundId = airBoundId
                 )
             }
@@ -336,7 +337,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════
-    //   إنشاء السلة وجلب تفاصيلها (الصفحة السابقة — المسافرون)
+    //   إنشاء السلة
     // ═══════════════════════════════════════════════════════
 
     fun createCartAndProceedToPassenger() {
@@ -345,7 +346,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("❌ لا توجد رحلة محددة")
                 return@launch
             }
-
             try {
                 addLog("🛒 [1/2] إنشاء السلة...")
                 val createResp = RetrofitClient.api.createCart(
@@ -355,17 +355,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     request = CreateCartRequest(airBoundIds = listOf(found.airBoundId))
                 )
                 saveCookiesFromResponse(createResp)
-
                 if (!createResp.isSuccessful) {
-                    addLog("❌ فشل إنشاء السلة: HTTP ${createResp.code()}")
-                    addLog("   ${createResp.errorBody()?.string()}")
+                    addLog("❌ فشل: HTTP ${createResp.code()} — ${createResp.errorBody()?.string()}")
                     return@launch
                 }
-
                 val raw = createResp.body()?.string().orEmpty()
                 _rawCartResponse.value = raw
-                addLog("📦 استجابة السلة: $raw")
-
                 val id = extractCartId(raw)
                 if (id == null) {
                     addLog("❌ تعذّر استخراج cartId")
@@ -374,7 +369,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _cartId.value = id
                 addLog("✅ [1/2] cartId = $id")
 
-                addLog("📥 [2/2] جلب تفاصيل السلة...")
+                addLog("📥 [2/2] جلب التفاصيل...")
                 val detailsResp = RetrofitClient.api.getCartDetails(
                     cartId = id,
                     headers = buildHeaders("3")
@@ -384,7 +379,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     _rawCartResponse.value = detailsResp.body()?.string().orEmpty()
                     addLog("✅ [2/2] تم")
                 } else {
-                    addLog("⚠️ فشل جلب التفاصيل: HTTP ${detailsResp.code()}")
+                    addLog("⚠️ فشل: HTTP ${detailsResp.code()}")
                 }
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
@@ -394,60 +389,48 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun extractCartId(rawJson: String): String? {
         return try {
-            val map = gson.fromJson(rawJson, Map::class.java)
             @Suppress("UNCHECKED_CAST")
-            val data = map["data"] as? Map<String, Any?>
-            data?.get("id") as? String
-        } catch (e: Exception) {
-            null
-        }
+            val map = gson.fromJson(rawJson, Map::class.java) as? Map<String, Any?>
+            @Suppress("UNCHECKED_CAST")
+            (map?.get("data") as? Map<String, Any?>)?.get("id") as? String
+        } catch (e: Exception) { null }
     }
 
     // ═══════════════════════════════════════════════════════
-    //   المسافرون → المقاعد (الطلبات 1..4 من HAR)
+    //   المسافرون → المقاعد
     // ═══════════════════════════════════════════════════════
 
-    /**
-     * يبدأ تلقائياً عند فتح PassengersScreen (بعد توفر cartId).
-     * عند النجاح: يرفع seatsReady = true → ينتقل التطبيق تلقائياً إلى SeatsScreen.
-     */
     fun submitPassengersAndGoToSeats(
         documentNumber: String = TEST_DOCUMENT_NUMBER,
         dateOfBirth: String = TEST_DATE_OF_BIRTH
     ) {
         viewModelScope.launch {
             val currentCartId = _cartId.value ?: run {
-                addLog("❌ لا يوجد cartId — لا يمكن إرسال المسافر")
+                addLog("❌ لا يوجد cartId")
                 return@launch
             }
             val travelerId = FIRST_TRAVELER_ID
 
-            // ── [1/4] ELM Verification ─────────────────────
             try {
-                addLog("🔐 [1/4] تحقق الهوية ELM...")
+                addLog("🔐 [1/4] تحقق ELM...")
                 val resp = RetrofitClient.api.verifyElmProfile(
                     guestOfficeId = GUEST_OFFICE_ID,
                     lang = LANG,
                     headers = buildHeaders("2"),
-                    request = ElmVerificationRequest(
-                        documentNumber = documentNumber,
-                        dateOfBirth = dateOfBirth
-                    )
+                    request = ElmVerificationRequest(documentNumber, dateOfBirth)
                 )
                 saveCookiesFromResponse(resp)
                 if (!resp.isSuccessful) {
                     addLog("❌ [1/4] HTTP ${resp.code()} — ${resp.errorBody()?.string()}")
                     return@launch
                 }
-                addLog("✅ [1/4] تم التحقق من الهوية")
+                addLog("✅ [1/4] تم")
             } catch (e: Exception) {
-                addLog("❌ [1/4] استثناء: ${e.message}")
-                return@launch
+                addLog("❌ [1/4] ${e.message}"); return@launch
             }
 
-            // ── [2/4] Get Cart Extensions ──────────────────
             try {
-                addLog("📥 [2/4] جلب ملحقات السلة...")
+                addLog("📥 [2/4] جلب الملحقات...")
                 val resp = RetrofitClient.api.getCartExtensions(
                     cartId = currentCartId,
                     guestOfficeId = GUEST_OFFICE_ID,
@@ -461,29 +444,19 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 addLog("✅ [2/4] تم")
             } catch (e: Exception) {
-                addLog("❌ [2/4] استثناء: ${e.message}")
-                return@launch
+                addLog("❌ [2/4] ${e.message}"); return@launch
             }
 
-            // ── [3/4] Patch Cart Extensions (YQENSTATUS) ───
             try {
-                addLog("🩺 [3/4] تعيين حالة الصحة YQENSTATUS...")
+                addLog("🩺 [3/4] حالة الصحة...")
                 val innerJson = """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}"""
-                val contentB64 = Base64.encodeToString(
-                    innerJson.toByteArray(Charsets.UTF_8),
-                    Base64.NO_WRAP
-                )
+                val b64 = Base64.encodeToString(innerJson.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
                 val resp = RetrofitClient.api.patchCartExtensions(
                     cartId = currentCartId,
                     guestOfficeId = GUEST_OFFICE_ID,
                     lang = LANG,
                     headers = buildHeaders("2"),
-                    request = listOf(
-                        CartExtensionRequest(
-                            content = contentB64,
-                            travelerId = travelerId
-                        )
-                    )
+                    request = listOf(CartExtensionRequest(content = b64, travelerId = travelerId))
                 )
                 saveCookiesFromResponse(resp)
                 if (!resp.isSuccessful) {
@@ -492,66 +465,46 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 addLog("✅ [3/4] تم")
             } catch (e: Exception) {
-                addLog("❌ [3/4] استثناء: ${e.message}")
-                return@launch
+                addLog("❌ [3/4] ${e.message}"); return@launch
             }
 
-            // ── [4/4] Patch Traveler Web (بيانات المسافر) ──
             try {
-                addLog("👤 [4/4] إرسال بيانات المسافر (مشفّرة)...")
+                addLog("👤 [4/4] بيانات المسافر...")
                 val resp = RetrofitClient.api.patchTravelerWeb(
                     cartId = currentCartId,
                     travelerId = travelerId,
                     guestOfficeId = GUEST_OFFICE_ID,
                     lang = LANG,
                     headers = buildHeaders("2"),
-                    request = EncryptedTravelerRequest(
-                        key = HAR_ENCRYPTED_KEY,
-                        body = HAR_ENCRYPTED_BODY
-                    )
+                    request = EncryptedTravelerRequest(HAR_ENCRYPTED_KEY, HAR_ENCRYPTED_BODY)
                 )
                 saveCookiesFromResponse(resp)
                 if (!resp.isSuccessful) {
                     addLog("❌ [4/4] HTTP ${resp.code()} — ${resp.errorBody()?.string()}")
                     return@launch
                 }
-                addLog("✅ [4/4] المسافر مقبول — الانتقال للمقاعد")
+                addLog("✅ [4/4] المسافر مقبول — للمقاعد")
                 _seatsReady.value = true
             } catch (e: Exception) {
-                addLog("❌ [4/4] استثناء: ${e.message}")
+                addLog("❌ [4/4] ${e.message}")
             }
         }
     }
 
     // ═══════════════════════════════════════════════════════
-    //   المقاعد → الدفع (بانتظار HAR التالي)
+    //   المقاعد → الدفع (مؤقت)
     // ═══════════════════════════════════════════════════════
 
-    /**
-     * يبدأ تلقائياً عند فتح SeatsScreen.
-     * عند النجاح: يرفع paymentReady = true → ينتقل التطبيق تلقائياً إلى PaymentScreen.
-     *
-     * ⚠️ مؤقتاً: يكتفي باللوج ويرفع paymentReady لاختبار التدفق.
-     *    بعد التقاط HAR صفحة المقاعد:
-     *      1) GET  shopping/carts/{cartId}/seat-maps
-     *      2) PATCH shopping/carts/{cartId}/travelers/...
-     *      3) _paymentReady.value = true
-     */
     fun selectSeatAndProceedToPayment() {
         viewModelScope.launch {
             val currentCartId = _cartId.value ?: run {
-                addLog("❌ لا يوجد cartId — لا يمكن اختيار مقعد")
+                addLog("❌ لا يوجد cartId")
                 return@launch
             }
             addLog("🪑 [Seats] cartId = $currentCartId")
-            addLog("⏸️ [Seats] في انتظار طلبات المقاعد من HAR")
+            addLog("⏸️ في انتظار HAR صفحة المقاعد")
 
-            // TODO: نفّذ طلبات المقاعد هنا. مثال مؤقت:
-            // val resp = RetrofitClient.api.getSeatMap(...)
-            // ... PATCH assign seat ...
-            // _paymentReady.value = true
-
-            // ⚠️ هذه الأسطر مؤقتة لاختبار التدفق فقط — احذفها بعد إضافة المنطق الحقيقي
+            // TODO: نفّذ طلبات المقاعد هنا ثم _paymentReady.value = true
             delay(500)
             addLog("✅ [Seats] جاهز للدفع (مؤقت)")
             _paymentReady.value = true
