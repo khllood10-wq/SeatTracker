@@ -13,7 +13,8 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface SaudiaApi {
-    // 1. البحث
+
+    // البحث
     @POST("airsearch/search/air-bounds")
     suspend fun searchAirBounds(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -22,7 +23,7 @@ interface SaudiaApi {
         @Body request: SaudiaSearchRequest
     ): Response<SaudiaResponse>
 
-    // 2. إنشاء السلة
+    // السلة
     @POST("shopping/carts")
     suspend fun createCart(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -31,7 +32,6 @@ interface SaudiaApi {
         @Body request: CreateCartRequest
     ): Response<ResponseBody>
 
-    // 3. جلب بيانات صفحة المسافرين
     @GET("shopping/carts/{cartId}")
     suspend fun getCartDetails(
         @Path("cartId") cartId: String,
@@ -43,7 +43,7 @@ interface SaudiaApi {
         @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
 
-    // 4. تحقق الهوية (جديد)
+    // المسافرون
     @POST("security/elm-profiles/status-verification")
     suspend fun verifyElmProfile(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -52,7 +52,6 @@ interface SaudiaApi {
         @Body request: ElmVerificationRequest
     ): Response<ResponseBody>
 
-    // 5. جلب الملحقات (جديد)
     @GET("shopping/carts/{cartId}/extensions")
     suspend fun getCartExtensions(
         @Path("cartId") cartId: String,
@@ -61,7 +60,6 @@ interface SaudiaApi {
         @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
 
-    // 6. تعيين YQENSTATUS (جديد)
     @PATCH("shopping/carts/{cartId}/extensions")
     suspend fun patchCartExtensions(
         @Path("cartId") cartId: String,
@@ -71,7 +69,6 @@ interface SaudiaApi {
         @Body request: List<CartExtensionRequest>
     ): Response<ResponseBody>
 
-    // 7. بيانات المسافر المشفرة (جديد)
     @PATCH("shopping/carts/{cartId}/travelers/web/{travelerId}")
     suspend fun patchTravelerWeb(
         @Path("cartId") cartId: String,
@@ -81,15 +78,72 @@ interface SaudiaApi {
         @HeaderMap headers: Map<String, String>,
         @Body request: EncryptedTravelerRequest
     ): Response<ResponseBody>
+
+    // الدفع
+    @POST("shopping/carts/{cartId}/contacts")
+    suspend fun addContacts(
+        @Path("cartId") cartId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: List<AddContactRequest>
+    ): Response<ResponseBody>
+
+    @POST("purchase/orders/web")
+    suspend fun createOrder(
+        @Query("cartId") cartId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: CreateOrderRequest
+    ): Response<ResponseBody>
+
+    @GET("shopping/services/by-order")
+    suspend fun getOrderServices(
+        @Query("orderId") orderId: String,
+        @Query("lastName") lastName: String,
+        @Query("pointOfSale") pointOfSale: String = "SA",
+        @Query("flow") flow: String = "booking",
+        @Query("pageIdentity") pageIdentity: String = "BookingPayment",
+        @Query("order_id") orderId2: String = orderId,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("friendlyId") friendlyId: String = "offer_customer_validation",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>
+    ): Response<ResponseBody>
+
+    @POST("utility/get-gaca-mandate")
+    suspend fun getGacaMandate(
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: GacaMandateRequest
+    ): Response<ResponseBody>
+
+    @POST("checkout/payment/payment-methods")
+    suspend fun getPaymentMethods(
+        @Query("lastName") lastName: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: PaymentMethodsRequest
+    ): Response<ResponseBody>
+
+    @GET("checkout/payment/payment-methods/miles-payment")
+    suspend fun getMilesPayment(
+        @Query("lastName") lastName: String,
+        @Query("orderId") orderId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("servicesAndSeatsOnly") servicesAndSeatsOnly: Boolean = false,
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>
+    ): Response<ResponseBody>
 }
 
-data class CreateCartRequest(
-    val airBoundIds: List<String>
-)
+data class CreateCartRequest(val airBoundIds: List<String>)
 
 object RetrofitClient {
     private const val BASE_URL = "https://dapi.saudia.com/"
-
     val api: SaudiaApi by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
