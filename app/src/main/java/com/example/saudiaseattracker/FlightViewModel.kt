@@ -58,7 +58,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("session_id", sessionId)
             .putString("user_agent", userAgent)
             .apply()
-        addLog("✅ تم حفظ التوكن بنجاح!")
+        addLog("✅ تم التقاط التوكن بنجاح من المتصفح!")
     }
 
     private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
@@ -83,7 +83,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return prefs.getString("dynamic_cookies", null)
     }
 
-    // 🔥 تحديث الترويسات لإضافة channel و browserid
     private fun buildHeaders(apiVersion: String): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
@@ -106,8 +105,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to "https://www.saudia.com/",
             "User-Agent" to userAgent,
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "channel" to "MOBILE_WEB", // 🔥 تم إضافة القناة
-            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9", // 🔥 معرف المتصفح من الالتقاط
+            "channel" to "MOBILE_WEB",
+            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
