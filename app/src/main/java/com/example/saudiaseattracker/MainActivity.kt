@@ -21,7 +21,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             SaudiaSeatTrackerTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     AppNavigation()
                 }
             }
@@ -51,6 +54,9 @@ fun AppNavigation() {
             }
             composable(Screen.Passengers.route) {
                 PassengersScreen(navController = navController, viewModel = viewModel)
+            }
+            composable(Screen.PassengerWebView.route) {
+                PassengerWebViewScreen(navController = navController, viewModel = viewModel)
             }
             composable(Screen.Payment.route) {
                 PaymentScreen(navController = navController, viewModel = viewModel)
