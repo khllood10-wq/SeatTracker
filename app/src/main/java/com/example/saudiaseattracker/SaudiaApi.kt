@@ -21,7 +21,7 @@ interface SaudiaApi {
         @Body request: SaudiaSearchRequest
     ): Response<SaudiaResponse>
 
-    // 2. إنشاء السلة (Cart) - تأكد من وجود كلمة shopping/
+    // 2. إنشاء السلة
     @POST("shopping/carts")
     suspend fun createCart(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -30,20 +30,19 @@ interface SaudiaApi {
         @Body request: CreateCartRequest
     ): Response<ResponseBody>
 
-    // 3. جلب تفاصيل السلة
+    // 3. جلب بيانات صفحة المسافرين (تم تعديل pageIdentity)
     @GET("shopping/carts/{cartId}")
     suspend fun getCartDetails(
         @Path("cartId") cartId: String,
         @Query("pointOfSale") pointOfSale: String = "SA",
         @Query("flow") flow: String = "booking",
-        @Query("pageIdentity") pageIdentity: String = "FlightResults",
+        @Query("pageIdentity") pageIdentity: String = "PassengerDetails", // 🔥 هذا هو التعديل الأهم
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
 }
 
-// نموذج إرسال الـ airBoundId
 data class CreateCartRequest(
     val airBoundIds: List<String>
 )
