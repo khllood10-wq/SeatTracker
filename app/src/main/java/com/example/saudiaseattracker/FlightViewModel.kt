@@ -11,6 +11,8 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.UUID
+import kotlin.random.Random
 
 enum class SearchState {
     IDLE,
@@ -34,7 +36,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("xd_token", xDToken)
             .putString("session_id", sessionId)
             .apply()
-        addLog("✅ تم التقاط التوكن ورقم الجلسة بنجاح!")
+        addLog("✅ تم التقاط التوكن (${auth.take(20)}...) والجلسة ($sessionId)")
     }
 
     private fun getSavedAuthToken(): String? {
@@ -50,6 +52,36 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         return prefs.getString("session_id", null)
+    }
+
+    // دالة مساعدة لتوليد الترويسات
+    private fun buildHeaders(authToken: String, xDToken: String, sessionId: String): Map<String, String> {
+        val traceId = UUID.randomUUID().toString().replace("-", "")
+        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
+        val requestId = "|$traceId.$spanId"
+        val traceparent = "00-$traceId-$spanId-01"
+        val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
+        val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
+
+        return mapOf(
+            "Authorization" to authToken,
+            "x-d-token" to xDToken,
+            "saa-session-id" to sessionId,
+            "x-api-version" to "4",
+            "platform" to "Web",
+            "version" to "27.0",
+            "Accept" to "application/json",
+            "Content-Type" to "application/json",
+            "Origin" to "https://www.saudia.com",
+            "Referer" to "https://www.saudia.com/",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            "request-id" to requestId,
+            "traceparent" to traceparent,
+            "x-datadog-origin" to "rum",
+            "x-datadog-parent-id" to ddParentId,
+            "x-datadog-sampling-priority" to "1",
+            "x-datadog-trace-id" to ddTraceId
+        )
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -100,11 +132,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
-                    // ✅ هنا تم تمرير sessionId
+                    // توليد ترويسات جديدة لكل محاولة
+                    val headers = buildHeaders(authToken, xDToken, sessionId)
+
                     val response = RetrofitClient.api.searchAirBounds(
-                        authToken = authToken,
-                        xDToken = xDToken,
-                        sessionId = sessionId, 
+                        headers = headers,
                         request = request
                     )
 
