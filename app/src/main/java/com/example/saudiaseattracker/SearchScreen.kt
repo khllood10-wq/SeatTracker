@@ -33,9 +33,11 @@ fun SearchScreen(
 
     LaunchedEffect(uiState) {
         if (uiState == SearchState.FOUND) {
-            navController.navigate(Screen.Passengers.route)
             viewModel.stopSearch()
+            navController.navigate(Screen.Passengers.route)
         } else if (uiState == SearchState.TOKEN_EXPIRED) {
+            // 🔑 الحل الحاسم: صفّر الحالة قبل الانتقال لتجنب الحلقة
+            viewModel.stopSearch()
             navController.navigate(Screen.Login.route)
         }
     }
