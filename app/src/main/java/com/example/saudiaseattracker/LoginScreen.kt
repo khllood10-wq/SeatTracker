@@ -22,7 +22,6 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
     var hasIntercepted by remember { mutableStateOf(false) }
     var loadAttempts by remember { mutableStateOf(0) }
 
-    // ⚠️ فرض Windows UA — Imperva يرفض Android UA
     val WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -41,7 +40,7 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                     loadWithOverviewMode = true
                     useWideViewPort = true
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    userAgentString = WINDOWS_UA      // ✅ Windows UA
+                    userAgentString = WINDOWS_UA
                 }
 
                 webView.webChromeClient = WebChromeClient()
@@ -72,26 +71,20 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                             if (!authHeader.isNullOrBlank() && authHeader.startsWith("Bearer ")) {
                                 val finalSessionId = sessionId ?: java.util.UUID.randomUUID().toString()
 
-                                // حفظ الكوكيز من CookieManager (الأنسب لهذا الوقت)
-                                val cookies = CookieManager.getInstance()
-                                    .getCookie("https://dapi.saudia.com/") ?: ""
-
+                                // ✅ نحفظ التوكن كما هو (مع Bearer)
                                 viewModel.saveTokens(
                                     authToken = authHeader,
                                     xdToken = xdToken ?: "",
                                     sessionId = finalSessionId,
-                                    userAgent = WINDOWS_UA,
-                                    cookies = cookies
+                                    userAgent = WINDOWS_UA
                                 )
 
                                 viewModel.addLog("🎫 تم التقاط التوكن من: $url")
-                                viewModel.addLog("🍪 كوكيز: ${cookies.length} حرف")
 
                                 hasIntercepted = true
 
                                 view?.post {
                                     navController.navigate(Screen.Search.route) {
-                                        // ✅ احذف Login (الشاشة الحالية) من الـ stack
                                         popUpTo(Screen.Login.route) { inclusive = true }
                                     }
                                 }
@@ -103,14 +96,6 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
 
-                        // تحديث الكوكيز كلما تحمّلت صفحة
-                        val cookies = CookieManager.getInstance()
-                            .getCookie("https://dapi.saudia.com/") ?: ""
-                        if (cookies.isNotBlank()) {
-                            viewModel.saveCookies(cookies)
-                        }
-
-                        // إعادة تحميل محدودة إذا لم يلتقط التوكن
                         if (!hasIntercepted && loadAttempts < 3) {
                             loadAttempts++
                             viewModel.addLog("🔄 إعادة تحميل #$loadAttempts")
