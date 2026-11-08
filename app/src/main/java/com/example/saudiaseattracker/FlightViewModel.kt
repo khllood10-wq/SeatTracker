@@ -15,11 +15,7 @@ import java.util.UUID
 import kotlin.random.Random
 
 enum class SearchState {
-    IDLE,
-    SEARCHING,
-    FOUND,
-    ERROR,
-    TOKEN_EXPIRED
+    IDLE, SEARCHING, FOUND, ERROR, TOKEN_EXPIRED
 }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
@@ -29,39 +25,24 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    // تحديث الدالة لاستقبال الكوكيز
-    fun saveTokens(auth: String, xDToken: String, sessionId: String, cookies: String) {
+    // حفظ الـ User-Agent مع التوكن
+    fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("auth_token", auth)
             .putString("xd_token", xDToken)
             .putString("session_id", sessionId)
-            .putString("cookies", cookies) // حفظ الكوكيز
+            .putString("user_agent", userAgent)
             .apply()
-        addLog("✅ تم حفظ التوكن والكوكيز بنجاح!")
+        addLog("✅ تم حفظ التوكن والكوكيز و User-Agent بنجاح!")
     }
 
-    private fun getSavedAuthToken(): String? {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("auth_token", null)
-    }
+    private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
+    private fun getSavedXDToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
+    private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
+    private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
-    private fun getSavedXDToken(): String? {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("xd_token", null)
-    }
-    
-    private fun getSavedSessionId(): String? {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("session_id", null)
-    }
-
-    private fun getSavedCookies(): String? {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("cookies", null)
-    }
-
-    private fun buildHeaders(authToken: String, xDToken: String, sessionId: String, cookies: String): Map<String, String> {
+    private fun buildHeaders(authToken: String, xDToken: String, sessionId: String, userAgent: String): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val requestId = "|$traceId.$spanId"
@@ -73,7 +54,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
-            "Cookie" to cookies, // 🔥 إضافة الكوكيز هنا
             "x-api-version" to "4",
             "platform" to "Web",
             "version" to "27.0",
@@ -81,7 +61,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
             "Referer" to "https://www.saudia.com/",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to userAgent, // 🔥 استخدام User-Agent الحقيقي
             "request-id" to requestId,
             "traceparent" to traceparent,
             "x-datadog-origin" to "rum",
@@ -97,7 +77,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val authToken = getSavedAuthToken()
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
-        val cookies = getSavedCookies() ?: ""
+        val userAgent = getSavedUserAgent() ?: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
         if (authToken == null) {
             addLog("❌ لا يوجد توكن! جاري التحديث...")
@@ -118,8 +98,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
             val futureDate = sdf.format(calendar.time)
             val departureDateString = "${futureDate}T00:00:00.000"
-            
-            addLog("تاريخ البحث المحدد: $futureDate")
 
             while (attempts <= maxAttempts && _uiState.value == SearchState.SEARCHING) {
                 addLog("المحاولة $attempts: جاري الاتصال...")
@@ -140,7 +118,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
-                    val headers = buildHeaders(authToken, xDToken, sessionId, cookies)
+                    val headers = buildHeaders(authToken, xDToken, sessionId, userAgent)
 
                     val response = RetrofitClient.api.searchAirBounds(
                         headers = headers,
@@ -159,7 +137,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب. الكوكيز قد تكون منتهية.")
+                            addLog("❌ ممنوع (403)! الكوكيز أو User-Agent غير متطابقة.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
