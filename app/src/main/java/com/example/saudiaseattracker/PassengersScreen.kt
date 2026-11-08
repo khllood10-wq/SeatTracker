@@ -29,8 +29,8 @@ fun PassengersScreen(
     navController: NavController,
     viewModel: FlightViewModel
 ) {
-    val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
-    val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
+    val cartId: String? = viewModel.cartId.collectAsStateWithLifecycle().value
+    val rawCartResponse: String = viewModel.rawCartResponse.collectAsStateWithLifecycle().value ?: ""
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
@@ -66,7 +66,8 @@ fun PassengersScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (cartId.isNullOrEmpty()) {
+            // ✅ فحص صريح — لا ambiguity
+            if (cartId == null || cartId.isEmpty()) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 Text("جاري إنشاء السلة...")
             } else {
