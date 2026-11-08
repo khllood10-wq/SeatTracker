@@ -55,11 +55,7 @@ fun AppNavigation() {
             composable(Screen.Passengers.route) {
                 PassengersScreen(navController = navController, viewModel = viewModel)
             }
-            composable(Screen.Seats.route) {
-                SeatsScreen(navController = navController, viewModel = viewModel)
-            }
             composable(Screen.Payment.route) {
-                // ⚠️ PaymentScreen لا يستقبل viewModel حالياً
                 PaymentScreen(navController = navController)
             }
         }
