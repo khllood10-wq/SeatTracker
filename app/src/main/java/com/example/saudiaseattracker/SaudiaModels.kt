@@ -2,7 +2,7 @@ package com.example.saudiaseattracker
 
 import com.google.gson.annotations.SerializedName
 
-// ═══════════ REQUEST MODELS (البحث) ═══════════
+// ═══════════ البحث ═══════════
 
 data class SaudiaSearchRequest(
     @SerializedName("region") val region: String = "KSA",
@@ -44,7 +44,7 @@ data class OfferCodeAvailabilityInput(
     @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
 )
 
-// ═══════════ المسافرون → المقاعد (جديد) ═══════════
+// ═══════════ المسافرون → الدفع ═══════════
 
 data class ElmVerificationRequest(
     @SerializedName("documentType") val documentType: String = "I",
@@ -64,4 +64,58 @@ data class CartExtensionRequest(
 data class EncryptedTravelerRequest(
     @SerializedName("key") val key: String,
     @SerializedName("body") val body: String
+)
+
+data class AddContactRequest(
+    @SerializedName("address") val address: String? = null,
+    @SerializedName("category") val category: String = "personal",
+    @SerializedName("contactType") val contactType: String,
+    @SerializedName("purpose") val purpose: String = "notification",
+    @SerializedName("lang") val lang: String? = null,
+    @SerializedName("travelerIds") val travelerIds: List<String>? = null,
+    @SerializedName("countryPhoneExtension") val countryPhoneExtension: String? = null,
+    @SerializedName("number") val number: String? = null,
+    @SerializedName("deviceType") val deviceType: String? = null
+)
+
+data class CreateOrderRequest(
+    @SerializedName("key") val key: String,
+    @SerializedName("body") val body: String
+)
+
+data class GacaMandateRequest(
+    @SerializedName("bounds") val bounds: List<GacaBound>
+)
+
+data class GacaBound(
+    @SerializedName("originCountryCode") val originCountryCode: String,
+    @SerializedName("destinationCountryCode") val destinationCountryCode: String,
+    @SerializedName("stopOverCountryCodes") val stopOverCountryCodes: List<String> = emptyList()
+)
+
+data class PaymentMethodsRequest(
+    @SerializedName("orderId") val orderId: String,
+    @SerializedName("paymentRequests") val paymentRequests: List<PaymentRequest>
+)
+
+data class PaymentRequest(
+    @SerializedName("paymentMethod") val paymentMethod: PaymentMethod,
+    @SerializedName("authorization") val authorization: PaymentAuthorization
+)
+
+data class PaymentMethod(
+    @SerializedName("paymentType") val paymentType: String = "CheckoutFormPayment"
+)
+
+data class PaymentAuthorization(
+    @SerializedName("paymentRedirectionContext") val paymentRedirectionContext: PaymentRedirectionContext
+)
+
+data class PaymentRedirectionContext(
+    @SerializedName("links") val links: List<PaymentLink>
+)
+
+data class PaymentLink(
+    @SerializedName("rel") val rel: String,
+    @SerializedName("href") val href: String
 )
