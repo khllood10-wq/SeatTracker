@@ -29,14 +29,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    fun saveTokens(auth: String, xDToken: String, sessionId: String) {
+    // تحديث الدالة لاستقبال الكوكيز
+    fun saveTokens(auth: String, xDToken: String, sessionId: String, cookies: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("auth_token", auth)
             .putString("xd_token", xDToken)
             .putString("session_id", sessionId)
+            .putString("cookies", cookies) // حفظ الكوكيز
             .apply()
-        addLog("✅ تم التقاط التوكن (${auth.take(20)}...) والجلسة ($sessionId)")
+        addLog("✅ تم حفظ التوكن والكوكيز بنجاح!")
     }
 
     private fun getSavedAuthToken(): String? {
@@ -54,8 +56,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return prefs.getString("session_id", null)
     }
 
-    // دالة مساعدة لتوليد الترويسات
-    private fun buildHeaders(authToken: String, xDToken: String, sessionId: String): Map<String, String> {
+    private fun getSavedCookies(): String? {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("cookies", null)
+    }
+
+    private fun buildHeaders(authToken: String, xDToken: String, sessionId: String, cookies: String): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val requestId = "|$traceId.$spanId"
@@ -67,6 +73,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
+            "Cookie" to cookies, // 🔥 إضافة الكوكيز هنا
             "x-api-version" to "4",
             "platform" to "Web",
             "version" to "27.0",
@@ -90,6 +97,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val authToken = getSavedAuthToken()
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
+        val cookies = getSavedCookies() ?: ""
 
         if (authToken == null) {
             addLog("❌ لا يوجد توكن! جاري التحديث...")
@@ -132,8 +140,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
-                    // توليد ترويسات جديدة لكل محاولة
-                    val headers = buildHeaders(authToken, xDToken, sessionId)
+                    val headers = buildHeaders(authToken, xDToken, sessionId, cookies)
 
                     val response = RetrofitClient.api.searchAirBounds(
                         headers = headers,
@@ -152,7 +159,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب.")
+                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب. الكوكيز قد تكون منتهية.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
