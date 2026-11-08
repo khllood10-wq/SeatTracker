@@ -9,16 +9,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
-    navController: androidx.navigation.NavController,
+    navController: NavController,
     viewModel: FlightViewModel = viewModel()
 ) {
     var flightNumber by remember { mutableStateOf("") }
-    val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val searchLogs by viewModel.searchLogs.collectAsStateWithLifecycle()
+
+    // هذا الجزء يراقب الحالة، إذا وجد الرحلة ينتقل تلقائياً
+    LaunchedEffect(uiState) {
+        if (uiState == SearchState.FOUND) {
+            navController.navigate(Screen.Passengers.route)
+            // إعادة الحالة إلى IDLE حتى لا يعيد الانتقال مرة أخرى عند الرجوع
+            viewModel.stopSearch() 
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("البحث عن رحلة", style = MaterialTheme.typography.headlineMedium)
@@ -27,34 +37,54 @@ fun SearchScreen(
         OutlinedTextField(
             value = flightNumber,
             onValueChange = { flightNumber = it },
-            label = { Text("رقم الرحلة أو الوجهة") },
+            label = { Text("رقم الرحلة (مثال: SV123)") },
             modifier = Modifier.fillMaxWidth(),
-            enabled = !isSearching
+            enabled = uiState != SearchState.SEARCHING
         )
         
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(
-            onClick = {
-                viewModel.startSearchingFlight(flightNumber) {
-                    // عند توفر الرحلة، ننتقل لصفحة بيانات الرحلة
-                    navController.navigate(Screen.FlightDetails.route)
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !isSearching && flightNumber.isNotBlank()
-        ) {
-            Text(if (isSearching) "جاري البحث المستمر..." else "بدء البحث")
+        if (uiState != SearchState.SEARCHING) {
+            Button(
+                onClick = { viewModel.startSearchingFlight(flightNumber) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = flightNumber.isNotBlank()
+            ) {
+                Text("بدء البحث التلقائي")
+            }
+        } else {
+            Button(
+                onClick = { viewModel.stopSearch() },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("إيقاف البحث")
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text("سجل البحث:", style = MaterialTheme.typography.titleMedium)
         
-        // السجل الكبير
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("سجل الاتصال بالسيرفر:", style = MaterialTheme.typography.titleMedium)
+            if (uiState == SearchState.SEARCHING) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // السجل
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(searchLogs) { log ->
                 Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    Text(text = log, modifier = Modifier.padding(12.dp))
+                    Text(
+                        text = log, 
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }
