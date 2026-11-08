@@ -31,7 +31,6 @@ enum class SearchState { IDLE, SEARCHING, FOUND, ERROR, TOKEN_EXPIRED }
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
     var searchOrigin by mutableStateOf("JED")
     var searchDestination by mutableStateOf("AHB")
-    // ⚠️ تغيير اليوم إلى 17 نوفمبر
     var searchDate by mutableStateOf("2026-11-17")
 
     // حقول المسافر
@@ -103,6 +102,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         const val TRAVELER_LAST_NAME = "Otudi"
     }
 
+    // ═══════════════════════════════════════════════════════
+    //   حفظ / استرجاع
+    // ═══════════════════════════════════════════════════════
+
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
@@ -111,7 +114,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("session_id", sessionId)
             .putString("user_agent", userAgent)
             .apply()
-        addLog("✅ تم التقاط التوكن")
+        addLog("✅ تم التقاط التوكن (${auth.take(20)}...)")
     }
 
     private fun getSavedAuthToken(): String? =
@@ -120,8 +123,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
     private fun getSavedSessionId(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
-    private fun getSavedUserAgent(): String? =
-        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
@@ -137,12 +138,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
+    /**
+     * ✅ يُستخدم Windows UA دائماً — Imperva يرفض Android UA
+     */
     private fun buildHeaders(apiVersion: String): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
-        val userAgent = getSavedUserAgent()
-            ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
@@ -175,7 +180,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return headers
     }
 
-    // ═══════════ البحث ═══════════
+    // ═══════════════════════════════════════════════════════
+    //   البحث
+    // ═══════════════════════════════════════════════════════
 
     fun startSearchingFlight(flightNumber: String) {
         if (_uiState.value == SearchState.SEARCHING) return
@@ -259,7 +266,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("تم الإيقاف يدوياً")
     }
 
-    // ═══════════ السلة ═══════════
+    // ═══════════════════════════════════════════════════════
+    //   السلة
+    // ═══════════════════════════════════════════════════════
 
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
@@ -301,7 +310,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════ المسافرون → الدفع ═══════════
+    // ═══════════════════════════════════════════════════════
+    //   المسافرون → الدفع
+    // ═══════════════════════════════════════════════════════
 
     private fun submitPassengersAndProceedToPayment(cartId: String) {
         viewModelScope.launch {
@@ -360,7 +371,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("⚠️ [2/4] ${e.message}")
             }
 
-            // [3/4] PATCH extensions (اختياري)
+            // [3/4] PATCH extensions
             try {
                 addLog("🩺 [3/4] الحالة الصحية...")
                 val inner = """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}"""
@@ -454,7 +465,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("✅ [6/10] orderId = $newOrderId")
             } catch (e: Exception) { addLog("❌ [6/10] ${e.message}"); return@launch }
 
-            // [7..10] اختيارية
+            // [7]
             try {
                 addLog("📋 [7/10] خدمات الطلب...")
                 val r = RetrofitClient.api.getOrderServices(
@@ -463,6 +474,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog(if (r.isSuccessful) "✅ [7/10]" else "⚠️ [7/10] ${r.code()}")
             } catch (e: Exception) { addLog("⚠️ [7/10] ${e.message}") }
 
+            // [8]
             try {
                 addLog("📜 [8/10] GACA...")
                 val r = RetrofitClient.api.getGacaMandate(
@@ -472,6 +484,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog(if (r.isSuccessful) "✅ [8/10]" else "⚠️ [8/10] ${r.code()}")
             } catch (e: Exception) { addLog("⚠️ [8/10] ${e.message}") }
 
+            // [9]
             try {
                 addLog("💳 [9/10] طرق الدفع...")
                 val r = RetrofitClient.api.getPaymentMethods(
@@ -494,6 +507,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("💳 [9/10] HTTP ${r.code()} — ${raw?.take(300) ?: ""}")
             } catch (e: Exception) { addLog("⚠️ [9/10] ${e.message}") }
 
+            // [10]
             try {
                 addLog("🎫 [10/10] الأميال...")
                 val r = RetrofitClient.api.getMilesPayment(
@@ -507,7 +521,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════ الدفع بسداد ═══════════
+    // ═══════════════════════════════════════════════════════
+    //   الدفع بسداد
+    // ═══════════════════════════════════════════════════════
 
     fun payWithSadad() {
         viewModelScope.launch {
@@ -575,7 +591,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     lastName = TRAVELER_LAST_NAME,
                     headers = buildHeaders("4")
                 )
-                val pnrValue = currentOrderId
                 if (r.isSuccessful) {
                     try {
                         val raw = r.body()?.string()
@@ -592,8 +607,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     } catch (_: Exception) {}
                 }
-                _pnr.value = pnrValue
-                addLog("🎉 [3/3] PNR = $pnrValue")
+                _pnr.value = currentOrderId
+                addLog("🎉 [3/3] PNR = $currentOrderId")
                 _sadadReady.value = true
             } catch (e: Exception) {
                 _pnr.value = currentOrderId
