@@ -14,6 +14,16 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
 
+// نموذج لحفظ بيانات الرحلة التي تم العثور عليها
+data class FoundFlightDetails(
+    val flightNumber: String,
+    val date: String,
+    val origin: String,
+    val destination: String,
+    val price: Double,
+    val fareFamily: String
+)
+
 enum class SearchState {
     IDLE, SEARCHING, FOUND, ERROR, TOKEN_EXPIRED
 }
@@ -25,9 +35,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
     
-    // لحفظ بيانات الرحلة التي تم العثور عليها لعرضها في الواجهة
-    private val _foundFlightDetails = MutableStateFlow<String?>(null)
-    val foundFlightDetails: StateFlow<String?> = _foundFlightDetails
+    // حفظ تفاصيل الرحلة المكتشفة
+    private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
+    val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -91,12 +101,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         _uiState.value = SearchState.SEARCHING
         _searchLogs.value = emptyList()
-        _foundFlightDetails.value = null
+        _foundFlight.value = null
         addLog("بدء البحث الحقيقي عن الرحلة: $flightNumber")
         
         viewModelScope.launch {
             var attempts = 1
-            val maxAttempts = 100 // رفعنا الحد الأقصى لأننا سنتركه يبحث طويلاً
+            val maxAttempts = 100
             
             val calendar = Calendar.getInstance()
             calendar.add(Calendar.DAY_OF_YEAR, 2)
@@ -133,7 +143,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     if (response.isSuccessful) {
                         val responseData = response.body()
                         
-                        // 🔥 البحث عن الرحلة المطلوبة داخل الـ JSON
+                        // البحث عن الرحلة المطلوبة
                         val matchingGroups = responseData?.data?.airBoundGroups?.filter { group ->
                             group.boundDetails?.segments?.any { it.flightId?.contains(flightNumber, ignoreCase = true) == true } == true
                         }
@@ -142,21 +152,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             addLog("⚠️ لم يتم العثور على الرحلة $flightNumber في نتائج البحث. جاري المحاولة...")
                         } else {
                             val targetGroup = matchingGroups.first()
-                            // فلترة الأسعار المتاحة (التي لا تحتوي على حالة soldOut)
+                            // فلترة الأسعار المتاحة
                             val availableFares = targetGroup.airBounds?.filter { it.status?.value != "soldOut" } ?: emptyList()
 
                             if (availableFares.isNotEmpty()) {
-                                // العثور على أرخص سعر متاح
                                 val cheapestFare = availableFares.minByOrNull { it.airOffer?.totalPrice?.value ?: Double.MAX_VALUE }
                                 val priceValue = cheapestFare?.airOffer?.totalPrice?.value ?: 0.0
-                                val finalPrice = priceValue / 100.0 // القيمة عادة تكون بالهللة، نقسم 100
+                                val finalPrice = priceValue / 100.0
                                 val fareFamily = cheapestFare?.fareFamilyCode ?: "غير معروف"
                                 
-                                val details = "رحلة: $flightNumber\nالسعر: $finalPrice ريال\nالفئة: $fareFamily"
-                                _foundFlightDetails.value = details
+                                // استخراج رقم الرحلة الفعلي من الـ flightId
+                                val rawFlightId = targetGroup.boundDetails?.segments?.firstOrNull()?.flightId ?: ""
+                                val actualFlightNum = rawFlightId.split("-").getOrNull(1) ?: flightNumber
+
+                                _foundFlight.value = FoundFlightDetails(
+                                    flightNumber = actualFlightNum,
+                                    date = futureDate,
+                                    origin = targetGroup.boundDetails?.originLocationCode ?: "JED",
+                                    destination = targetGroup.boundDetails?.destinationLocationCode ?: "AHB",
+                                    price = finalPrice,
+                                    fareFamily = fareFamily
+                                )
                                 
                                 addLog("🎉 مبروك! تم العثور على مقعد متاح.")
-                                addLog(details)
                                 _uiState.value = SearchState.FOUND
                                 return@launch
                             } else {
@@ -165,13 +183,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
-                        if (response.code() == 401) {
-                            addLog("⚠️ انتهت الصلاحية (401)!")
+                        if (response.code() == 401 || response.code() == 403) {
                             _uiState.value = SearchState.TOKEN_EXPIRED
-                            return@launch
-                        } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! قد يكون حظر IP مؤقت.")
-                            _uiState.value = SearchState.ERROR
                             return@launch
                         }
                     }
@@ -179,7 +192,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("❌ حدث خطأ: ${e.message}")
                 }
                 
-                delay(15000) // 15 ثانية لتجنب الحظر
+                delay(15000) 
                 attempts++
             }
             
