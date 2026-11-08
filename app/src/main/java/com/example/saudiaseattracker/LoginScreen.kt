@@ -2,6 +2,7 @@ package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -21,6 +22,10 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
     var hasIntercepted by remember { mutableStateOf(false) }
     var loadAttempts by remember { mutableStateOf(0) }
 
+    // ⚠️ فرض Windows UA — Imperva يرفض Android UA
+    val WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         CircularProgressIndicator(modifier = Modifier.size(32.dp))
 
@@ -28,64 +33,96 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
             modifier = Modifier.size(1.dp),
             factory = { context ->
                 val webView = WebView(context)
-                val capturedUserAgent = webView.settings.userAgentString
-                
                 webView.layoutParams = ViewGroup.LayoutParams(1, 1)
-                
+
                 webView.settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
                     loadWithOverviewMode = true
                     useWideViewPort = true
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    userAgentString = WINDOWS_UA      // ✅ Windows UA
                 }
-                
+
                 webView.webChromeClient = WebChromeClient()
-                
-                android.webkit.CookieManager.getInstance().setAcceptCookie(true)
-                android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+
+                CookieManager.getInstance().apply {
+                    setAcceptCookie(true)
+                    setAcceptThirdPartyCookies(webView, true)
+                }
 
                 webView.webViewClient = object : WebViewClient() {
+
                     override fun shouldInterceptRequest(
                         view: WebView?,
                         request: android.webkit.WebResourceRequest?
                     ): android.webkit.WebResourceResponse? {
                         val url = request?.url.toString()
-                        
+
                         if (!hasIntercepted && url.contains("dapi.saudia.com")) {
-                            val authHeader = request?.requestHeaders?.get("Authorization")
-                            val xdToken = request?.requestHeaders?.get("x-d-token")
-                            val sessionId = request?.requestHeaders?.get("saa-session-id")
-                            
-                            if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
+                            val headers = request?.requestHeaders ?: emptyMap()
+
+                            val authHeader = headers.entries
+                                .firstOrNull { it.key.equals("Authorization", true) }?.value
+                            val xdToken = headers.entries
+                                .firstOrNull { it.key.equals("x-d-token", true) }?.value
+                            val sessionId = headers.entries
+                                .firstOrNull { it.key.equals("saa-session-id", true) }?.value
+
+                            if (!authHeader.isNullOrBlank() && authHeader.startsWith("Bearer ")) {
                                 val finalSessionId = sessionId ?: java.util.UUID.randomUUID().toString()
-                                
-                                // حفظ التوكن في الـ ViewModel والـ SharedPreferences
-                                viewModel.saveTokens(authHeader, xdToken ?: "", finalSessionId, capturedUserAgent)
+
+                                // حفظ الكوكيز من CookieManager (الأنسب لهذا الوقت)
+                                val cookies = CookieManager.getInstance()
+                                    .getCookie("https://dapi.saudia.com/") ?: ""
+
+                                viewModel.saveTokens(
+                                    authToken = authHeader,
+                                    xdToken = xdToken ?: "",
+                                    sessionId = finalSessionId,
+                                    userAgent = WINDOWS_UA,
+                                    cookies = cookies
+                                )
+
+                                viewModel.addLog("🎫 تم التقاط التوكن من: $url")
+                                viewModel.addLog("🍪 كوكيز: ${cookies.length} حرف")
+
                                 hasIntercepted = true
-                                
-                                // الانتقال لصفحة البحث فوراً
+
                                 view?.post {
                                     navController.navigate(Screen.Search.route) {
-                                        popUpTo(Screen.Search.route) { inclusive = true }
+                                        // ✅ احذف Login (الشاشة الحالية) من الـ stack
+                                        popUpTo(Screen.Login.route) { inclusive = true }
                                     }
                                 }
                             }
                         }
                         return super.shouldInterceptRequest(view, request)
                     }
-                    
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
+
+                        // تحديث الكوكيز كلما تحمّلت صفحة
+                        val cookies = CookieManager.getInstance()
+                            .getCookie("https://dapi.saudia.com/") ?: ""
+                        if (cookies.isNotBlank()) {
+                            viewModel.saveCookies(cookies)
+                        }
+
+                        // إعادة تحميل محدودة إذا لم يلتقط التوكن
                         if (!hasIntercepted && loadAttempts < 3) {
                             loadAttempts++
-                            view?.postDelayed({ 
-                                if (!hasIntercepted) view.reload() 
+                            viewModel.addLog("🔄 إعادة تحميل #$loadAttempts")
+                            view?.postDelayed({
+                                if (!hasIntercepted) view.reload()
                             }, 2000)
+                        } else if (!hasIntercepted && loadAttempts >= 3) {
+                            viewModel.addLog("⚠️ لم يُلتقط التوكن بعد 3 محاولات")
                         }
                     }
                 }
-                
+
                 webView.loadUrl("https://www.saudia.com/ar-SA")
                 webView
             }
