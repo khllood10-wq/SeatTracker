@@ -32,18 +32,11 @@ fun SearchScreen(
     val context = LocalContext.current
 
     LaunchedEffect(uiState) {
-        when (uiState) {
-            SearchState.FOUND -> {
-                viewModel.stopSearch()
-                navController.navigate(Screen.Passengers.route)
-            }
-            SearchState.TOKEN_EXPIRED -> {
-                // ✅ احذف Search من الـ stack — حتى لا تعود لها بعد Login
-                navController.navigate(Screen.Login.route) {
-                    popUpTo(Screen.Search.route) { inclusive = true }
-                }
-            }
-            else -> { }
+        if (uiState == SearchState.FOUND) {
+            navController.navigate(Screen.Passengers.route)
+            viewModel.stopSearch()
+        } else if (uiState == SearchState.TOKEN_EXPIRED) {
+            navController.navigate(Screen.Login.route)
         }
     }
 
@@ -74,17 +67,7 @@ fun SearchScreen(
 
         if (uiState != SearchState.SEARCHING) {
             Button(
-                onClick = {
-                    // ✅ تحقق سريع قبل استهلاك طلب
-                    if (!viewModel.hasValidToken()) {
-                        viewModel.addLog("🔒 لا يوجد توكن صالح — الانتقال لـ Login")
-                        navController.navigate(Screen.Login.route) {
-                            popUpTo(Screen.Search.route) { inclusive = true }
-                        }
-                        return@Button
-                    }
-                    viewModel.startSearchingFlight(flightNumber)
-                },
+                onClick = { viewModel.startSearchingFlight(flightNumber) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = flightNumber.isNotBlank()
             ) {
