@@ -32,18 +32,16 @@ fun PassengersScreen(
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
-    val seatsReady = viewModel.seatsReady.collectAsStateWithLifecycle().value
+    val paymentReady = viewModel.paymentReady.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
-    // إنشاء السلة عند الدخول
     LaunchedEffect(Unit) {
         viewModel.createCartAndProceedToPassenger()
     }
 
-    // 🔥 الانتقال التلقائي للمقاعد عند جاهزيتها
-    LaunchedEffect(seatsReady) {
-        if (seatsReady) {
-            navController.navigate(Screen.Seats.route) {
+    LaunchedEffect(paymentReady) {
+        if (paymentReady) {
+            navController.navigate(Screen.Payment.route) {
                 popUpTo(Screen.Passengers.route) { inclusive = true }
             }
         }
@@ -61,9 +59,7 @@ fun PassengersScreen(
         foundFlight?.let { f ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("ملخص الحجز:", fontWeight = FontWeight.Bold)
@@ -80,26 +76,15 @@ fun PassengersScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (cartId.isNullOrEmpty()) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.dp
-                )
-                Text("جاري إنشاء السلة...")
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("جاري التنفيذ التلقائي...")
             } else {
-                Text(
-                    "✅ cartId: $cartId",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp
-                )
+                Text("✅ cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
         }
 
-        if (seatsReady) {
-            Text(
-                "🪑 جاهز للانتقال للمقاعد...",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
+        if (paymentReady) {
+            Text("💳 جاهز للانتقال للدفع...", color = MaterialTheme.colorScheme.primary)
         }
 
         HorizontalDivider()
@@ -109,16 +94,16 @@ fun PassengersScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("استجابة السلة (JSON):", style = MaterialTheme.typography.titleSmall)
+            Text("استجابة السلة:", style = MaterialTheme.typography.titleSmall)
             Button(
                 onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
+                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
                     Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
                 },
                 enabled = rawCartResponse.isNotEmpty()
             ) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "نسخ")
+                Icon(Icons.Default.ContentCopy, contentDescription = null)
                 Text(" نسخ")
             }
         }
@@ -131,21 +116,9 @@ fun PassengersScreen(
                 Text(
                     text = rawCartResponse.ifEmpty { "بانتظار الاستجابة..." },
                     modifier = Modifier.padding(12.dp),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                    lineHeight = 13.sp
+                    fontFamily = FontFamily.Monospace, fontSize = 10.sp
                 )
             }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = { navController.navigate(Screen.Payment.route) },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !cartId.isNullOrEmpty()
-        ) {
-            Text("الانتقال للدفع")
         }
     }
 }
