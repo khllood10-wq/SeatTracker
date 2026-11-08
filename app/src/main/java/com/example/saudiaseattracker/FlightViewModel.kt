@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import retrofit2.Response
 import java.util.UUID
+import java.util.concurrent.ThreadLocalRandom
 
 // ═══════════════════════════════════════════════════════════
 //   نماذج البيانات المساعدة
@@ -71,7 +72,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _paymentReady = MutableStateFlow(false)
     val paymentReady: StateFlow<Boolean> = _paymentReady.asStateFlow()
 
-    // ── ✨ حقول البحث كـ Compose State (كتابة/قراءة مباشرة) ──
+    // ── حقول البحث كـ Compose State (كتابة/قراءة مباشرة) ──
     var searchOrigin by mutableStateOf("JED")
     var searchDestination by mutableStateOf("RUH")
     var searchDate by mutableStateOf("2026-11-15")
@@ -94,6 +95,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         private const val BROWSER_ID       = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
         private const val SEARCH_INTERVAL_MS = 15_000L
 
+        private const val WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
         const val TEST_DOCUMENT_NUMBER = "1071580342"
         const val TEST_DATE_OF_BIRTH   = "1991-05-10"
         const val FIRST_TRAVELER_ID    = "SKH-1-EXT"
@@ -109,20 +113,34 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     //   حفظ / استرجاع
     // ═══════════════════════════════════════════════════════
 
-    fun saveTokens(authToken: String, xdToken: String, sessionId: String, userAgent: String) {
+    fun saveTokens(
+        authToken: String,
+        xdToken: String,
+        sessionId: String,
+        userAgent: String,
+        cookies: String = ""
+    ) {
         prefs.edit()
             .putString(PREFS_AUTH, authToken)
             .putString(PREFS_XD_TOKEN, xdToken)
             .putString(PREFS_SESSION_ID, sessionId)
             .putString(PREFS_USER_AGENT, userAgent)
+            .putString(PREFS_COOKIES, cookies)
             .apply()
-        addLog("💾 تم حفظ التوكن والجلسة")
+        addLog("💾 تم حفظ التوكن (${authToken.take(30)}...) و ${cookies.length} حرف كوكيز")
     }
+
+    fun saveCookies(cookies: String) {
+        prefs.edit().putString(PREFS_COOKIES, cookies).apply()
+    }
+
+    fun hasValidToken(): Boolean = !getSavedAuthToken().isNullOrBlank()
 
     fun getSavedAuthToken(): String? = prefs.getString(PREFS_AUTH, null)
     fun getSavedXDToken(): String? = prefs.getString(PREFS_XD_TOKEN, null)
     fun getSavedSessionId(): String? = prefs.getString(PREFS_SESSION_ID, null)
     fun getSavedUserAgent(): String? = prefs.getString(PREFS_USER_AGENT, null)
+    private fun getSavedDynamicCookies(): String = prefs.getString(PREFS_COOKIES, "").orEmpty()
 
     private fun saveCookiesFromResponse(response: Response<*>) {
         val headers = response.headers().values("Set-Cookie")
@@ -146,9 +164,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putString(PREFS_COOKIES, merged).apply()
     }
 
-    private fun getSavedDynamicCookies(): String =
-        prefs.getString(PREFS_COOKIES, "").orEmpty()
-
     // ═══════════════════════════════════════════════════════
     //   بناء الترويسات
     // ═══════════════════════════════════════════════════════
@@ -167,19 +182,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "browserid"        to BROWSER_ID,
             "Origin"           to "https://www.saudia.com",
             "Referer"          to "https://www.saudia.com/",
-            "User-Agent"       to (getSavedUserAgent()
-                ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                   "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                   "Chrome/120.0.0.0 Safari/537.36"),
+            // ✅ دائماً Windows UA — Imperva يرفض Android
+            "User-Agent"       to WINDOWS_UA,
             "Accept"           to "application/json",
             "Accept-Language"  to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Content-Type"     to "application/json",
             "request-id"       to "|$traceId.$spanId",
             "traceparent"      to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
-            "x-datadog-parent-id" to (0..Long.MAX_VALUE).random().toString(),
+            // ✅ ThreadLocalRandom بدلاً من random() المفيض
+            "x-datadog-parent-id" to ThreadLocalRandom.current().nextLong().toString(),
             "x-datadog-sampling-priority" to "1",
-            "x-datadog-trace-id" to (0..Long.MAX_VALUE).random().toString()
+            "x-datadog-trace-id" to ThreadLocalRandom.current().nextLong().toString()
         )
         val cookies = getSavedDynamicCookies()
         if (cookies.isNotBlank()) headers["Cookie"] = cookies
@@ -218,6 +232,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 attempt++
                 try {
                     addLog("─── محاولة #$attempt ───")
+                    val token = getSavedAuthToken()
+                    addLog("🔑 التوكن: ${token?.take(30) ?: "فارغ"}...")
+                    addLog("🍪 كوكيز: ${getSavedDynamicCookies().length} حرف")
+
                     val request = SaudiaSearchRequest(
                         airBoundsSearchInputs = AirBoundsSearchInputs(
                             itineraries = listOf(Itinerary(origin, destination, date)),
@@ -233,14 +251,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         request = request
                     )
                     saveCookiesFromResponse(resp)
+
                     when {
                         resp.code() == 401 -> {
-                            addLog("🔒 التوكن انتهت")
+                            addLog("🔒 401 — التوكن رُفض. مسحه لإعادة سحب جديد")
+                            prefs.edit()
+                                .remove(PREFS_AUTH)
+                                .remove(PREFS_XD_TOKEN)
+                                .remove(PREFS_SESSION_ID)
+                                .apply()
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         }
-                        resp.code() == 403 -> addLog("🚫 403 Imperva")
-                        !resp.isSuccessful -> addLog("❌ HTTP ${resp.code()}")
+                        resp.code() == 403 -> addLog("🚫 403 — Imperva رفض الطلب")
+                        !resp.isSuccessful -> {
+                            addLog("❌ HTTP ${resp.code()} — ${resp.errorBody()?.string()}")
+                        }
                         else -> {
                             val found = parseSearchResponse(resp.body(), flightNumber)
                             if (found != null) {
@@ -254,7 +280,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 } catch (e: Exception) {
-                    addLog("❌ ${e.message}")
+                    addLog("❌ استثناء: ${e.message}")
                 }
                 delay(SEARCH_INTERVAL_MS)
             }
@@ -264,10 +290,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun stopSearch() {
         searchJob?.cancel(); searchJob = null
         _uiState.value = SearchState.IDLE
-        addLog("⏹️ تم الإيقاف")
+        addLog("⏹️ تم إيقاف البحث")
     }
 
-    private fun parseSearchResponse(response: SaudiaResponse?, flightNumber: String): FoundFlightDetails? {
+    private fun parseSearchResponse(
+        response: SaudiaResponse?,
+        flightNumber: String
+    ): FoundFlightDetails? {
         val groups = response?.data?.airBoundGroups ?: return null
         for (group in groups) {
             for (bound in group.airBounds ?: continue) {
@@ -319,13 +348,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("✅ [1/2] cartId = $id")
 
                 addLog("📥 [2/2] جلب التفاصيل...")
-                val detailsResp = RetrofitClient.api.getCartDetails(cartId = id, headers = buildHeaders("3"))
+                val detailsResp = RetrofitClient.api.getCartDetails(
+                    cartId = id, headers = buildHeaders("3")
+                )
                 saveCookiesFromResponse(detailsResp)
                 if (detailsResp.isSuccessful) {
                     _rawCartResponse.value = detailsResp.body()?.string().orEmpty()
                     addLog("✅ [2/2] تم")
                 } else addLog("⚠️ HTTP ${detailsResp.code()}")
-            } catch (e: Exception) { addLog("❌ ${e.message}") }
+            } catch (e: Exception) {
+                addLog("❌ ${e.message}")
+            }
         }
     }
 
@@ -350,7 +383,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
             val travelerId = FIRST_TRAVELER_ID
 
-            // [1/4] ELM — بإصلاح named args
+            // [1/4] ELM
             try {
                 addLog("🔐 [1/4] تحقق ELM...")
                 val resp = RetrofitClient.api.verifyElmProfile(
@@ -368,31 +401,43 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 addLog("✅ [1/4] تم")
-            } catch (e: Exception) { addLog("❌ [1/4] ${e.message}"); return@launch }
+            } catch (e: Exception) {
+                addLog("❌ [1/4] ${e.message}"); return@launch
+            }
 
             // [2/4] getExtensions
             try {
                 addLog("📥 [2/4] جلب الملحقات...")
                 val resp = RetrofitClient.api.getCartExtensions(
-                    cartId = currentCartId, guestOfficeId = GUEST_OFFICE_ID,
-                    lang = LANG, headers = buildHeaders("2")
+                    cartId = currentCartId,
+                    guestOfficeId = GUEST_OFFICE_ID,
+                    lang = LANG,
+                    headers = buildHeaders("2")
                 )
                 saveCookiesFromResponse(resp)
                 if (!resp.isSuccessful) {
                     addLog("❌ [2/4] HTTP ${resp.code()}"); return@launch
                 }
                 addLog("✅ [2/4] تم")
-            } catch (e: Exception) { addLog("❌ [2/4] ${e.message}"); return@launch }
+            } catch (e: Exception) {
+                addLog("❌ [2/4] ${e.message}"); return@launch
+            }
 
             // [3/4] patchExtensions
             try {
                 addLog("🩺 [3/4] حالة الصحة...")
                 val inner = """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}"""
-                val b64 = Base64.encodeToString(inner.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                val b64 = Base64.encodeToString(
+                    inner.toByteArray(Charsets.UTF_8), Base64.NO_WRAP
+                )
                 val resp = RetrofitClient.api.patchCartExtensions(
-                    cartId = currentCartId, guestOfficeId = GUEST_OFFICE_ID,
-                    lang = LANG, headers = buildHeaders("2"),
-                    request = listOf(CartExtensionRequest(content = b64, travelerId = travelerId))
+                    cartId = currentCartId,
+                    guestOfficeId = GUEST_OFFICE_ID,
+                    lang = LANG,
+                    headers = buildHeaders("2"),
+                    request = listOf(
+                        CartExtensionRequest(content = b64, travelerId = travelerId)
+                    )
                 )
                 saveCookiesFromResponse(resp)
                 if (!resp.isSuccessful) {
@@ -400,16 +445,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 addLog("✅ [3/4] تم")
-            } catch (e: Exception) { addLog("❌ [3/4] ${e.message}"); return@launch }
+            } catch (e: Exception) {
+                addLog("❌ [3/4] ${e.message}"); return@launch
+            }
 
             // [4/4] patchTraveler
             try {
                 addLog("👤 [4/4] بيانات المسافر...")
                 val resp = RetrofitClient.api.patchTravelerWeb(
-                    cartId = currentCartId, travelerId = travelerId,
-                    guestOfficeId = GUEST_OFFICE_ID, lang = LANG,
+                    cartId = currentCartId,
+                    travelerId = travelerId,
+                    guestOfficeId = GUEST_OFFICE_ID,
+                    lang = LANG,
                     headers = buildHeaders("2"),
-                    request = EncryptedTravelerRequest(HAR_ENCRYPTED_KEY, HAR_ENCRYPTED_BODY)
+                    request = EncryptedTravelerRequest(
+                        HAR_ENCRYPTED_KEY, HAR_ENCRYPTED_BODY
+                    )
                 )
                 saveCookiesFromResponse(resp)
                 if (!resp.isSuccessful) {
@@ -418,12 +469,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 addLog("✅ [4/4] المسافر مقبول — للمقاعد")
                 _seatsReady.value = true
-            } catch (e: Exception) { addLog("❌ [4/4] ${e.message}") }
+            } catch (e: Exception) {
+                addLog("❌ [4/4] ${e.message}")
+            }
         }
     }
 
     // ═══════════════════════════════════════════════════════
-    //   المقاعد → الدفع (مؤقت)
+    //   المقاعد → الدفع (مؤقت — بانتظار HAR التالي)
     // ═══════════════════════════════════════════════════════
 
     fun selectSeatAndProceedToPayment() {
@@ -433,6 +486,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
             addLog("🪑 [Seats] cartId = $currentCartId")
             addLog("⏸️ في انتظار HAR صفحة المقاعد")
+
             // TODO: نفّذ طلبات المقاعد هنا ثم _paymentReady.value = true
             delay(500)
             addLog("✅ [Seats] جاهز للدفع (مؤقت)")
