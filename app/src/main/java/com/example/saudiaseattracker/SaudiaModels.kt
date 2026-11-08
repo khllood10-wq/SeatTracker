@@ -1,43 +1,55 @@
 package com.example.saudiaseattracker
 
-import com.google.gson.annotations.SerializedName
+import okhttp3.ResponseBody
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.Body
+import retrofit2.http.GET
+import retrofit2.http.HeaderMap
+import retrofit2.http.POST
+import retrofit2.http.Path
+import retrofit2.http.Query
 
-data class SaudiaSearchRequest(
-    @SerializedName("region") val region: String = "KSA",
-    @SerializedName("fromRegion") val fromRegion: String = "KSA",
-    @SerializedName("toRegion") val toRegion: String = "KSA",
-    @SerializedName("airBoundsSearchInputs") val airBoundsSearchInputs: AirBoundsSearchInputs,
-    @SerializedName("offerCodeAvailabilityInput") val offerCodeAvailabilityInput: OfferCodeAvailabilityInput
-)
+interface SaudiaApi {
 
-data class AirBoundsSearchInputs(
-    @SerializedName("itineraries") val itineraries: List<Itinerary>,
-    @SerializedName("travelers") val travelers: List<Traveler>,
-    @SerializedName("commercialFareFamilies") val commercialFareFamilies: List<String> =
-        listOf("NCFFGUESTN", "NCFFBUSN", "NCFFFIRSTN"),
-    @SerializedName("searchPreferences") val searchPreferences: SearchPreferences
-)
+    @POST("airsearch/search/air-bounds")
+    suspend fun searchAirBounds(
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: SaudiaSearchRequest
+    ): Response<SaudiaResponse>
 
-data class Itinerary(
-    @SerializedName("originLocationCode") val originLocationCode: String,
-    @SerializedName("destinationLocationCode") val destinationLocationCode: String,
-    @SerializedName("departureDateTime") val departureDateTime: String,
-    @SerializedName("directFlights") val directFlights: Boolean = false,
-    @SerializedName("isRequestedBound") val isRequestedBound: Boolean = true
-)
+    @POST("shopping/carts")
+    suspend fun createCart(
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: CreateCartRequest
+    ): Response<ResponseBody>
 
-data class Traveler(@SerializedName("passengerTypeCode") val passengerTypeCode: String = "ADT")
+    @GET("shopping/carts/{cartId}")
+    suspend fun getCartDetails(
+        @Path("cartId") cartId: String,
+        @Query("pointOfSale") pointOfSale: String = "SA",
+        @Query("flow") flow: String = "booking",
+        @Query("pageIdentity") pageIdentity: String = "PassengerDetails",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>
+    ): Response<ResponseBody>
+}
 
-data class SearchPreferences(
-    @SerializedName("showUnavailableEntries") val showUnavailableEntries: Boolean = false,
-    @SerializedName("showMilesPrice") val showMilesPrice: Boolean = false,
-    @SerializedName("showSoldOut") val showSoldOut: Boolean = true
-)
+data class CreateCartRequest(val airBoundIds: List<String>)
 
-data class OfferCodeAvailabilityInput(
-    @SerializedName("channel") val channel: String = "MOBILE_WEB",
-    @SerializedName("pointOfSale") val pointOfSale: String = "SA",
-    @SerializedName("currencyCode") val currencyCode: String = "SAR",
-    @SerializedName("language") val language: String = "AR",
-    @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
-)
+object RetrofitClient {
+    private const val BASE_URL = "https://dapi.saudia.com/"
+    val api: SaudiaApi by lazy {
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(SaudiaApi::class.java)
+    }
+}
