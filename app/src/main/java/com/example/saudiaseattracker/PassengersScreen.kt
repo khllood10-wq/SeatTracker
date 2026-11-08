@@ -11,22 +11,18 @@ import androidx.navigation.NavController
 fun PassengersScreen(navController: NavController) {
     var adults by remember { mutableStateOf(1) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(text = "بيانات المسافرين", style = MaterialTheme.typography.headlineMedium)
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("بيانات المسافرين", style = MaterialTheme.typography.headlineMedium)
+        Spacer(modifier = Modifier.height(16.dp))
         
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("البالغين")
+            Text("البالغين", style = MaterialTheme.typography.bodyLarge)
             Row {
                 Button(onClick = { if (adults > 1) adults-- }) { Text("-") }
-                Text(text = " $adults ", modifier = Modifier.padding(16.dp))
+                Text(text = " $adults ", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge)
                 Button(onClick = { adults++ }) { Text("+") }
             }
         }
@@ -34,17 +30,10 @@ fun PassengersScreen(navController: NavController) {
         Spacer(modifier = Modifier.weight(1f))
 
         Button(
-            onClick = { navController.navigate(Screen.Flights.route) },
+            onClick = { navController.navigate(Screen.Payment.route) },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("بحث عن الرحلات")
-        }
-        
-        OutlinedButton(
-            onClick = { navController.popBackStack() },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("رجوع")
+            Text("المتابعة إلى الدفع (سداد)")
         }
     }
 }
