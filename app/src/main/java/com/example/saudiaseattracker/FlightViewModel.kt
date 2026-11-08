@@ -2,6 +2,7 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
+import android.webkit.CookieManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.delay
@@ -49,7 +50,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
 
-        return mapOf(
+        val headers = mutableMapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
@@ -61,6 +62,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Origin" to "https://www.saudia.com",
             "Referer" to "https://www.saudia.com/",
             "User-Agent" to userAgent,
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7", // 🔥 الترويسة المهمة
             "request-id" to requestId,
             "traceparent" to traceparent,
             "x-datadog-origin" to "rum",
@@ -68,6 +70,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to ddTraceId
         )
+
+        // 🔥 سحب الكوكيز من الموقع الرئيسي (وليس dapi) وإضافتها للطلب
+        val currentCookies = CookieManager.getInstance().getCookie("https://www.saudia.com")
+        if (!currentCookies.isNullOrEmpty()) {
+            headers["Cookie"] = currentCookies
+            addLog("🍪 تم العثور على كوكيز الموقع الرئيسي وإضافتها للطلب!")
+        } else {
+            addLog("⚠️ لم يتم العثور على كوكيز في www.saudia.com")
+        }
+
+        return headers
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -119,16 +132,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
+                    // استدعاء الدالة التي تجهز الترويسات (والتي تجلب الكوكيز الآن)
                     val headers = buildHeaders(authToken, xDToken, sessionId, userAgent)
 
-                    // 🚨 طباعة الترويسات والكوكيز كاملة للمقارنة 🚨
                     addLog("--- تفاصيل ما نرسله الآن ---")
                     addLog("User-Agent: $userAgent")
-                    addLog("Authorization: $authToken")
+                    addLog("Authorization: ${authToken.take(20)}...")
                     addLog("saa-session-id: $sessionId")
-                    
-                    val currentCookies = android.webkit.CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: "لا يوجد كوكيز!"
-                    addLog("Cookies: $currentCookies")
+                    addLog("Cookie: ${headers["Cookie"] ?: "لا يوجد"}")
                     addLog("----------------------------")
 
                     val response = RetrofitClient.api.searchAirBounds(
@@ -148,7 +159,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب. الكوكيز أو User-Agent غير متطابقة.")
+                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب. الكوكيز أو الترويسات غير متطابقة.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
