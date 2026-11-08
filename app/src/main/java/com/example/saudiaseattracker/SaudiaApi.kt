@@ -7,6 +7,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.HeaderMap
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -30,16 +31,55 @@ interface SaudiaApi {
         @Body request: CreateCartRequest
     ): Response<ResponseBody>
 
-    // 3. جلب بيانات صفحة المسافرين (تم تعديل pageIdentity)
+    // 3. جلب بيانات صفحة المسافرين
     @GET("shopping/carts/{cartId}")
     suspend fun getCartDetails(
         @Path("cartId") cartId: String,
         @Query("pointOfSale") pointOfSale: String = "SA",
         @Query("flow") flow: String = "booking",
-        @Query("pageIdentity") pageIdentity: String = "PassengerDetails", // 🔥 هذا هو التعديل الأهم
+        @Query("pageIdentity") pageIdentity: String = "PassengerDetails",
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>
+    ): Response<ResponseBody>
+
+    // 4. تحقق الهوية (جديد)
+    @POST("security/elm-profiles/status-verification")
+    suspend fun verifyElmProfile(
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: ElmVerificationRequest
+    ): Response<ResponseBody>
+
+    // 5. جلب الملحقات (جديد)
+    @GET("shopping/carts/{cartId}/extensions")
+    suspend fun getCartExtensions(
+        @Path("cartId") cartId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>
+    ): Response<ResponseBody>
+
+    // 6. تعيين YQENSTATUS (جديد)
+    @PATCH("shopping/carts/{cartId}/extensions")
+    suspend fun patchCartExtensions(
+        @Path("cartId") cartId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: List<CartExtensionRequest>
+    ): Response<ResponseBody>
+
+    // 7. بيانات المسافر المشفرة (جديد)
+    @PATCH("shopping/carts/{cartId}/travelers/web/{travelerId}")
+    suspend fun patchTravelerWeb(
+        @Path("cartId") cartId: String,
+        @Path("travelerId") travelerId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: EncryptedTravelerRequest
     ): Response<ResponseBody>
 }
 
