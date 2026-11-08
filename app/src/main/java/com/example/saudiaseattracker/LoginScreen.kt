@@ -52,8 +52,8 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                                     viewModel.saveTokens(authHeader, xdToken ?: "")
                                     hasIntercepted = true
                                     
-                                    // العودة لصفحة البحث فوراً
-                                    view.post {
+                                    // العودة لصفحة البحث فوراً (استخدمنا ?. للسلامة من Null)
+                                    view?.post {
                                         navController.navigate(Screen.Search.route) {
                                             popUpTo(Screen.Search.route) { inclusive = true }
                                         }
