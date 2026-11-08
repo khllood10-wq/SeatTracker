@@ -34,7 +34,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainAppScreen() {
     val navController = rememberNavController()
-    // إنشاء الـ ViewModel مرة واحدة ومشاركته بين الصفحات
     val flightViewModel: FlightViewModel = viewModel()
     
     val items = listOf(
@@ -45,10 +44,10 @@ fun MainAppScreen() {
 
     Scaffold(
         bottomBar = {
-            // إخفاء الشريط السفلي في صفحة تسجيل الدخول عشان تكون شاشة كاملة
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
             
+            // إخفاء الشريط السفلي في صفحة التجهيز (Login)
             if (currentRoute != Screen.Login.route) {
                 NavigationBar {
                     val currentDestination = navBackStackEntry?.destination
@@ -83,18 +82,23 @@ fun MainAppScreen() {
     ) { innerPadding ->
         NavHost(
             navController = navController, 
-            startDestination = Screen.Search.route,
+            startDestination = Screen.Login.route, // نبدأ من شاشة التجهيز المخفية
             modifier = Modifier.padding(innerPadding)
         ) {
-            // تمرير الـ ViewModel لكل صفحة
-            composable(Screen.Search.route) { SearchScreen(navController, flightViewModel) }
-            composable(Screen.FlightDetails.route) { FlightDetailsScreen(navController) }
-            composable(Screen.Passengers.route) { PassengersScreen(navController) }
-            composable(Screen.Payment.route) { PaymentScreen(navController) }
-            
-            // إضافة صفحة تسجيل الدخول
             composable(Screen.Login.route) { 
                 LoginScreen(navController, flightViewModel) 
+            }
+            composable(Screen.Search.route) { 
+                SearchScreen(navController, flightViewModel) 
+            }
+            composable(Screen.FlightDetails.route) { 
+                FlightDetailsScreen(navController) 
+            }
+            composable(Screen.Passengers.route) { 
+                PassengersScreen(navController) 
+            }
+            composable(Screen.Payment.route) { 
+                PaymentScreen(navController) 
             }
         }
     }
