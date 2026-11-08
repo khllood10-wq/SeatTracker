@@ -12,10 +12,11 @@ import retrofit2.http.Query
 interface SaudiaApi {
     @POST("airsearch/search/air-bounds")
     suspend fun searchAirBounds(
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA", // تم التعديل حسب ملفك الأخير
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @Header("Authorization") authToken: String,
         @Header("x-d-token") xDToken: String,
+        @Header("saa-session-id") sessionId: String, // <--- تمت الإضافة هنا
         @Header("x-api-version") xApiVersion: String = "4",
         @Header("platform") platform: String = "Web",
         @Header("version") version: String = "27.0",
