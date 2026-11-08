@@ -1,7 +1,6 @@
 package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
-import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
@@ -32,8 +31,8 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     
-                    CookieManager.getInstance().setAcceptCookie(true)
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
@@ -42,33 +41,34 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                         ): android.webkit.WebResourceResponse? {
                             val url = request?.url.toString()
                             
+                            // نوسع النطاق ليشمل www.saudia.com أيضاً
                             if (!hasIntercepted && url.contains("saudia.com")) {
                                 val authHeader = request?.requestHeaders?.get("Authorization")
                                 val xdToken = request?.requestHeaders?.get("x-d-token")
+                                val sessionId = request?.requestHeaders?.get("saa-session-id")
                                 
                                 if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
                                     
-                                    // محاولة استخراج رقم الجلسة من الكوكيز
-                                    val cookies = CookieManager.getInstance().getCookie("https://www.saudia.com")
-                                    var sessionId = ""
+                                    var finalSessionId = sessionId
                                     
-                                    // إذا لقينا كوكيز، نبحث عن saa-session-id أو نولد واحد وهمي
-                                    if (cookies != null) {
-                                        val cookieList = cookies.split(";")
-                                        for (cookie in cookieList) {
-                                            if (cookie.trim().startsWith("saa-session-id=")) {
-                                                sessionId = cookie.substringAfter("=").trim()
-                                                break
+                                    // إذا لم نجدها في الترويسات، نبحث عنها في الكوكيز
+                                    if (finalSessionId.isNullOrEmpty()) {
+                                        val cookies = android.webkit.CookieManager.getInstance().getCookie("https://www.saudia.com")
+                                        if (cookies != null) {
+                                            for (cookie in cookies.split(";")) {
+                                                if (cookie.trim().startsWith("saa-session-id=")) {
+                                                    finalSessionId = cookie.substringAfter("=").trim()
+                                                    break
+                                                }
                                             }
                                         }
                                     }
                                     
-                                    // إذا ما لقينا كوكي، نولد رقم عشوائي عشان نتجاوز الجدار
-                                    if (sessionId.isEmpty()) {
-                                        sessionId = java.util.UUID.randomUUID().toString()
+                                    if (finalSessionId.isNullOrEmpty()) {
+                                        finalSessionId = java.util.UUID.randomUUID().toString()
                                     }
 
-                                    viewModel.saveTokens(authHeader, xdToken ?: "", sessionId)
+                                    viewModel.saveTokens(authHeader, xdToken ?: "", finalSessionId)
                                     hasIntercepted = true
                                     
                                     view?.post {
