@@ -25,7 +25,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    // حفظ الـ User-Agent مع التوكن
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
@@ -34,7 +33,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("session_id", sessionId)
             .putString("user_agent", userAgent)
             .apply()
-        addLog("✅ تم حفظ التوكن والكوكيز و User-Agent بنجاح!")
+        addLog("✅ تم حفظ التوكن و User-Agent بنجاح!")
     }
 
     private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
@@ -61,7 +60,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
             "Referer" to "https://www.saudia.com/",
-            "User-Agent" to userAgent, // 🔥 استخدام User-Agent الحقيقي
+            "User-Agent" to userAgent,
             "request-id" to requestId,
             "traceparent" to traceparent,
             "x-datadog-origin" to "rum",
@@ -77,7 +76,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val authToken = getSavedAuthToken()
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
-        val userAgent = getSavedUserAgent() ?: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        val userAgent = getSavedUserAgent() ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         if (authToken == null) {
             addLog("❌ لا يوجد توكن! جاري التحديث...")
@@ -98,6 +97,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
             val futureDate = sdf.format(calendar.time)
             val departureDateString = "${futureDate}T00:00:00.000"
+            
+            addLog("تاريخ البحث المحدد: $futureDate")
 
             while (attempts <= maxAttempts && _uiState.value == SearchState.SEARCHING) {
                 addLog("المحاولة $attempts: جاري الاتصال...")
@@ -120,6 +121,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                     val headers = buildHeaders(authToken, xDToken, sessionId, userAgent)
 
+                    // 🚨 طباعة الترويسات والكوكيز كاملة للمقارنة 🚨
+                    addLog("--- تفاصيل ما نرسله الآن ---")
+                    addLog("User-Agent: $userAgent")
+                    addLog("Authorization: $authToken")
+                    addLog("saa-session-id: $sessionId")
+                    
+                    val currentCookies = android.webkit.CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: "لا يوجد كوكيز!"
+                    addLog("Cookies: $currentCookies")
+                    addLog("----------------------------")
+
                     val response = RetrofitClient.api.searchAirBounds(
                         headers = headers,
                         request = request
@@ -137,7 +148,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! الكوكيز أو User-Agent غير متطابقة.")
+                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب. الكوكيز أو User-Agent غير متطابقة.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
