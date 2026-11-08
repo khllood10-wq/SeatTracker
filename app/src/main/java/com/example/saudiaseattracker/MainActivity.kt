@@ -47,7 +47,6 @@ fun MainAppScreen() {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
             
-            // إخفاء الشريط السفلي في صفحة التجهيز (Login)
             if (currentRoute != Screen.Login.route) {
                 NavigationBar {
                     val currentDestination = navBackStackEntry?.destination
@@ -56,7 +55,7 @@ fun MainAppScreen() {
                         NavigationBarItem(
                             icon = { 
                                 val icon = when(screen) {
-                                    Screen.Search -> Icons.Default.Search
+                                    Screen.Search -> Icons.Default.Home
                                     Screen.FlightDetails -> Icons.Default.Flight
                                     Screen.Passengers -> Icons.Default.Person
                                     else -> Icons.Default.Home
@@ -82,7 +81,7 @@ fun MainAppScreen() {
     ) { innerPadding ->
         NavHost(
             navController = navController, 
-            startDestination = Screen.Login.route, // نبدأ من شاشة التجهيز المخفية
+            startDestination = Screen.Login.route,
             modifier = Modifier.padding(innerPadding)
         ) {
             composable(Screen.Login.route) { 
@@ -92,7 +91,7 @@ fun MainAppScreen() {
                 SearchScreen(navController, flightViewModel) 
             }
             composable(Screen.FlightDetails.route) { 
-                FlightDetailsScreen(navController) 
+                FlightDetailsScreen(navController, flightViewModel) // تمرير الـ ViewModel
             }
             composable(Screen.Passengers.route) { 
                 PassengersScreen(navController) 
