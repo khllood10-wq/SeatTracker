@@ -3,12 +3,18 @@ package com.example.saudiaseattracker
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.saudiaseattracker.ui.theme.SaudiaSeatTrackerTheme
 
@@ -17,24 +23,66 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             SaudiaSeatTrackerTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    AppNavigation()
-                }
+                MainAppScreen()
             }
         }
     }
 }
 
-@androidx.compose.runtime.Composable
-fun AppNavigation() {
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MainAppScreen() {
     val navController = rememberNavController()
     
-    NavHost(navController = navController, startDestination = Screen.Search.route) {
-        composable(Screen.Search.route) { SearchScreen(navController) }
-        composable(Screen.Passengers.route) { PassengersScreen(navController) }
-        composable(Screen.Flights.route) { FlightsScreen(navController) }
+    // قائمة الصفحات في الشريط السفلي (من اليمين لليسار)
+    val items = listOf(
+        Screen.Search,
+        Screen.FlightDetails,
+        Screen.Passengers
+    )
+
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                val currentDestination = navBackStackEntry?.destination
+                
+                items.forEach { screen ->
+                    NavigationBarItem(
+                        icon = { 
+                            val icon = when(screen) {
+                                Screen.Search -> Icons.Default.Search
+                                Screen.FlightDetails -> Icons.Default.Flight
+                                Screen.Passengers -> Icons.Default.Person
+                                else -> Icons.Default.Home
+                            }
+                            Icon(icon, contentDescription = screen.title) 
+                        },
+                        label = { Text(screen.title) },
+                        selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                        onClick = {
+                            navController.navigate(screen.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    ) { innerPadding ->
+        NavHost(
+            navController = navController, 
+            startDestination = Screen.Search.route,
+            modifier = Modifier.padding(innerPadding)
+        ) {
+            composable(Screen.Search.route) { SearchScreen(navController) }
+            composable(Screen.FlightDetails.route) { FlightDetailsScreen(navController) }
+            composable(Screen.Passengers.route) { PassengersScreen(navController) }
+            composable(Screen.Payment.route) { PaymentScreen(navController) }
+        }
     }
 }
