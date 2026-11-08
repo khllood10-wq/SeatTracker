@@ -33,22 +33,14 @@ fun PassengersScreen(
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val paymentReady = viewModel.paymentReady.collectAsStateWithLifecycle().value
-    val needWebView = viewModel.needPassengerWebView.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
-    // إنشاء السلة
     LaunchedEffect(Unit) {
-        viewModel.createCartAndProceedToPassenger()
-    }
-
-    // إذا احتجنا WebView → انتقل
-    LaunchedEffect(needWebView) {
-        if (needWebView) {
-            navController.navigate(Screen.PassengerWebView.route)
+        if (cartId == null) {
+            viewModel.createCartAndProceedToPassenger()
         }
     }
 
-    // إذا الدفع جاهز → انتقل
     LaunchedEffect(paymentReady) {
         if (paymentReady) {
             navController.navigate(Screen.Payment.route) {
@@ -65,6 +57,78 @@ fun PassengersScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("صفحة المسافرين", style = MaterialTheme.typography.headlineMedium)
+
+        // بيانات المسافر
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("✍️ بيانات المسافر", fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = viewModel.passengerFirstName,
+                        onValueChange = { viewModel.passengerFirstName = it },
+                        label = { Text("الاسم الأول") },
+                        modifier = Modifier.weight(1f), singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.passengerLastName,
+                        onValueChange = { viewModel.passengerLastName = it },
+                        label = { Text("العائلة") },
+                        modifier = Modifier.weight(1f), singleLine = true
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = viewModel.passengerDocumentType,
+                        onValueChange = { viewModel.passengerDocumentType = it },
+                        label = { Text("نوع الوثيقة") },
+                        modifier = Modifier.width(110.dp), singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.passengerDocumentNumber,
+                        onValueChange = { viewModel.passengerDocumentNumber = it },
+                        label = { Text("رقم الوثيقة") },
+                        modifier = Modifier.weight(1f), singleLine = true
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = viewModel.passengerDateOfBirth,
+                        onValueChange = { viewModel.passengerDateOfBirth = it },
+                        label = { Text("تاريخ الميلاد") },
+                        modifier = Modifier.weight(1f), singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.passengerNationality,
+                        onValueChange = { viewModel.passengerNationality = it },
+                        label = { Text("الجنسية") },
+                        modifier = Modifier.width(100.dp), singleLine = true
+                    )
+                }
+                OutlinedTextField(
+                    value = viewModel.passengerEmail,
+                    onValueChange = { viewModel.passengerEmail = it },
+                    label = { Text("البريد الإلكتروني") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = viewModel.passengerPhoneCountryCode,
+                        onValueChange = { viewModel.passengerPhoneCountryCode = it },
+                        label = { Text("رمز الدولة") },
+                        modifier = Modifier.width(110.dp), singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.passengerPhoneNumber,
+                        onValueChange = { viewModel.passengerPhoneNumber = it },
+                        label = { Text("الهاتف") },
+                        modifier = Modifier.weight(1f), singleLine = true
+                    )
+                }
+            }
+        }
 
         foundFlight?.let { f ->
             Card(
