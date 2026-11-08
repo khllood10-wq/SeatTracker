@@ -38,7 +38,6 @@ fun MainAppScreen() {
     val navController = rememberNavController()
     val flightViewModel: FlightViewModel = viewModel()
     
-    // الصفحات التي ستظهر في الشريط السفلي
     val items = listOf(
         Screen.Search,
         Screen.FlightDetails,
@@ -50,7 +49,7 @@ fun MainAppScreen() {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
             
-            // إخفاء الشريط السفلي في صفحة التجهيز (Login)
+            // إخفاء الشريط السفلي فقط في صفحة التجهيز (إذا احتجناها لاحقاً)
             if (currentRoute != Screen.Login.route) {
                 NavigationBar {
                     val currentDestination = navBackStackEntry?.destination
@@ -85,14 +84,10 @@ fun MainAppScreen() {
     ) { innerPadding ->
         NavHost(
             navController = navController, 
-            startDestination = Screen.Login.route, // نبدأ من صفحة التجهيز لجلب التوكن
+            // 🔥 هنا التعديل: صار يبدأ من صفحة البحث مباشرة
+            startDestination = Screen.Search.route, 
             modifier = Modifier.padding(innerPadding)
         ) {
-            // صفحة تجهيز الاتصال وجلب التوكن
-            composable(Screen.Login.route) { 
-                LoginScreen(navController, flightViewModel) 
-            }
-            
             // صفحة البحث الرئيسية
             composable(Screen.Search.route) { 
                 SearchScreen(navController, flightViewModel) 
@@ -103,7 +98,7 @@ fun MainAppScreen() {
                 FlightDetailsScreen(navController, flightViewModel) 
             }
             
-            // صفحة المسافرين (التي ستعرض رقم السلة)
+            // صفحة المسافرين
             composable(Screen.Passengers.route) { 
                 PassengersScreen(navController, flightViewModel) 
             }
@@ -111,6 +106,11 @@ fun MainAppScreen() {
             // صفحة الدفع
             composable(Screen.Payment.route) { 
                 PaymentScreen(navController) 
+            }
+            
+            // صفحة التجهيز (احتفظنا بها كـ مسار احتياطي فقط، لكن التطبيق ما يبدأ منها)
+            composable(Screen.Login.route) { 
+                LoginScreen(navController, flightViewModel) 
             }
         }
     }
