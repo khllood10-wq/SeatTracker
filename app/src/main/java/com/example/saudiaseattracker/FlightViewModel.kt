@@ -2,21 +2,19 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
-import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
-import kotlinx.coroutines.Job
+import com.google.gson.JsonParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import retrofit2.Response
 import java.util.UUID
-import java.util.concurrent.ThreadLocalRandom
+import kotlin.random.Random
 
 data class FoundFlightDetails(
     val flightNumber: String,
@@ -28,245 +26,265 @@ data class FoundFlightDetails(
     val airBoundId: String
 )
 
-enum class SearchState { IDLE, SEARCHING, FOUND, ERROR, TOKEN_EXPIRED }
+enum class SearchState {
+    IDLE, SEARCHING, FOUND, ERROR, TOKEN_EXPIRED
+}
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val prefs = application.getSharedPreferences("saudia_prefs", Context.MODE_PRIVATE)
-    private val gson = Gson()
+    var searchOrigin by mutableStateOf("JED")
+    var searchDestination by mutableStateOf("AHB")
+    var searchDate by mutableStateOf("2026-11-10")
 
     private val _uiState = MutableStateFlow(SearchState.IDLE)
-    val uiState: StateFlow<SearchState> = _uiState.asStateFlow()
+    val uiState: StateFlow<SearchState> = _uiState
 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
-    val searchLogs: StateFlow<List<String>> = _searchLogs.asStateFlow()
-
+    val searchLogs: StateFlow<List<String>> = _searchLogs
+    
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
-    val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight.asStateFlow()
+    val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
     private val _cartId = MutableStateFlow<String?>(null)
-    val cartId: StateFlow<String?> = _cartId.asStateFlow()
+    val cartId: StateFlow<String?> = _cartId
 
-    private val _rawCartResponse = MutableStateFlow<String>("")
-    val rawCartResponse: StateFlow<String> = _rawCartResponse.asStateFlow()
+    private val _rawCartResponse = MutableStateFlow<String?>(null)
+    val rawCartResponse: StateFlow<String?> = _rawCartResponse
 
-    var searchOrigin by mutableStateOf("JED")
-    var searchDestination by mutableStateOf("RUH")
-    var searchDate by mutableStateOf("2026-11-15")
-
-    private var searchJob: Job? = null
-
-    companion object {
-        private const val TAG = "SaudiaVM"
-        private const val PREFS_AUTH       = "auth_token"
-        private const val PREFS_XD_TOKEN   = "xd_token"
-        private const val PREFS_SESSION_ID = "session_id"
-        private const val PREFS_USER_AGENT = "user_agent"
-
-        private const val GUEST_OFFICE_ID  = "JEDSV08MA"
-        private const val LANG             = "ar-SA"
-        private const val PLATFORM         = "Web"
-        private const val VERSION          = "27.0"
-        private const val CHANNEL          = "MOBILE_WEB"
-        private const val BROWSER_ID       = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
-        private const val SEARCH_INTERVAL_MS = 15_000L
-
-        private const val WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    // ═══════════════════════════════════════════════════════
-    //   حفظ / استرجاع (التوكن يُحفظ كما هو مع Bearer)
-    // ═══════════════════════════════════════════════════════
-
-    fun saveTokens(authToken: String, xdToken: String, sessionId: String, userAgent: String) {
+    fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
-            .putString(PREFS_AUTH, authToken)
-            .putString(PREFS_XD_TOKEN, xdToken)
-            .putString(PREFS_SESSION_ID, sessionId)
-            .putString(PREFS_USER_AGENT, userAgent)
+            .putString("auth_token", auth)
+            .putString("xd_token", xDToken)
+            .putString("session_id", sessionId)
+            .putString("user_agent", userAgent)
             .apply()
-        addLog("💾 حفظ التوكن (${authToken.take(30)}...)")
+        addLog("✅ تم التقاط التوكن بنجاح من المتصفح!")
     }
 
-    fun getSavedAuthToken(): String? = prefs.getString(PREFS_AUTH, null)
-    fun getSavedXDToken(): String? = prefs.getString(PREFS_XD_TOKEN, null)
-    fun getSavedSessionId(): String? = prefs.getString(PREFS_SESSION_ID, null)
-    fun getSavedUserAgent(): String? = prefs.getString(PREFS_USER_AGENT, null)
+    private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
+    private fun getSavedXDToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
+    private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
+    private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
-    // ═══════════════════════════════════════════════════════
-    //   الترويسات — بدون Cookie
-    // ═══════════════════════════════════════════════════════
+    private fun saveCookiesFromResponse(response: Response<*>) {
+        val setCookieHeaders = response.headers().values("Set-Cookie")
+        if (setCookieHeaders.isNotEmpty()) {
+            val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+            val currentCookies = prefs.getString("dynamic_cookies", "") ?: ""
+            val newCookies = setCookieHeaders.joinToString("; ") { it.split(";").first() }
+            val updatedCookies = if (currentCookies.isEmpty()) newCookies else "$currentCookies; $newCookies"
+            prefs.edit().putString("dynamic_cookies", updatedCookies).apply()
+            addLog("🍪 تم التقاط كوكيز جديدة.")
+        }
+    }
 
-    fun buildHeaders(apiVersion: String): Map<String, String> {
+    private fun getSavedDynamicCookies(): String? {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("dynamic_cookies", null)
+    }
+
+    private fun buildHeaders(apiVersion: String): Map<String, String> {
+        val authToken = getSavedAuthToken() ?: ""
+        val xDToken = getSavedXDToken() ?: ""
+        val sessionId = getSavedSessionId() ?: ""
+        val userAgent = getSavedUserAgent() ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
         val traceId = UUID.randomUUID().toString().replace("-", "")
-        val spanId  = UUID.randomUUID().toString().replace("-", "").substring(0, 16)
-
-        return mutableMapOf(
-            // ✅ التوكن محفوظ مع "Bearer " — نرسله كما هو
-            "Authorization"    to getSavedAuthToken().orEmpty(),
-            "x-d-token"        to getSavedXDToken().orEmpty(),
-            "saa-session-id"   to getSavedSessionId().orEmpty(),
-            "x-api-version"    to apiVersion,
-            "platform"         to PLATFORM,
-            "version"          to VERSION,
-            "channel"          to CHANNEL,
-            "browserid"        to BROWSER_ID,
-            "Origin"           to "https://www.saudia.com",
-            "Referer"          to "https://www.saudia.com/",
-            "User-Agent"       to WINDOWS_UA,
-            "Accept"           to "application/json",
-            "Accept-Language"  to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Content-Type"     to "application/json",
-            "request-id"       to "|$traceId.$spanId",
-            "traceparent"      to "00-$traceId-$spanId-01",
+        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
+        
+        val headers = mutableMapOf(
+            "Authorization" to authToken,
+            "x-d-token" to xDToken,
+            "saa-session-id" to sessionId,
+            "x-api-version" to apiVersion,
+            "platform" to "Web",
+            "version" to "27.0",
+            "Accept" to "application/json",
+            "Content-Type" to "application/json",
+            "Origin" to "https://www.saudia.com",
+            "Referer" to "https://www.saudia.com/",
+            "User-Agent" to userAgent,
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "channel" to "MOBILE_WEB",
+            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
+            "request-id" to "|$traceId.$spanId",
+            "traceparent" to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
-            "x-datadog-parent-id" to ThreadLocalRandom.current().nextLong().toString(),
+            "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
             "x-datadog-sampling-priority" to "1",
-            "x-datadog-trace-id" to ThreadLocalRandom.current().nextLong().toString()
+            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
+
+        val dynamicCookies = getSavedDynamicCookies()
+        if (!dynamicCookies.isNullOrEmpty()) {
+            headers["Cookie"] = dynamicCookies
+        }
+
+        return headers
     }
 
-    fun addLog(message: String) {
-        Log.d(TAG, message)
-        _searchLogs.value = _searchLogs.value + message
-    }
+    fun startSearchingFlight(flightNumber: String) {
+        if (_uiState.value == SearchState.SEARCHING) return
 
-    fun clearLogs() { _searchLogs.value = emptyList() }
+        val authToken = getSavedAuthToken()
+        if (authToken == null) {
+            addLog("❌ لا يوجد توكن!")
+            _uiState.value = SearchState.TOKEN_EXPIRED
+            return
+        }
 
-    // ═══════════════════════════════════════════════════════
-    //   البحث
-    // ═══════════════════════════════════════════════════════
-
-    fun startSearchingFlight(
-        flightNumber: String,
-        origin: String = searchOrigin,
-        destination: String = searchDestination,
-        date: String = "${searchDate}T00:00:00"
-    ) {
-        searchJob?.cancel()
         _uiState.value = SearchState.SEARCHING
+        _searchLogs.value = emptyList()
         _foundFlight.value = null
-        addLog("🔍 البحث عن $flightNumber ($origin → $destination @ $date)")
+        addLog("بدء البحث الحقيقي عن الرحلة: $flightNumber")
+        
+        viewModelScope.launch {
+            var attempts = 1
+            val departureDateString = "${searchDate}T00:00:00.000"
 
-        searchJob = viewModelScope.launch {
-            var attempt = 0
-            while (true) {
-                attempt++
+            while (attempts <= 100 && _uiState.value == SearchState.SEARCHING) {
+                addLog("المحاولة $attempts: جاري فحص الرحلات...")
+                
                 try {
-                    addLog("─── محاولة #$attempt ───")
                     val request = SaudiaSearchRequest(
                         airBoundsSearchInputs = AirBoundsSearchInputs(
-                            itineraries = listOf(Itinerary(origin, destination, date)),
+                            itineraries = listOf(
+                                Itinerary(
+                                    originLocationCode = searchOrigin,
+                                    destinationLocationCode = searchDestination,
+                                    departureDateTime = departureDateString
+                                )
+                            ),
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
-                    val resp = RetrofitClient.api.searchAirBounds(
-                        guestOfficeId = GUEST_OFFICE_ID,
-                        lang = LANG,
+
+                    val response = RetrofitClient.api.searchAirBounds(
                         headers = buildHeaders("4"),
                         request = request
                     )
-                    when {
-                        resp.code() == 401 -> {
-                            addLog("🔒 401 — التوكن انتهت")
+                    
+                    saveCookiesFromResponse(response)
+
+                    if (response.isSuccessful) {
+                        val responseData = response.body()
+                        
+                        val matchingGroups = responseData?.data?.airBoundGroups?.filter { group ->
+                            group.boundDetails?.segments?.any { it.flightId?.contains(flightNumber, ignoreCase = true) == true } == true
+                        }
+
+                        if (matchingGroups.isNullOrEmpty()) {
+                            addLog("⚠️ لم يتم العثور على الرحلة $flightNumber.")
+                        } else {
+                            val targetGroup = matchingGroups.first()
+                            val availableFares = targetGroup.airBounds?.filter { it.status?.value != "soldOut" } ?: emptyList()
+
+                            if (availableFares.isNotEmpty()) {
+                                val cheapestFare = availableFares.minByOrNull { it.airOffer?.totalPrice?.value ?: Double.MAX_VALUE }
+                                val priceValue = cheapestFare?.airOffer?.totalPrice?.value ?: 0.0
+                                val finalPrice = priceValue / 100.0
+                                
+                                _foundFlight.value = FoundFlightDetails(
+                                    flightNumber = flightNumber,
+                                    date = searchDate,
+                                    origin = targetGroup.boundDetails?.origin ?: searchOrigin,
+                                    destination = targetGroup.boundDetails?.destination ?: searchDestination,
+                                    price = finalPrice,
+                                    fareFamily = cheapestFare?.fareFamilyCode ?: "غير معروف",
+                                    airBoundId = cheapestFare?.airBoundId ?: ""
+                                )
+                                
+                                addLog("🎉 مبروك! تم العثور على مقعد متاح.")
+                                _uiState.value = SearchState.FOUND
+                                return@launch
+                            } else {
+                                addLog("🚫 الرحلة ممتلئة. انتظار 15 ثانية...")
+                            }
+                        }
+                    } else {
+                        addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
+                        if (response.code() == 401 || response.code() == 403) {
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         }
-                        resp.code() == 403 -> addLog("🚫 403 Imperva")
-                        !resp.isSuccessful -> addLog("❌ HTTP ${resp.code()}")
-                        else -> {
-                            val found = parseSearchResponse(resp.body(), flightNumber)
-                            if (found != null) {
-                                _foundFlight.value = found
-                                _uiState.value = SearchState.FOUND
-                                addLog("✅ وُجد مقعد! ${found.price} SAR — ${found.fareFamily}")
-                                return@launch
-                            } else {
-                                addLog("⏳ لا يوجد مقعد — إعادة بعد ${SEARCH_INTERVAL_MS / 1000}ث")
-                            }
-                        }
                     }
                 } catch (e: Exception) {
-                    addLog("❌ استثناء: ${e.message}")
+                    addLog("❌ حدث خطأ: ${e.message}")
                 }
-                delay(SEARCH_INTERVAL_MS)
+                
+                delay(15000) 
+                attempts++
+            }
+        }
+    }
+
+    fun createCartAndProceedToPassenger() {
+        val flight = _foundFlight.value ?: return
+        
+        addLog("جاري إنشاء السلة...")
+        
+        viewModelScope.launch {
+            try {
+                val createRequest = CreateCartRequest(airBoundIds = listOf(flight.airBoundId))
+                val createResponse = RetrofitClient.api.createCart(
+                    headers = buildHeaders("2"),
+                    request = createRequest
+                )
+                
+                saveCookiesFromResponse(createResponse)
+
+                if (createResponse.isSuccessful) {
+                    val responseBody = createResponse.body()?.string() ?: ""
+                    
+                    val jsonObject = JsonParser.parseString(responseBody).asJsonObject
+                    val extractedCartId = jsonObject.getAsJsonObject("data")?.get("id")?.asString 
+                        ?: jsonObject.get("id")?.asString ?: ""
+                    
+                    if (extractedCartId.isNotEmpty()) {
+                        _cartId.value = extractedCartId
+                        addLog("✅ تم إنشاء السلة: $extractedCartId")
+                        
+                        addLog("جاري جلب بيانات صفحة المسافرين...")
+                        val getCartResponse = RetrofitClient.api.getCartDetails(
+                            cartId = extractedCartId,
+                            headers = buildHeaders("3")
+                        )
+                        
+                        saveCookiesFromResponse(getCartResponse)
+
+                        if (getCartResponse.isSuccessful) {
+                            val passengerPageData = getCartResponse.body()?.string() ?: ""
+                            _rawCartResponse.value = passengerPageData
+                            addLog("✅ تم جلب بيانات صفحة المسافرين بنجاح!")
+                        } else {
+                            addLog("❌ فشل جلب بيانات المسافرين. رمز الخطأ: ${getCartResponse.code()}")
+                            _rawCartResponse.value = getCartResponse.errorBody()?.string()
+                        }
+
+                    } else {
+                        addLog("⚠️ لم نجد cartId في الرد.")
+                    }
+                } else {
+                    addLog("❌ فشل إنشاء السلة. رمز الخطأ: ${createResponse.code()}")
+                    _rawCartResponse.value = createResponse.errorBody()?.string()
+                }
+            } catch (e: Exception) {
+                addLog("❌ حدث خطأ: ${e.message}")
+                _rawCartResponse.value = "Exception: ${e.message}"
             }
         }
     }
 
     fun stopSearch() {
-        searchJob?.cancel(); searchJob = null
         _uiState.value = SearchState.IDLE
-        addLog("⏹️ تم الإيقاف")
+        addLog("تم إيقاف البحث يدوياً.")
     }
 
-    private fun parseSearchResponse(response: SaudiaResponse?, flightNumber: String): FoundFlightDetails? {
-        val groups = response?.data?.airBoundGroups ?: return null
-        for (group in groups) {
-            for (bound in group.airBounds ?: continue) {
-                if (bound.status?.value == "soldOut") continue
-                val price = bound.airOffer?.totalPrice?.value ?: continue
-                val airBoundId = bound.airBoundId ?: continue
-                return FoundFlightDetails(
-                    flightNumber = flightNumber,
-                    date = "",
-                    origin = group.boundDetails?.origin ?: "",
-                    destination = group.boundDetails?.destination ?: "",
-                    price = price / 100.0,
-                    fareFamily = bound.fareFamilyCode ?: "UNKNOWN",
-                    airBoundId = airBoundId
-                )
-            }
-        }
-        return null
+    private fun addLog(message: String) {
+        val currentLogs = _searchLogs.value.toMutableList()
+        currentLogs.add(0, message) 
+        _searchLogs.value = currentLogs
     }
-
-    // ═══════════════════════════════════════════════════════
-    //   السلة
-    // ═══════════════════════════════════════════════════════
-
-    fun createCartAndProceedToPassenger() {
-        viewModelScope.launch {
-            val found = _foundFlight.value ?: run {
-                addLog("❌ لا توجد رحلة"); return@launch
-            }
-            try {
-                addLog("🛒 [1/2] إنشاء السلة...")
-                val resp = RetrofitClient.api.createCart(
-                    guestOfficeId = GUEST_OFFICE_ID,
-                    lang = LANG,
-                    headers = buildHeaders("2"),
-                    request = CreateCartRequest(listOf(found.airBoundId))
-                )
-                if (!resp.isSuccessful) {
-                    addLog("❌ HTTP ${resp.code()} — ${resp.errorBody()?.string()}")
-                    return@launch
-                }
-                val raw = resp.body()?.string().orEmpty()
-                _rawCartResponse.value = raw
-                val id = extractCartId(raw) ?: run {
-                    addLog("❌ تعذّر استخراج cartId"); return@launch
-                }
-                _cartId.value = id
-                addLog("✅ [1/2] cartId = $id")
-
-                addLog("📥 [2/2] جلب التفاصيل...")
-                val d = RetrofitClient.api.getCartDetails(cartId = id, headers = buildHeaders("3"))
-                if (d.isSuccessful) {
-                    _rawCartResponse.value = d.body()?.string().orEmpty()
-                    addLog("✅ [2/2] تم")
-                } else addLog("⚠️ HTTP ${d.code()}")
-            } catch (e: Exception) { addLog("❌ ${e.message}") }
-        }
-    }
-
-    private fun extractCartId(rawJson: String): String? = try {
-        @Suppress("UNCHECKED_CAST")
-        val map = gson.fromJson(rawJson, Map::class.java) as? Map<String, Any?>
-        @Suppress("UNCHECKED_CAST")
-        (map?.get("data") as? Map<String, Any?>)?.get("id") as? String
-    } catch (e: Exception) { null }
 }
