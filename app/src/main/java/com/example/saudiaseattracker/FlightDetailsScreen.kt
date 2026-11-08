@@ -6,9 +6,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 @Composable
 fun FlightDetailsScreen(navController: NavController) {
+    // جلب التاريخ المستقبلي لعرضه في الواجهة
+    val calendar = Calendar.getInstance()
+    calendar.add(Calendar.DAY_OF_YEAR, 2)
+    val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    val displayDate = sdf.format(calendar.time)
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("تفاصيل الرحلة المحجوزة", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(16.dp))
@@ -17,9 +26,8 @@ fun FlightDetailsScreen(navController: NavController) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("الخطوط السعودية", style = MaterialTheme.typography.titleLarge)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("رقم الرحلة: SV1234")
-                Text("المسار: AHB ✈️ JED")
-                Text("التاريخ: 2026-11-07")
+                Text("المسار: JED ✈️ AHB")
+                Text("التاريخ: $displayDate") // التاريخ الديناميكي
             }
         }
 
