@@ -2,19 +2,18 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
 
-// نموذج لحفظ بيانات الرحلة التي تم العثور عليها
 data class FoundFlightDetails(
     val flightNumber: String,
     val date: String,
@@ -29,13 +28,17 @@ enum class SearchState {
 }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
+    // ⚙️ إعدادات البحث التي يقوم المستخدم بتعديلها من صفحة بيانات الرحلة
+    var searchOrigin by mutableStateOf("JED")
+    var searchDestination by mutableStateOf("AHB")
+    var searchDate by mutableStateOf("2026-11-10")
+
     private val _uiState = MutableStateFlow(SearchState.IDLE)
     val uiState: StateFlow<SearchState> = _uiState
 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
     
-    // حفظ تفاصيل الرحلة المكتشفة
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
@@ -108,11 +111,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             var attempts = 1
             val maxAttempts = 100
             
-            val calendar = Calendar.getInstance()
-            calendar.add(Calendar.DAY_OF_YEAR, 2)
-            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-            val futureDate = sdf.format(calendar.time)
-            val departureDateString = "${futureDate}T00:00:00.000"
+            val departureDateString = "${searchDate}T00:00:00.000"
 
             while (attempts <= maxAttempts && _uiState.value == SearchState.SEARCHING) {
                 addLog("المحاولة $attempts: جاري فحص الرحلات...")
@@ -122,8 +121,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         airBoundsSearchInputs = AirBoundsSearchInputs(
                             itineraries = listOf(
                                 Itinerary(
-                                    originLocationCode = "JED",
-                                    destinationLocationCode = "AHB",
+                                    originLocationCode = searchOrigin,
+                                    destinationLocationCode = searchDestination,
                                     departureDateTime = departureDateString
                                 )
                             ),
@@ -143,16 +142,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     if (response.isSuccessful) {
                         val responseData = response.body()
                         
-                        // البحث عن الرحلة المطلوبة
                         val matchingGroups = responseData?.data?.airBoundGroups?.filter { group ->
                             group.boundDetails?.segments?.any { it.flightId?.contains(flightNumber, ignoreCase = true) == true } == true
                         }
 
                         if (matchingGroups.isNullOrEmpty()) {
-                            addLog("⚠️ لم يتم العثور على الرحلة $flightNumber في نتائج البحث. جاري المحاولة...")
+                            addLog("⚠️ لم يتم العثور على الرحلة $flightNumber. جاري المحاولة...")
                         } else {
                             val targetGroup = matchingGroups.first()
-                            // فلترة الأسعار المتاحة
                             val availableFares = targetGroup.airBounds?.filter { it.status?.value != "soldOut" } ?: emptyList()
 
                             if (availableFares.isNotEmpty()) {
@@ -161,15 +158,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                                 val finalPrice = priceValue / 100.0
                                 val fareFamily = cheapestFare?.fareFamilyCode ?: "غير معروف"
                                 
-                                // استخراج رقم الرحلة الفعلي من الـ flightId
                                 val rawFlightId = targetGroup.boundDetails?.segments?.firstOrNull()?.flightId ?: ""
                                 val actualFlightNum = rawFlightId.split("-").getOrNull(1) ?: flightNumber
 
                                 _foundFlight.value = FoundFlightDetails(
                                     flightNumber = actualFlightNum,
-                                    date = futureDate,
-                                    origin = targetGroup.boundDetails?.originLocationCode ?: "JED",
-                                    destination = targetGroup.boundDetails?.destinationLocationCode ?: "AHB",
+                                    date = searchDate,
+                                    origin = targetGroup.boundDetails?.originLocationCode ?: searchOrigin,
+                                    destination = targetGroup.boundDetails?.destinationLocationCode ?: searchDestination,
                                     price = finalPrice,
                                     fareFamily = fareFamily
                                 )
@@ -178,7 +174,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                                 _uiState.value = SearchState.FOUND
                                 return@launch
                             } else {
-                                addLog("🚫 الرحلة $flightNumber ممتلئة بالكامل (Sold Out). انتظار 15 ثانية...")
+                                addLog("🚫 الرحلة $flightNumber ممتلئة. انتظار 15 ثانية...")
                             }
                         }
                     } else {
