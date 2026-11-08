@@ -44,7 +44,7 @@ data class OfferCodeAvailabilityInput(
     @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
 )
 
-// ═══════════ المسافرون → الدفع ═══════════
+// ═══════════ المسافرون ═══════════
 
 data class ElmVerificationRequest(
     @SerializedName("documentType") val documentType: String = "I",
@@ -118,4 +118,63 @@ data class PaymentRedirectionContext(
 data class PaymentLink(
     @SerializedName("rel") val rel: String,
     @SerializedName("href") val href: String
+)
+
+// ═══════════ بيانات المسافر ═══════════
+
+data class PassengerData(
+    val firstName: String,
+    val lastName: String,
+    val documentType: String,
+    val documentNumber: String,
+    val dateOfBirth: String,
+    val nationality: String,
+    val email: String,
+    val phoneCountryCode: String,
+    val phoneNumber: String
+)
+
+// ═══════════ الدفع بسداد ═══════════
+
+data class SelectSadadRequest(
+    @SerializedName("orderId") val orderId: String,
+    @SerializedName("paymentRequests") val paymentRequests: List<SadadPaymentRequest>
+)
+
+data class SadadPaymentRequest(
+    @SerializedName("paymentMethod") val paymentMethod: SadadPaymentMethod
+)
+
+data class SadadPaymentMethod(
+    @SerializedName("paymentType") val paymentType: String = "CustomPayment",
+    @SerializedName("id") val id: String = "SADAD"
+)
+
+data class ConfirmPaymentRequest(
+    @SerializedName("orderPaymentRequest") val orderPaymentRequest: OrderPaymentRequest,
+    @SerializedName("emailParameters") val emailParameters: EmailParameters,
+    @SerializedName("isCardholderAbsent") val isCardholderAbsent: Boolean = false,
+    @SerializedName("isQueuePlacementEnabled") val isQueuePlacementEnabled: Boolean = false,
+    @SerializedName("vOrderDataKey") val vOrderDataKey: String
+)
+
+data class OrderPaymentRequest(
+    @SerializedName("paymentRequests") val paymentRequests: List<SadadPaymentRequest>
+)
+
+data class EmailParameters(
+    @SerializedName("displayParameters") val displayParameters: DisplayParameters
+)
+
+data class DisplayParameters(
+    @SerializedName("alharamain") val alharamain: Boolean = true,
+    @SerializedName("baggage") val baggage: Boolean = true,
+    @SerializedName("bookingCom") val bookingCom: Boolean = true,
+    @SerializedName("eatmarna") val eatmarna: Boolean = false,
+    @SerializedName("electronicVisa") val electronicVisa: Boolean = false,
+    @SerializedName("plusgrade") val plusgrade: Boolean = true,
+    @SerializedName("rental") val rental: Boolean = true,
+    @SerializedName("seat") val seat: Boolean = true,
+    @SerializedName("wifi") val wifi: Boolean = true,
+    @SerializedName("onDemandTeasers") val onDemandTeasers: List<String> = emptyList()
 )
