@@ -31,7 +31,6 @@ enum class SearchState {
 }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
-    // ⚙️ إعدادات البحث
     var searchOrigin by mutableStateOf("JED")
     var searchDestination by mutableStateOf("AHB")
     var searchDate by mutableStateOf("2026-11-10")
@@ -45,11 +44,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
-    // لحفظ رقم السلة
     private val _cartId = MutableStateFlow<String?>(null)
     val cartId: StateFlow<String?> = _cartId
 
-    // 🔥 لحفظ الرد الكامل (JSON) لعرضه في صفحة المسافرين
     private val _rawCartResponse = MutableStateFlow<String?>(null)
     val rawCartResponse: StateFlow<String?> = _rawCartResponse
 
@@ -61,7 +58,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("session_id", sessionId)
             .putString("user_agent", userAgent)
             .apply()
-        addLog("✅ تم حفظ التوكن و User-Agent بنجاح!")
+        addLog("✅ تم حفظ التوكن بنجاح!")
     }
 
     private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
@@ -69,18 +66,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
-    // التقاط الكوكيز من ردود السيرفر
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isNotEmpty()) {
             val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
             val currentCookies = prefs.getString("dynamic_cookies", "") ?: ""
-            
             val newCookies = setCookieHeaders.joinToString("; ") { it.split(";").first() }
             val updatedCookies = if (currentCookies.isEmpty()) newCookies else "$currentCookies; $newCookies"
-            
             prefs.edit().putString("dynamic_cookies", updatedCookies).apply()
-            addLog("🍪 تم التقاط كوكيز جديدة من السيرفر.")
+            addLog("🍪 تم التقاط كوكيز جديدة.")
         }
     }
 
@@ -89,7 +83,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return prefs.getString("dynamic_cookies", null)
     }
 
-    private fun buildHeaders(): Map<String, String> {
+    // 🔥 تعديل دالة الهيدرز عشان نقبل رقم إصدار الـ API
+    private fun buildHeaders(apiVersion: String): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
@@ -102,7 +97,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
-            "x-api-version" to "3", 
+            "x-api-version" to apiVersion, // هنا بنحط الإصدار اللي بنمرره
             "platform" to "Web",
             "version" to "27.0",
             "Accept" to "application/json",
@@ -166,7 +161,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
 
                     val response = RetrofitClient.api.searchAirBounds(
-                        headers = buildHeaders(),
+                        headers = buildHeaders("4"), // 🔥 إصدار البحث 4
                         request = request
                     )
                     
@@ -224,17 +219,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // 🔥 دالة إنشاء السلة والتقاط الرد الكامل
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
         
-        addLog("جاري إنشاء السلة وجلب الرد...")
+        addLog("جاري إنشاء السلة...")
         
         viewModelScope.launch {
             try {
                 val request = CreateCartRequest(airBoundIds = listOf(flight.airBoundId))
                 val response = RetrofitClient.api.createCart(
-                    headers = buildHeaders(),
+                    headers = buildHeaders("2"), // 🔥 إصدار إنشاء السلة 2
                     request = request
                 )
                 
@@ -242,11 +236,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (response.isSuccessful) {
                     val responseBody = response.body()?.string() ?: ""
-                    
-                    // حفظ الرد الكامل لعرضه
                     _rawCartResponse.value = responseBody
                     
-                    // محاولة استخراج cartId
                     try {
                         val jsonObject = JsonParser.parseString(responseBody).asJsonObject
                         val extractedCartId = jsonObject.get("cartId")?.asString 
@@ -268,7 +259,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     _rawCartResponse.value = response.errorBody()?.string() ?: "خطأ غير معروف"
                 }
             } catch (e: Exception) {
-                addLog("❌ حدث خطأ أثناء إنشاء السلة: ${e.message}")
+                addLog("❌ حدث خطأ: ${e.message}")
                 _rawCartResponse.value = "Exception: ${e.message}"
             }
         }
