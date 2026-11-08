@@ -55,9 +55,6 @@ fun AppNavigation() {
             composable(Screen.Passengers.route) {
                 PassengersScreen(navController = navController, viewModel = viewModel)
             }
-            composable(Screen.PassengerWebView.route) {
-                PassengerWebViewScreen(navController = navController, viewModel = viewModel)
-            }
             composable(Screen.Payment.route) {
                 PaymentScreen(navController = navController, viewModel = viewModel)
             }
