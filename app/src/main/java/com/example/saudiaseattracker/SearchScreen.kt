@@ -31,13 +31,19 @@ fun SearchScreen(
     val searchLogs by viewModel.searchLogs.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // 🔥 هذا الجزء هو اللي ينقلك لصفحة المسافرين
     LaunchedEffect(uiState) {
-        if (uiState == SearchState.FOUND) {
-            navController.navigate(Screen.Passengers.route)
-            viewModel.stopSearch()
-        } else if (uiState == SearchState.TOKEN_EXPIRED) {
-            navController.navigate(Screen.Login.route)
+        when (uiState) {
+            SearchState.FOUND -> {
+                viewModel.stopSearch()
+                navController.navigate(Screen.Passengers.route)
+            }
+            SearchState.TOKEN_EXPIRED -> {
+                // ✅ احذف Search من الـ stack — حتى لا تعود لها بعد Login
+                navController.navigate(Screen.Login.route) {
+                    popUpTo(Screen.Search.route) { inclusive = true }
+                }
+            }
+            else -> { }
         }
     }
 
@@ -63,12 +69,22 @@ fun SearchScreen(
             modifier = Modifier.fillMaxWidth(),
             enabled = uiState != SearchState.SEARCHING
         )
-        
+
         Spacer(modifier = Modifier.height(16.dp))
 
         if (uiState != SearchState.SEARCHING) {
             Button(
-                onClick = { viewModel.startSearchingFlight(flightNumber) },
+                onClick = {
+                    // ✅ تحقق سريع قبل استهلاك طلب
+                    if (!viewModel.hasValidToken()) {
+                        viewModel.addLog("🔒 لا يوجد توكن صالح — الانتقال لـ Login")
+                        navController.navigate(Screen.Login.route) {
+                            popUpTo(Screen.Search.route) { inclusive = true }
+                        }
+                        return@Button
+                    }
+                    viewModel.startSearchingFlight(flightNumber)
+                },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = flightNumber.isNotBlank()
             ) {
@@ -85,7 +101,7 @@ fun SearchScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -102,7 +118,7 @@ fun SearchScreen(
                 Text(" نسخ")
             }
         }
-        
+
         Spacer(modifier = Modifier.height(8.dp))
 
         SelectionContainer {
@@ -113,8 +129,8 @@ fun SearchScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Text(
-                            text = log, 
-                            modifier = Modifier.padding(12.dp), 
+                            text = log,
+                            modifier = Modifier.padding(12.dp),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
