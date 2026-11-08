@@ -83,6 +83,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return prefs.getString("dynamic_cookies", null)
     }
 
+    // 🔥 تحديث الترويسات لإضافة channel و browserid
     private fun buildHeaders(apiVersion: String): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
@@ -105,6 +106,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to "https://www.saudia.com/",
             "User-Agent" to userAgent,
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "channel" to "MOBILE_WEB", // 🔥 تم إضافة القناة
+            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9", // 🔥 معرف المتصفح من الالتقاط
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
@@ -160,7 +163,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
 
                     val response = RetrofitClient.api.searchAirBounds(
-                        headers = buildHeaders("4"), // إصدار البحث 4
+                        headers = buildHeaders("4"),
                         request = request
                     )
                     
@@ -218,7 +221,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // 🔥 هنا السحر: إنشاء السلة ثم جلب بيانات صفحة المسافرين فوراً
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
         
@@ -226,10 +228,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         
         viewModelScope.launch {
             try {
-                // 1. إنشاء السلة
                 val createRequest = CreateCartRequest(airBoundIds = listOf(flight.airBoundId))
                 val createResponse = RetrofitClient.api.createCart(
-                    headers = buildHeaders("2"), // إصدار إنشاء السلة 2
+                    headers = buildHeaders("2"),
                     request = createRequest
                 )
                 
@@ -238,7 +239,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (createResponse.isSuccessful) {
                     val responseBody = createResponse.body()?.string() ?: ""
                     
-                    // استخراج رقم السلة
                     val jsonObject = JsonParser.parseString(responseBody).asJsonObject
                     val extractedCartId = jsonObject.getAsJsonObject("data")?.get("id")?.asString 
                         ?: jsonObject.get("id")?.asString ?: ""
@@ -247,11 +247,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         _cartId.value = extractedCartId
                         addLog("✅ تم إنشاء السلة: $extractedCartId")
                         
-                        // 2. جلب بيانات صفحة المسافرين باستخدام رقم السلة
                         addLog("جاري جلب بيانات صفحة المسافرين...")
                         val getCartResponse = RetrofitClient.api.getCartDetails(
                             cartId = extractedCartId,
-                            headers = buildHeaders("3") // إصدار جلب السلة 3
+                            headers = buildHeaders("3")
                         )
                         
                         saveCookiesFromResponse(getCartResponse)
