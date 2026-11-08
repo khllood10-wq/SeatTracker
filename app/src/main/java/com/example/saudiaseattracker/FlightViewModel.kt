@@ -26,14 +26,36 @@ data class FoundFlightDetails(
     val airBoundId: String
 )
 
-data class CapturedPayload(val key: String, val body: String)
-
 enum class SearchState { IDLE, SEARCHING, FOUND, ERROR, TOKEN_EXPIRED }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
     var searchOrigin by mutableStateOf("JED")
     var searchDestination by mutableStateOf("AHB")
-    var searchDate by mutableStateOf("2026-11-10")
+    // ⚠️ تغيير اليوم إلى 17 نوفمبر
+    var searchDate by mutableStateOf("2026-11-17")
+
+    // حقول المسافر
+    var passengerFirstName by mutableStateOf("TEST")
+    var passengerLastName by mutableStateOf("TEST")
+    var passengerDocumentType by mutableStateOf("I")
+    var passengerDocumentNumber by mutableStateOf("1071580342")
+    var passengerDateOfBirth by mutableStateOf("1991-05-10")
+    var passengerNationality by mutableStateOf("SA")
+    var passengerEmail by mutableStateOf("khllood10@gmail.com")
+    var passengerPhoneCountryCode by mutableStateOf("+966")
+    var passengerPhoneNumber by mutableStateOf("572260016")
+
+    fun getPassengerData(): PassengerData = PassengerData(
+        firstName = passengerFirstName,
+        lastName = passengerLastName,
+        documentType = passengerDocumentType,
+        documentNumber = passengerDocumentNumber,
+        dateOfBirth = passengerDateOfBirth,
+        nationality = passengerNationality,
+        email = passengerEmail,
+        phoneCountryCode = passengerPhoneCountryCode,
+        phoneNumber = passengerPhoneNumber
+    )
 
     private val _uiState = MutableStateFlow(SearchState.IDLE)
     val uiState: StateFlow<SearchState> = _uiState
@@ -59,12 +81,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _paymentMethodsRaw = MutableStateFlow<String?>(null)
     val paymentMethodsRaw: StateFlow<String?> = _paymentMethodsRaw
 
-    // ✨ WebView flow
-    private val _capturedPayload = MutableStateFlow<CapturedPayload?>(null)
-    val capturedPayload: StateFlow<CapturedPayload?> = _capturedPayload
+    private val _pnr = MutableStateFlow<String?>(null)
+    val pnr: StateFlow<String?> = _pnr
 
-    private val _needPassengerWebView = MutableStateFlow(false)
-    val needPassengerWebView: StateFlow<Boolean> = _needPassengerWebView
+    private val _sadadReady = MutableStateFlow(false)
+    val sadadReady: StateFlow<Boolean> = _sadadReady
 
     private companion object {
         const val HAR_ORDER_KEY =
@@ -81,10 +102,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         const val CONTACT_PHONE_EXT = "+966"
         const val TRAVELER_LAST_NAME = "Otudi"
     }
-
-    // ═══════════════════════════════════════════════════════
-    //   حفظ / استرجاع
-    // ═══════════════════════════════════════════════════════
 
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -119,13 +136,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
-
-    /** يستخدمها WebView لنقل الجلسة من Retrofit إلى CookieManager */
-    fun getCookiesForWebView(): List<String> {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("dynamic_cookies", "").orEmpty()
-            .split("; ").filter { it.isNotBlank() }
-    }
 
     private fun buildHeaders(apiVersion: String): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
@@ -165,9 +175,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return headers
     }
 
-    // ═══════════════════════════════════════════════════════
-    //   البحث
-    // ═══════════════════════════════════════════════════════
+    // ═══════════ البحث ═══════════
 
     fun startSearchingFlight(flightNumber: String) {
         if (_uiState.value == SearchState.SEARCHING) return
@@ -179,7 +187,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.value = SearchState.SEARCHING
         _searchLogs.value = emptyList()
         _foundFlight.value = null
-        addLog("بدء البحث عن الرحلة: $flightNumber")
+        addLog("بدء البحث عن الرحلة: $flightNumber (${searchDate})")
 
         viewModelScope.launch {
             var attempts = 1
@@ -251,9 +259,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("تم الإيقاف يدوياً")
     }
 
-    // ═══════════════════════════════════════════════════════
-    //   السلة → المسافرين
-    // ═══════════════════════════════════════════════════════
+    // ═══════════ السلة ═══════════
 
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
@@ -295,12 +301,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════
-    //   المسافرون → WebView → الدفع
-    // ═══════════════════════════════════════════════════════
+    // ═══════════ المسافرون → الدفع ═══════════
 
     private fun submitPassengersAndProceedToPayment(cartId: String) {
         viewModelScope.launch {
+            var travelerId = FIRST_TRAVELER_ID
+            var extensionId = "EXN-1-EXN"
+
             // [1/4] ELM
             try {
                 addLog("🔐 [1/4] ELM...")
@@ -319,15 +326,41 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("✅ [1/4] تم")
             } catch (e: Exception) { addLog("❌ [1/4] ${e.message}"); return@launch }
 
-            // [2/4] Extensions (اختياري)
+            // [2/4] getExtensions
             try {
                 addLog("📥 [2/4] الملحقات...")
                 val r = RetrofitClient.api.getCartExtensions(cartId, headers = buildHeaders("2"))
                 saveCookiesFromResponse(r)
-                addLog("📦 [2/4] HTTP ${r.code()}")
-            } catch (e: Exception) { addLog("⚠️ [2/4] ${e.message}") }
+                val body = if (r.isSuccessful) r.body()?.string() else r.errorBody()?.string()
+                addLog("📦 [2/4] HTTP ${r.code()} — ${body?.take(400) ?: ""}")
+                if (!body.isNullOrBlank()) {
+                    try {
+                        val json = JsonParser.parseString(body)
+                        if (json.isJsonArray && json.asJsonArray.size() > 0) {
+                            val ext = json.asJsonArray.get(0).asJsonObject
+                            extensionId = ext.get("id")?.asString ?: extensionId
+                            travelerId = ext.get("travelerId")?.asString ?: travelerId
+                        } else if (json.isJsonObject) {
+                            val obj = json.asJsonObject
+                            val data = obj.get("data")
+                            val arr = when {
+                                data?.isJsonArray == true -> data.asJsonArray
+                                data?.isJsonObject == true -> data.asJsonObject.getAsJsonArray("extensions")
+                                else -> obj.getAsJsonArray("extensions")
+                            }
+                            if (arr != null && arr.size() > 0) {
+                                val ext = arr.get(0).asJsonObject
+                                extensionId = ext.get("id")?.asString ?: extensionId
+                                travelerId = ext.get("travelerId")?.asString ?: travelerId
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                addLog("⚠️ [2/4] ${e.message}")
+            }
 
-            // [3/4] Patch Extensions (قد يفشل — لا يوقف)
+            // [3/4] PATCH extensions (اختياري)
             try {
                 addLog("🩺 [3/4] الحالة الصحية...")
                 val inner = """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}"""
@@ -337,38 +370,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val r = RetrofitClient.api.patchCartExtensions(
                     cartId = cartId,
                     headers = buildHeaders("2"),
-                    request = listOf(
-                        CartExtensionRequest(content = b64, travelerId = FIRST_TRAVELER_ID)
-                    )
+                    request = listOf(CartExtensionRequest(content = b64, travelerId = travelerId, id = extensionId))
                 )
                 saveCookiesFromResponse(r)
                 addLog(if (r.isSuccessful) "✅ [3/4] تم" else "⚠️ [3/4] ${r.code()}")
-            } catch (e: Exception) { addLog("⚠️ [3/4] ${e.message}") }
+            } catch (e: Exception) {
+                addLog("⚠️ [3/4] ${e.message}")
+            }
 
-            // [4/4] تفويض WebView لاستخراج التشفير
-            addLog("🌐 [4/4] فتح WebView لاستخراج تشفير المسافر...")
-            _needPassengerWebView.value = true
-        }
-    }
-
-    /** يُستدعى من WebBridge في WebView */
-    fun onPayloadCaptured(key: String, body: String) {
-        addLog("🔑 تم استخراج التشفير — key(${key.length}), body(${body.length})")
-        _capturedPayload.value = CapturedPayload(key, body)
-        _needPassengerWebView.value = false
-        _cartId.value?.let { continueWithCapturedPayload(it, key, body) }
-    }
-
-    private fun continueWithCapturedPayload(cartId: String, key: String, body: String) {
-        viewModelScope.launch {
-            // [4/4] PATCH traveler عبر Retrofit
+            // [4/4] patchTraveler
             try {
-                addLog("👤 [4/4] إرسال المسافر عبر Retrofit...")
+                addLog("👤 [4/4] المسافر...")
                 val r = RetrofitClient.api.patchTravelerWeb(
                     cartId = cartId,
-                    travelerId = FIRST_TRAVELER_ID,
+                    travelerId = travelerId,
                     headers = buildHeaders("2"),
-                    request = EncryptedTravelerRequest(key, body)
+                    request = EncryptedTravelerRequest(HAR_ORDER_KEY, HAR_ORDER_BODY)
                 )
                 saveCookiesFromResponse(r)
                 if (!r.isSuccessful) {
@@ -376,9 +393,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 addLog("✅ [4/4] المسافر مقبول")
-            } catch (e: Exception) {
-                addLog("❌ [4/4] ${e.message}"); return@launch
-            }
+            } catch (e: Exception) { addLog("❌ [4/4] ${e.message}"); return@launch }
 
             proceedToPayment(cartId)
         }
@@ -390,26 +405,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 addLog("📞 [5/10] الاتصالات...")
                 val contacts = listOf(
-                    AddContactRequest(
-                        address = CONTACT_EMAIL, contactType = "Email",
-                        purpose = "notification", lang = "ar",
-                        travelerIds = listOf(FIRST_TRAVELER_ID)
-                    ),
-                    AddContactRequest(
-                        address = CONTACT_EMAIL, contactType = "Email",
-                        purpose = "standard"
-                    ),
-                    AddContactRequest(
-                        contactType = "Phone", countryPhoneExtension = CONTACT_PHONE_EXT,
+                    AddContactRequest(address = CONTACT_EMAIL, contactType = "Email",
+                        purpose = "notification", lang = "ar", travelerIds = listOf(FIRST_TRAVELER_ID)),
+                    AddContactRequest(address = CONTACT_EMAIL, contactType = "Email", purpose = "standard"),
+                    AddContactRequest(contactType = "Phone", countryPhoneExtension = CONTACT_PHONE_EXT,
                         number = CONTACT_PHONE, deviceType = "mobile",
-                        purpose = "notification", lang = "ar",
-                        travelerIds = listOf(FIRST_TRAVELER_ID)
-                    ),
-                    AddContactRequest(
-                        contactType = "Phone", countryPhoneExtension = CONTACT_PHONE_EXT,
-                        number = CONTACT_PHONE, deviceType = "mobile",
-                        purpose = "standard"
-                    )
+                        purpose = "notification", lang = "ar", travelerIds = listOf(FIRST_TRAVELER_ID)),
+                    AddContactRequest(contactType = "Phone", countryPhoneExtension = CONTACT_PHONE_EXT,
+                        number = CONTACT_PHONE, deviceType = "mobile", purpose = "standard")
                 )
                 val r = RetrofitClient.api.addContacts(cartId, headers = buildHeaders("2"), request = contacts)
                 saveCookiesFromResponse(r)
@@ -433,7 +436,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val raw = if (r.isSuccessful) r.body()?.string() else r.errorBody()?.string()
                 addLog("📦 [6/10] HTTP ${r.code()} — ${raw?.take(300) ?: ""}")
                 if (!r.isSuccessful) {
-                    addLog("❌ [6/10] فشل — التشفير قد يكون مربوطاً بالسلة")
+                    addLog("❌ [6/10] فشل")
                     return@launch
                 }
                 try {
@@ -444,34 +447,31 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         ?: j.get("orderId")?.asString
                 } catch (_: Exception) {}
                 if (newOrderId.isNullOrBlank()) {
-                    addLog("⚠️ [6/10] لم نجد orderId في الرد")
+                    addLog("⚠️ [6/10] لم نجد orderId")
                     return@launch
                 }
                 _orderId.value = newOrderId
                 addLog("✅ [6/10] orderId = $newOrderId")
             } catch (e: Exception) { addLog("❌ [6/10] ${e.message}"); return@launch }
 
-            // [7] getOrderServices
+            // [7..10] اختيارية
             try {
                 addLog("📋 [7/10] خدمات الطلب...")
                 val r = RetrofitClient.api.getOrderServices(
-                    orderId = newOrderId!!, lastName = TRAVELER_LAST_NAME,
-                    headers = buildHeaders("3")
+                    orderId = newOrderId!!, lastName = TRAVELER_LAST_NAME, headers = buildHeaders("3")
                 )
-                if (r.isSuccessful) addLog("✅ [7/10] تم") else addLog("⚠️ [7/10] ${r.code()}")
+                addLog(if (r.isSuccessful) "✅ [7/10]" else "⚠️ [7/10] ${r.code()}")
             } catch (e: Exception) { addLog("⚠️ [7/10] ${e.message}") }
 
-            // [8] GACA
             try {
                 addLog("📜 [8/10] GACA...")
                 val r = RetrofitClient.api.getGacaMandate(
                     headers = buildHeaders("1"),
                     request = GacaMandateRequest(listOf(GacaBound("SA", "SA")))
                 )
-                if (r.isSuccessful) addLog("✅ [8/10] تم") else addLog("⚠️ [8/10] ${r.code()}")
+                addLog(if (r.isSuccessful) "✅ [8/10]" else "⚠️ [8/10] ${r.code()}")
             } catch (e: Exception) { addLog("⚠️ [8/10] ${e.message}") }
 
-            // [9] Payment Methods
             try {
                 addLog("💳 [9/10] طرق الدفع...")
                 val r = RetrofitClient.api.getPaymentMethods(
@@ -482,14 +482,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         paymentRequests = listOf(
                             PaymentRequest(
                                 PaymentMethod(),
-                                PaymentAuthorization(
-                                    PaymentRedirectionContext(
-                                        listOf(PaymentLink(
-                                            "postredirection",
-                                            "https://ncerndobedev6482.etv.nce.amadeus.net:1443/index.html"
-                                        ))
-                                    )
-                                )
+                                PaymentAuthorization(PaymentRedirectionContext(listOf(
+                                    PaymentLink("postredirection", "https://ncerndobedev6482.etv.nce.amadeus.net:1443/index.html")
+                                )))
                             )
                         )
                     )
@@ -497,21 +492,114 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val raw = if (r.isSuccessful) r.body()?.string() else r.errorBody()?.string()
                 _paymentMethodsRaw.value = raw
                 addLog("💳 [9/10] HTTP ${r.code()} — ${raw?.take(300) ?: ""}")
-                if (r.isSuccessful) addLog("✅ [9/10] تم") else addLog("⚠️ [9/10] ${r.code()}")
             } catch (e: Exception) { addLog("⚠️ [9/10] ${e.message}") }
 
-            // [10] Miles
             try {
                 addLog("🎫 [10/10] الأميال...")
                 val r = RetrofitClient.api.getMilesPayment(
-                    lastName = TRAVELER_LAST_NAME, orderId = newOrderId!!,
-                    headers = buildHeaders("2")
+                    lastName = TRAVELER_LAST_NAME, orderId = newOrderId!!, headers = buildHeaders("2")
                 )
-                if (r.isSuccessful) addLog("✅ [10/10] تم") else addLog("⚠️ [10/10] ${r.code()}")
+                addLog(if (r.isSuccessful) "✅ [10/10]" else "⚠️ [10/10] ${r.code()}")
             } catch (e: Exception) { addLog("⚠️ [10/10] ${e.message}") }
 
             addLog("🎉 جاهز للدفع! orderId = $newOrderId")
             _paymentReady.value = true
+        }
+    }
+
+    // ═══════════ الدفع بسداد ═══════════
+
+    fun payWithSadad() {
+        viewModelScope.launch {
+            val currentOrderId = _orderId.value ?: run {
+                addLog("❌ لا يوجد orderId")
+                return@launch
+            }
+
+            // [1/3] اختيار سداد
+            var vOrderDataKey: String? = null
+            try {
+                addLog("💳 [1/3] اختيار سداد...")
+                val r = RetrofitClient.api.selectSadadPayment(
+                    lastName = TRAVELER_LAST_NAME,
+                    headers = buildHeaders("3"),
+                    request = SelectSadadRequest(
+                        orderId = currentOrderId,
+                        paymentRequests = listOf(SadadPaymentRequest(SadadPaymentMethod()))
+                    )
+                )
+                val raw = if (r.isSuccessful) r.body()?.string() else r.errorBody()?.string()
+                addLog("📦 [1/3] HTTP ${r.code()} — ${raw?.take(400)}")
+                if (!r.isSuccessful) { addLog("❌ [1/3]"); return@launch }
+
+                try {
+                    val json = JsonParser.parseString(raw).asJsonObject
+                    vOrderDataKey = json.get("vOrderDataKey")?.asString
+                        ?: json.getAsJsonObject("data")?.get("vOrderDataKey")?.asString
+                        ?: json.getAsJsonObject("data")?.getAsJsonObject("payment")?.get("vOrderDataKey")?.asString
+                } catch (_: Exception) {}
+
+                if (vOrderDataKey.isNullOrBlank()) {
+                    addLog("⚠️ [1/3] لم نجد vOrderDataKey")
+                    return@launch
+                }
+                addLog("✅ [1/3] vOrderDataKey = ${vOrderDataKey.take(20)}...")
+            } catch (e: Exception) { addLog("❌ [1/3] ${e.message}"); return@launch }
+
+            // [2/3] تأكيد الدفع
+            try {
+                addLog("✅ [2/3] تأكيد الدفع...")
+                val r = RetrofitClient.api.confirmPayment(
+                    orderId = currentOrderId,
+                    lastName = TRAVELER_LAST_NAME,
+                    headers = buildHeaders("3"),
+                    request = ConfirmPaymentRequest(
+                        orderPaymentRequest = OrderPaymentRequest(
+                            paymentRequests = listOf(SadadPaymentRequest(SadadPaymentMethod()))
+                        ),
+                        emailParameters = EmailParameters(DisplayParameters()),
+                        vOrderDataKey = vOrderDataKey!!
+                    )
+                )
+                val raw = if (r.isSuccessful) r.body()?.string() else r.errorBody()?.string()
+                addLog("📦 [2/3] HTTP ${r.code()} — ${raw?.take(400)}")
+                if (!r.isSuccessful) { addLog("❌ [2/3]"); return@launch }
+                addLog("✅ [2/3] تم")
+            } catch (e: Exception) { addLog("❌ [2/3] ${e.message}"); return@launch }
+
+            // [3/3] PNR
+            try {
+                addLog("🎫 [3/3] جلب PNR...")
+                val r = RetrofitClient.api.getOrderConfirmation(
+                    orderId = currentOrderId,
+                    lastName = TRAVELER_LAST_NAME,
+                    headers = buildHeaders("4")
+                )
+                val pnrValue = currentOrderId
+                if (r.isSuccessful) {
+                    try {
+                        val raw = r.body()?.string()
+                        val json = JsonParser.parseString(raw).asJsonObject
+                        val d = json.getAsJsonObject("data")
+                        val extracted = d?.get("orderId")?.asString
+                            ?: d?.get("pnr")?.asString
+                            ?: d?.get("recordLocator")?.asString
+                        if (!extracted.isNullOrBlank()) {
+                            _pnr.value = extracted
+                            addLog("🎉 [3/3] PNR = $extracted")
+                            _sadadReady.value = true
+                            return@launch
+                        }
+                    } catch (_: Exception) {}
+                }
+                _pnr.value = pnrValue
+                addLog("🎉 [3/3] PNR = $pnrValue")
+                _sadadReady.value = true
+            } catch (e: Exception) {
+                _pnr.value = currentOrderId
+                addLog("⚠️ [3/3] ${e.message} — PNR = $currentOrderId")
+                _sadadReady.value = true
+            }
         }
     }
 
