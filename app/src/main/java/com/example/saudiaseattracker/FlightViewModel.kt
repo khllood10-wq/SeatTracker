@@ -31,6 +31,7 @@ enum class SearchState {
 }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
+    // ⚙️ إعدادات البحث
     var searchOrigin by mutableStateOf("JED")
     var searchDestination by mutableStateOf("AHB")
     var searchDate by mutableStateOf("2026-11-10")
@@ -44,8 +45,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
+    // لحفظ رقم السلة
     private val _cartId = MutableStateFlow<String?>(null)
     val cartId: StateFlow<String?> = _cartId
+
+    // 🔥 لحفظ الرد الكامل (JSON) لعرضه في صفحة المسافرين
+    private val _rawCartResponse = MutableStateFlow<String?>(null)
+    val rawCartResponse: StateFlow<String?> = _rawCartResponse
 
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -55,7 +61,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("session_id", sessionId)
             .putString("user_agent", userAgent)
             .apply()
-        addLog("✅ تم حفظ التوكن بنجاح!")
+        addLog("✅ تم حفظ التوكن و User-Agent بنجاح!")
     }
 
     private fun getSavedAuthToken(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
@@ -63,17 +69,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
-    // 🔥 دالة لحفظ الكوكيز التي يرسلها السيرفر
+    // التقاط الكوكيز من ردود السيرفر
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isNotEmpty()) {
             val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
             val currentCookies = prefs.getString("dynamic_cookies", "") ?: ""
             
-            // استخراج اسم وقيمة الكوكي فقط (تجاهل Path و Domain و Expires)
             val newCookies = setCookieHeaders.joinToString("; ") { it.split(";").first() }
-            
-            // دمج الجديد مع القديم لتجنب التكرار (يمكن تحسينه لاحقاً)
             val updatedCookies = if (currentCookies.isEmpty()) newCookies else "$currentCookies; $newCookies"
             
             prefs.edit().putString("dynamic_cookies", updatedCookies).apply()
@@ -116,7 +119,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
 
-        // 🔥 إضافة الكوكيز المحفوظة للطلب
         val dynamicCookies = getSavedDynamicCookies()
         if (!dynamicCookies.isNullOrEmpty()) {
             headers["Cookie"] = dynamicCookies
@@ -168,7 +170,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         request = request
                     )
                     
-                    // التقاط الكوكيز من الرد
                     saveCookiesFromResponse(response)
 
                     if (response.isSuccessful) {
@@ -223,10 +224,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // 🔥 دالة إنشاء السلة والتقاط الرد الكامل
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
         
-        addLog("جاري إنشاء السلة...")
+        addLog("جاري إنشاء السلة وجلب الرد...")
         
         viewModelScope.launch {
             try {
@@ -236,14 +238,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     request = request
                 )
                 
-                // التقاط الكوكيز من رد إنشاء السلة
                 saveCookiesFromResponse(response)
 
                 if (response.isSuccessful) {
                     val responseBody = response.body()?.string() ?: ""
-                    addLog("📄 رد إنشاء السلة: $responseBody")
                     
-                    // محاولة استخراج cartId من الرد (غالباً يكون في حقل اسمه cartId)
+                    // حفظ الرد الكامل لعرضه
+                    _rawCartResponse.value = responseBody
+                    
+                    // محاولة استخراج cartId
                     try {
                         val jsonObject = JsonParser.parseString(responseBody).asJsonObject
                         val extractedCartId = jsonObject.get("cartId")?.asString 
@@ -252,9 +255,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         
                         if (extractedCartId.isNotEmpty()) {
                             _cartId.value = extractedCartId
-                            addLog("✅ تم إنشاء السلة بنجاح! رقم السلة: $extractedCartId")
+                            addLog("✅ تم إنشاء السلة: $extractedCartId")
                         } else {
-                            addLog("⚠️ لم نتمكن من قراءة رقم السلة من الرد.")
+                            addLog("⚠️ لم نجد cartId في الرد.")
                         }
                     } catch (e: Exception) {
                          addLog("⚠️ فشل تحليل الرد: ${e.message}")
@@ -262,9 +265,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     
                 } else {
                     addLog("❌ فشل إنشاء السلة. رمز الخطأ: ${response.code()}")
+                    _rawCartResponse.value = response.errorBody()?.string() ?: "خطأ غير معروف"
                 }
             } catch (e: Exception) {
                 addLog("❌ حدث خطأ أثناء إنشاء السلة: ${e.message}")
+                _rawCartResponse.value = "Exception: ${e.message}"
             }
         }
     }
