@@ -29,15 +29,24 @@ fun PassengersScreen(
     navController: NavController,
     viewModel: FlightViewModel
 ) {
-    // ✅ الحل: rawCartResponse قد يكون null → نستخدم orEmpty()
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
+    val seatsReady = viewModel.seatsReady.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
     // إنشاء السلة عند الدخول
     LaunchedEffect(Unit) {
         viewModel.createCartAndProceedToPassenger()
+    }
+
+    // 🔥 الانتقال التلقائي للمقاعد عند جاهزيتها
+    LaunchedEffect(seatsReady) {
+        if (seatsReady) {
+            navController.navigate(Screen.Seats.route) {
+                popUpTo(Screen.Passengers.route) { inclusive = true }
+            }
+        }
     }
 
     Column(
@@ -49,7 +58,6 @@ fun PassengersScreen(
     ) {
         Text("صفحة المسافرين", style = MaterialTheme.typography.headlineMedium)
 
-        // ملخص الحجز
         foundFlight?.let { f ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -67,7 +75,6 @@ fun PassengersScreen(
             }
         }
 
-        // حالة السلة
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -87,9 +94,16 @@ fun PassengersScreen(
             }
         }
 
+        if (seatsReady) {
+            Text(
+                "🪑 جاهز للانتقال للمقاعد...",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+
         HorizontalDivider()
 
-        // استجابة السلة الخام
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -126,7 +140,6 @@ fun PassengersScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // زر الانتقال للدفع (معطّل حتى يظهر cartId)
         Button(
             onClick = { navController.navigate(Screen.Payment.route) },
             modifier = Modifier.fillMaxWidth(),
