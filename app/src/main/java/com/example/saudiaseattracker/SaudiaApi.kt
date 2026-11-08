@@ -14,7 +14,6 @@ import retrofit2.http.Query
 
 interface SaudiaApi {
 
-    // البحث
     @POST("airsearch/search/air-bounds")
     suspend fun searchAirBounds(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -23,7 +22,6 @@ interface SaudiaApi {
         @Body request: SaudiaSearchRequest
     ): Response<SaudiaResponse>
 
-    // السلة
     @POST("shopping/carts")
     suspend fun createCart(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -43,7 +41,6 @@ interface SaudiaApi {
         @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
 
-    // المسافرون
     @POST("security/elm-profiles/status-verification")
     suspend fun verifyElmProfile(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -79,7 +76,6 @@ interface SaudiaApi {
         @Body request: EncryptedTravelerRequest
     ): Response<ResponseBody>
 
-    // الدفع
     @POST("shopping/carts/{cartId}/contacts")
     suspend fun addContacts(
         @Path("cartId") cartId: String,
@@ -135,6 +131,42 @@ interface SaudiaApi {
         @Query("orderId") orderId: String,
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("servicesAndSeatsOnly") servicesAndSeatsOnly: Boolean = false,
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>
+    ): Response<ResponseBody>
+
+    // ═══════════ الدفع بسداد ═══════════
+
+    @POST("checkout/payment/payment-methods")
+    suspend fun selectSadadPayment(
+        @Query("lastName") lastName: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: SelectSadadRequest
+    ): Response<ResponseBody>
+
+    @POST("checkout/payment/orders/{orderId}/payment-records")
+    suspend fun confirmPayment(
+        @Path("orderId") orderId: String,
+        @Query("lastName") lastName: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: ConfirmPaymentRequest
+    ): Response<ResponseBody>
+
+    @GET("purchase/orders/{orderId}")
+    suspend fun getOrderConfirmation(
+        @Path("orderId") orderId: String,
+        @Query("lastName") lastName: String,
+        @Query("mcpCache") mcpCache: Boolean = true,
+        @Query("showPlusgrade") showPlusgrade: Boolean = false,
+        @Query("showOrderEligibilities") showOrderEligibilities: Boolean = true,
+        @Query("pointOfSale") pointOfSale: String = "SA",
+        @Query("flow") flow: String = "booking",
+        @Query("pageIdentity") pageIdentity: String = "BookingConfirmation",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
