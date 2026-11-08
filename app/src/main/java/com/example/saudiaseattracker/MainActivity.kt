@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -33,8 +34,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainAppScreen() {
     val navController = rememberNavController()
+    // إنشاء الـ ViewModel مرة واحدة ومشاركته بين الصفحات
+    val flightViewModel: FlightViewModel = viewModel()
     
-    // قائمة الصفحات في الشريط السفلي (من اليمين لليسار)
     val items = listOf(
         Screen.Search,
         Screen.FlightDetails,
@@ -43,33 +45,38 @@ fun MainAppScreen() {
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentDestination = navBackStackEntry?.destination
-                
-                items.forEach { screen ->
-                    NavigationBarItem(
-                        icon = { 
-                            val icon = when(screen) {
-                                Screen.Search -> Icons.Default.Search
-                                Screen.FlightDetails -> Icons.Default.Flight
-                                Screen.Passengers -> Icons.Default.Person
-                                else -> Icons.Default.Home
-                            }
-                            Icon(icon, contentDescription = screen.title) 
-                        },
-                        label = { Text(screen.title) },
-                        selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
-                        onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+            // إخفاء الشريط السفلي في صفحة تسجيل الدخول عشان تكون شاشة كاملة
+            val navBackStackEntry by navController.currentBackStackEntryAsState()
+            val currentRoute = navBackStackEntry?.destination?.route
+            
+            if (currentRoute != Screen.Login.route) {
+                NavigationBar {
+                    val currentDestination = navBackStackEntry?.destination
+                    
+                    items.forEach { screen ->
+                        NavigationBarItem(
+                            icon = { 
+                                val icon = when(screen) {
+                                    Screen.Search -> Icons.Default.Search
+                                    Screen.FlightDetails -> Icons.Default.Flight
+                                    Screen.Passengers -> Icons.Default.Person
+                                    else -> Icons.Default.Home
                                 }
-                                launchSingleTop = true
-                                restoreState = true
+                                Icon(icon, contentDescription = screen.title) 
+                            },
+                            label = { Text(screen.title) },
+                            selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                            onClick = {
+                                navController.navigate(screen.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -79,10 +86,16 @@ fun MainAppScreen() {
             startDestination = Screen.Search.route,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Screen.Search.route) { SearchScreen(navController) }
+            // تمرير الـ ViewModel لكل صفحة
+            composable(Screen.Search.route) { SearchScreen(navController, flightViewModel) }
             composable(Screen.FlightDetails.route) { FlightDetailsScreen(navController) }
             composable(Screen.Passengers.route) { PassengersScreen(navController) }
             composable(Screen.Payment.route) { PaymentScreen(navController) }
+            
+            // إضافة صفحة تسجيل الدخول
+            composable(Screen.Login.route) { 
+                LoginScreen(navController, flightViewModel) 
+            }
         }
     }
 }
