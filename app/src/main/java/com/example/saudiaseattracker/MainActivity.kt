@@ -35,7 +35,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
-    // ✨ نسخة واحدة مشتركة بين كل الشاشات
     val viewModel: FlightViewModel = viewModel()
 
     Scaffold { padding ->
@@ -60,7 +59,8 @@ fun AppNavigation() {
                 SeatsScreen(navController = navController, viewModel = viewModel)
             }
             composable(Screen.Payment.route) {
-                PaymentScreen(navController = navController, viewModel = viewModel)
+                // ⚠️ PaymentScreen لا يستقبل viewModel حالياً
+                PaymentScreen(navController = navController)
             }
         }
     }
