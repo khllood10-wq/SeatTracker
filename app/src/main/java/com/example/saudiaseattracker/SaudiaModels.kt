@@ -2,7 +2,7 @@ package com.example.saudiaseattracker
 
 import com.google.gson.annotations.SerializedName
 
-// ═══════════ REQUEST MODELS (البحث) ═══════════
+// ═══════════ REQUEST MODELS (البحث فقط) ═══════════
 
 data class SaudiaSearchRequest(
     @SerializedName("region") val region: String = "KSA",
@@ -42,26 +42,4 @@ data class OfferCodeAvailabilityInput(
     @SerializedName("currencyCode") val currencyCode: String = "SAR",
     @SerializedName("language") val language: String = "AR",
     @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
-)
-
-// ═══════════ REQUEST MODELS (المسافرون — جديد) ═══════════
-
-data class ElmVerificationRequest(
-    @SerializedName("documentType") val documentType: String = "I",
-    @SerializedName("documentNumber") val documentNumber: String,
-    @SerializedName("nationality") val nationality: String = "SA",
-    @SerializedName("dateOfBirth") val dateOfBirth: String   // "yyyy-MM-dd"
-)
-
-data class CartExtensionRequest(
-    @SerializedName("content") val content: String,
-    @SerializedName("travelerId") val travelerId: String,
-    @SerializedName("extensionType") val extensionType: String = "TextExtension",
-    @SerializedName("name") val name: String = "YQENSTATUS",
-    @SerializedName("id") val id: String = "EXN-1-EXN"
-)
-
-data class EncryptedTravelerRequest(
-    @SerializedName("key") val key: String,
-    @SerializedName("body") val body: String
 )
