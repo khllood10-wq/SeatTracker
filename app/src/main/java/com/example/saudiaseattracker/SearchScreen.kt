@@ -14,7 +14,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,11 +31,20 @@ fun SearchScreen(
     val searchLogs by viewModel.searchLogs.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // 🔥 هذا الجزء هو اللي ينقلك لصفحة المسافرين
+    LaunchedEffect(uiState) {
+        if (uiState == SearchState.FOUND) {
+            navController.navigate(Screen.Passengers.route)
+            viewModel.stopSearch()
+        } else if (uiState == SearchState.TOKEN_EXPIRED) {
+            navController.navigate(Screen.Login.route)
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("البحث عن رحلة", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(16.dp))
 
-        // عرض إعدادات البحث الحالية
         Card(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -45,7 +53,6 @@ fun SearchScreen(
                 Text("إعدادات الرحلة الحالية:", fontWeight = FontWeight.Bold)
                 Text("من: ${viewModel.searchOrigin}  ✈️  إلى: ${viewModel.searchDestination}")
                 Text("التاريخ: ${viewModel.searchDate}")
-                Text("النوع: ذهاب فقط")
             }
         }
 
