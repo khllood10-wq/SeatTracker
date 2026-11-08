@@ -24,6 +24,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
+    
+    // لحفظ بيانات الرحلة التي تم العثور عليها لعرضها في الواجهة
+    private val _foundFlightDetails = MutableStateFlow<String?>(null)
+    val foundFlightDetails: StateFlow<String?> = _foundFlightDetails
 
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -41,18 +45,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedUserAgent(): String? = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("user_agent", null)
 
-    private fun saveCookiesFromResponse(cookies: String) {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        val currentCookies = prefs.getString("dynamic_cookies", "") ?: ""
-        val newCookies = if (currentCookies.isEmpty()) cookies else "$currentCookies; $cookies"
-        prefs.edit().putString("dynamic_cookies", newCookies).apply()
-    }
-
-    private fun getSavedDynamicCookies(): String? {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("dynamic_cookies", null)
-    }
-
     private fun buildHeaders(authToken: String, xDToken: String, sessionId: String, userAgent: String): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
@@ -61,7 +53,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
 
-        val headers = mutableMapOf(
+        return mapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
@@ -81,13 +73,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to ddTraceId
         )
-
-        val dynamicCookies = getSavedDynamicCookies()
-        if (!dynamicCookies.isNullOrEmpty()) {
-            headers["Cookie"] = dynamicCookies
-        }
-
-        return headers
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -106,11 +91,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         _uiState.value = SearchState.SEARCHING
         _searchLogs.value = emptyList()
+        _foundFlightDetails.value = null
         addLog("بدء البحث الحقيقي عن الرحلة: $flightNumber")
         
         viewModelScope.launch {
             var attempts = 1
-            val maxAttempts = 15 
+            val maxAttempts = 100 // رفعنا الحد الأقصى لأننا سنتركه يبحث طويلاً
             
             val calendar = Calendar.getInstance()
             calendar.add(Calendar.DAY_OF_YEAR, 2)
@@ -119,7 +105,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val departureDateString = "${futureDate}T00:00:00.000"
 
             while (attempts <= maxAttempts && _uiState.value == SearchState.SEARCHING) {
-                addLog("المحاولة $attempts: جاري الاتصال عبر API...")
+                addLog("المحاولة $attempts: جاري فحص الرحلات...")
                 
                 try {
                     val request = SaudiaSearchRequest(
@@ -144,61 +130,61 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         request = request
                     )
 
-                    // التقاط الكوكيز
-                    val setCookieHeaders = response.headers().values("Set-Cookie")
-                    if (setCookieHeaders.isNotEmpty()) {
-                        val newCookies = setCookieHeaders.joinToString("; ") { it.split(";").first() }
-                        saveCookiesFromResponse(newCookies)
-                        addLog("🍪 تم التقاط كوكيز جديدة من السيرفر.")
-                    }
-
                     if (response.isSuccessful) {
-                        addLog("✅ استجابة ناجحة! رمز الحالة: ${response.code()}")
+                        val responseData = response.body()
                         
-                        // 🔥 قراءة الرد JSON بالكامل
-                        val fullResponseBody = response.body()?.string() ?: "الرد فارغ!"
-                        
-                        addLog("═══════════════════════════════════")
-                        addLog("📥 الرد الكامل من السيرفر:")
-                        addLog("═══════════════════════════════════")
-                        addLog(fullResponseBody)
-                        addLog("═══════════════════════════════════")
-                        
-                        // إيقاف البحث بعد استلام الرد الأول لمراجعته
-                        addLog("⏸️ تم إيقاف البحث مؤقتاً لمراجعة الرد.")
-                        _uiState.value = SearchState.IDLE
-                        return@launch
-                        
+                        // 🔥 البحث عن الرحلة المطلوبة داخل الـ JSON
+                        val matchingGroups = responseData?.data?.airBoundGroups?.filter { group ->
+                            group.boundDetails?.segments?.any { it.flightId?.contains(flightNumber, ignoreCase = true) == true } == true
+                        }
+
+                        if (matchingGroups.isNullOrEmpty()) {
+                            addLog("⚠️ لم يتم العثور على الرحلة $flightNumber في نتائج البحث. جاري المحاولة...")
+                        } else {
+                            val targetGroup = matchingGroups.first()
+                            // فلترة الأسعار المتاحة (التي لا تحتوي على حالة soldOut)
+                            val availableFares = targetGroup.airBounds?.filter { it.status?.value != "soldOut" } ?: emptyList()
+
+                            if (availableFares.isNotEmpty()) {
+                                // العثور على أرخص سعر متاح
+                                val cheapestFare = availableFares.minByOrNull { it.airOffer?.totalPrice?.value ?: Double.MAX_VALUE }
+                                val priceValue = cheapestFare?.airOffer?.totalPrice?.value ?: 0.0
+                                val finalPrice = priceValue / 100.0 // القيمة عادة تكون بالهللة، نقسم 100
+                                val fareFamily = cheapestFare?.fareFamilyCode ?: "غير معروف"
+                                
+                                val details = "رحلة: $flightNumber\nالسعر: $finalPrice ريال\nالفئة: $fareFamily"
+                                _foundFlightDetails.value = details
+                                
+                                addLog("🎉 مبروك! تم العثور على مقعد متاح.")
+                                addLog(details)
+                                _uiState.value = SearchState.FOUND
+                                return@launch
+                            } else {
+                                addLog("🚫 الرحلة $flightNumber ممتلئة بالكامل (Sold Out). انتظار 15 ثانية...")
+                            }
+                        }
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
-                        val errorBodyText = response.errorBody()?.string() ?: "لا يوجد رد"
-                        
-                        addLog("═══════════════════════════════════")
-                        addLog("📥 الرد الكامل للخطأ:")
-                        addLog("═══════════════════════════════════")
-                        addLog(errorBodyText)
-                        addLog("═══════════════════════════════════")
-                        
                         if (response.code() == 401) {
-                            addLog("⚠️ انتهت الصلاحية (401)! جاري تحديث التوكن...")
+                            addLog("⚠️ انتهت الصلاحية (401)!")
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! قد يكون حظر IP مؤقت. جرب استخدام VPN.")
+                            addLog("❌ ممنوع (403)! قد يكون حظر IP مؤقت.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
                     }
                 } catch (e: Exception) {
-                    addLog("❌ حدث خطأ في الشبكة: ${e.message}")
+                    addLog("❌ حدث خطأ: ${e.message}")
                 }
                 
-                delay(15000) 
+                delay(15000) // 15 ثانية لتجنب الحظر
                 attempts++
             }
             
             if (_uiState.value == SearchState.SEARCHING) {
-                addLog("⚠️ توقف البحث: لم يتم العثور على مقعد.")
+                addLog("⚠️ توقف البحث: انتهت المحاولات.")
                 _uiState.value = SearchState.ERROR
             }
         }
