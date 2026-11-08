@@ -32,21 +32,13 @@ fun SearchScreen(
     val context = LocalContext.current
 
     LaunchedEffect(uiState) {
-        when (uiState) {
-            SearchState.FOUND -> {
-                viewModel.stopSearch()
-                navController.navigate(Screen.Passengers.route)
-            }
-            SearchState.TOKEN_EXPIRED -> {
-                // 🔒 فقط 401 يصل هنا
-                viewModel.stopSearch()
-                navController.navigate(Screen.Login.route)
-            }
-            SearchState.ERROR -> {
-                // 🚫 403 — نبقى هنا ليعرض السجل
-                viewModel.stopSearch()
-            }
-            else -> { }
+        if (uiState == SearchState.FOUND) {
+            viewModel.stopSearch()
+            navController.navigate(Screen.Passengers.route)
+        } else if (uiState == SearchState.TOKEN_EXPIRED) {
+            // ✅ ينتقل للـ Login (السلوك القديم الذي كان يعمل)
+            viewModel.stopSearch()
+            navController.navigate(Screen.Login.route)
         }
     }
 
