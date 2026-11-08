@@ -27,7 +27,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    // ⚠️ الدالة المحدثة لاستقبال 3 قيم (حل مشكلة Too many arguments)
     fun saveTokens(auth: String, xDToken: String, sessionId: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
@@ -58,6 +57,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         val authToken = getSavedAuthToken()
         val xDToken = getSavedXDToken() ?: ""
+        val sessionId = getSavedSessionId() ?: ""
 
         if (authToken == null) {
             addLog("❌ لا يوجد توكن! جاري التحديث...")
@@ -73,9 +73,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             var attempts = 1
             val maxAttempts = 15 
             
-            // 📅 تعديل التاريخ: جلب تاريخ اليوم وإضافة يومين
             val calendar = Calendar.getInstance()
-            calendar.add(Calendar.DAY_OF_YEAR, 2) // إضافة يومين
+            calendar.add(Calendar.DAY_OF_YEAR, 2)
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
             val futureDate = sdf.format(calendar.time)
             val departureDateString = "${futureDate}T00:00:00.000"
@@ -101,9 +100,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
+                    // ✅ هنا تم تمرير sessionId
                     val response = RetrofitClient.api.searchAirBounds(
                         authToken = authToken,
                         xDToken = xDToken,
+                        sessionId = sessionId, 
                         request = request
                     )
 
@@ -113,9 +114,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
-                        if (response.code() == 401 || response.code() == 403) {
-                            addLog("⚠️ انتهت الصلاحية أو رُفض الطلب! جاري تحديث التوكن...")
+                        
+                        if (response.code() == 401) {
+                            addLog("⚠️ انتهت الصلاحية (401)! جاري تحديث التوكن...")
                             _uiState.value = SearchState.TOKEN_EXPIRED
+                            return@launch
+                        } else if (response.code() == 403) {
+                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب.")
+                            _uiState.value = SearchState.ERROR
                             return@launch
                         }
                     }
