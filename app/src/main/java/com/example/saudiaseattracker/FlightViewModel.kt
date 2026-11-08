@@ -106,6 +106,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         const val TEST_DOCUMENT_NUMBER = "1071580342"
         const val TEST_DATE_OF_BIRTH   = "1991-05-10"
         const val FIRST_TRAVELER_ID    = "SKH-1-EXT"
+
+        // ⚠️ القيم المشفّرة من HAR (2026-11-08) للمسافر التجريبي
+        private const val HAR_ENCRYPTED_KEY =
+            "XkemQfguUodRJM/FrIbiU9QYGL9U7F2b0MWXyOO1FRa3VtlFelkhRvc7iP9DE34fSkJDlIP5ji6v7PpN21gmwaJR//vfeBTHums1dLkxIUDCz8DivhP2IbZqhFgK/9IADtFED6SJkdJJJeFaSmcIxNFDv5kTAj6lXK/JWu2zkRsjz0elXt6WKqetn5XpI7Ls09aUeKETCdarXRSwsLx/6kMo9F1NVWQHhT4CsoAo/1ad3BqxERmi4HIaT7B4osZhGETqZKgSCAg2G4keaIPnhOrifPzQtNMnBInoQXU4yfI1516rgcdPaNRPMbpkGjrB+4HBtj5oW7dyF56DXH67dUT/5z7Tcu8i7rHQMslo9UAbrtwpXdex9mJng0rZzFWSxd7Ed0RGNJRuQ8Xafjk1aA3FVYw6f01BP92reYJatj2ZeAoOfcL7GdDZ7EzdKNFgNzMG41MbLG5GzZXGPRRYMceULb5w3G6UcjSJBwLBgb6WSZH6M4lZH6UHDwgQ5SwCsqpHCHd4SuyK8VLHTUVRHjf9fowM08cb1zu21IygkkxRNIeXBofWAhqfr54jTlLW4g74bTlsbRHuZ76hmVZSz6ZxvXSs75S3f2giZ5eP9Kf0V/lYN0ONM8IFixIOALiO+7+n6nS0LYOEl7v8bM2xHfpEKPOChTZp0eHlOt5WvVw="
+
+        private const val HAR_ENCRYPTED_BODY =
+            "73371f7a85ee58fad676d0d3e12ac45bf28470a88e7eb50e6089f1585cbcb6c39e97ac3cd9a03a40fdbdb5931e7bf5975afd8f2e224db709e99e3dad5d8a673a9b38d09826f65218df35fc61516f3fa7f6ac1941eba92b826583f281979975562c82c05bae4d6128d8989f42fde23a0b984c0d6d4a4d092d9d5580e2e1797ae83eb1f317277908c0eb4b60ca7149901858236e0cfd419116834cd7fe3817bba8b7ce7d775f607eea3525ca110580e0356cf034d08829d5dee5c59df2cde5011724b5e232f1795a87ae0efbd121122d138925264a1a9c19449a681757c215cc1cb372ccbc1d0c2110093d308a8974c0304ee8c2f7747775eb13438eec0fc5e0ff294d08a47563560bf98339b980af61ca354daacd8d3abe83ee075129d5bc34304479e792b95b472eba68f6c83e5ac49c0c7f4cf56dc5b805f6e40085cd5a72bbb04a1bb4d99a8526d69f96bf122858bcd72c0688a1e78b49a42a30b018be86738cf73731c5139b0a9be873498e40ffbdb4d4645cb25e4b385e748d35ffb0bbec1d20ff59f1e68f4bd5c1196793d5b57f75c6740b37954a6b6f63fe48b6bd107fe00165a3ed79a28d30a180ba6c6d357d32965d8ba0dc0b602888c202578f06c19b8495056d2744d10569d9caa4b5179961151f01ee3debf7237235e65d898b0fc1cfc8d7f9582af51ee558598716886a"
     }
 
     // ═══════════════════════════════════════════════════════
@@ -492,17 +499,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             // ── [4/4] Patch Traveler Web (بيانات المسافر) ──
             try {
                 addLog("👤 [4/4] إرسال بيانات المسافر (مشفّرة)...")
-                val (encKey, encBody) = encryptTravelerPayload(
-                    documentNumber = documentNumber,
-                    dateOfBirth = dateOfBirth
-                )
                 val resp = RetrofitClient.api.patchTravelerWeb(
                     cartId = currentCartId,
                     travelerId = travelerId,
                     guestOfficeId = GUEST_OFFICE_ID,
                     lang = LANG,
                     headers = buildHeaders("2"),
-                    request = EncryptedTravelerRequest(key = encKey, body = encBody)
+                    request = EncryptedTravelerRequest(
+                        key = HAR_ENCRYPTED_KEY,
+                        body = HAR_ENCRYPTED_BODY
+                    )
                 )
                 saveCookiesFromResponse(resp)
                 if (!resp.isSuccessful) {
@@ -550,25 +556,5 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             addLog("✅ [Seats] جاهز للدفع (مؤقت)")
             _paymentReady.value = true
         }
-    }
-
-    // ═══════════════════════════════════════════════════════
-    //   التشفير (TODO — ضع كودك هنا)
-    // ═══════════════════════════════════════════════════════
-
-    /**
-     * ⚠️ TODO: ضع هنا كود التشفير الفعلي الذي عندك.
-     * يجب أن يعيد Pair(key, body) كما في HAR:
-     *   key  = Base64 لـ AES key مشفّر بـ RSA
-     *   body = Hex لـ JSON المسافر مشفّر بـ AES
-     *
-     * مؤقتاً: يعيد نصاً وهمياً للاختبار (لن يقبله السيرفر لكن التدفق سيصل للطلب 4).
-     */
-    private suspend fun encryptTravelerPayload(
-        documentNumber: String,
-        dateOfBirth: String
-    ): Pair<String, String> {
-        addLog("⚠️ [Encryption] هذا نص وهمي — استبدل encryptTravelerPayload() بكودك")
-        return Pair("DUMMY_KEY_BASE64", "DUMMY_BODY_HEX")
     }
 }
