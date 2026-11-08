@@ -5,7 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Flight
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,6 +38,7 @@ fun MainAppScreen() {
     val navController = rememberNavController()
     val flightViewModel: FlightViewModel = viewModel()
     
+    // الصفحات التي ستظهر في الشريط السفلي
     val items = listOf(
         Screen.Search,
         Screen.FlightDetails,
@@ -47,6 +50,7 @@ fun MainAppScreen() {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
             
+            // إخفاء الشريط السفلي في صفحة التجهيز (Login)
             if (currentRoute != Screen.Login.route) {
                 NavigationBar {
                     val currentDestination = navBackStackEntry?.destination
@@ -81,21 +85,30 @@ fun MainAppScreen() {
     ) { innerPadding ->
         NavHost(
             navController = navController, 
-            startDestination = Screen.Login.route,
+            startDestination = Screen.Login.route, // نبدأ من صفحة التجهيز لجلب التوكن
             modifier = Modifier.padding(innerPadding)
         ) {
+            // صفحة تجهيز الاتصال وجلب التوكن
             composable(Screen.Login.route) { 
                 LoginScreen(navController, flightViewModel) 
             }
+            
+            // صفحة البحث الرئيسية
             composable(Screen.Search.route) { 
                 SearchScreen(navController, flightViewModel) 
             }
+            
+            // صفحة بيانات الرحلة
             composable(Screen.FlightDetails.route) { 
-                FlightDetailsScreen(navController, flightViewModel) // تمرير الـ ViewModel
+                FlightDetailsScreen(navController, flightViewModel) 
             }
+            
+            // صفحة المسافرين (التي ستعرض رقم السلة)
             composable(Screen.Passengers.route) { 
-                PassengersScreen(navController) 
+                PassengersScreen(navController, flightViewModel) 
             }
+            
+            // صفحة الدفع
             composable(Screen.Payment.route) { 
                 PaymentScreen(navController) 
             }
