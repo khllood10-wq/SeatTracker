@@ -13,7 +13,8 @@ enum class SearchState {
     IDLE,
     SEARCHING,
     FOUND,
-    ERROR
+    ERROR,
+    TOKEN_EXPIRED // حالة جديدة لانتهاء التوكن
 }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
@@ -23,7 +24,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    // دالة حفظ التوكنات عند التقاطها من الـ WebView
     fun saveTokens(auth: String, xDToken: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
@@ -33,7 +33,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("✅ تم التقاط التوكن وتخزينه بنجاح!")
     }
 
-    // دالة جلب التوكن المحفوظ
     private fun getSavedAuthToken(): String? {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         return prefs.getString("auth_token", null)
@@ -47,13 +46,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun startSearchingFlight(flightNumber: String) {
         if (_uiState.value == SearchState.SEARCHING) return
 
-        // التحقق من وجود توكن محفوظ
         val authToken = getSavedAuthToken()
         val xDToken = getSavedXDToken() ?: ""
 
         if (authToken == null) {
-            addLog("❌ لا يوجد توكن! يرجى الذهاب لصفحة تسجيل الدخول أولاً.")
-            _uiState.value = SearchState.ERROR
+            addLog("❌ لا يوجد توكن! جاري التحديث...")
+            _uiState.value = SearchState.TOKEN_EXPIRED // إذا ما فيه توكن أصلاً، نطلب تحديثه
             return
         }
 
@@ -65,7 +63,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             var attempts = 1
             val maxAttempts = 15 
             
-            // جلب تاريخ اليوم تلقائياً
             val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
             val todayDate = sdf.format(java.util.Date())
             val departureDateString = "${todayDate}T00:00:00.000"
@@ -102,7 +99,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         val preview = if (responseBody.length > 100) responseBody.take(100) else responseBody
                         addLog("📄 مقتطف: $preview...")
                         
-                        // محاكاة العثور على مقعد في المحاولة الثالثة
+                        // محاكاة العثور على مقعد
                         if (attempts == 3) {
                             addLog("🎉 توفر مقعد! جاري الانتقال...")
                             _uiState.value = SearchState.FOUND
@@ -114,8 +111,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         addLog("❌ فشل الاتصال. رمز الخطأ: ${response.code()}")
                         if (response.code() == 401) {
-                            addLog("⚠️ انتهت صلاحية التوكن! يرجى العودة وتسجيل الدخول من جديد.")
-                            _uiState.value = SearchState.ERROR
+                            addLog("⚠️ انتهت صلاحية التوكن! جاري تحديثه تلقائياً...")
+                            _uiState.value = SearchState.TOKEN_EXPIRED // إطلاق إشارة التجديد
                             return@launch
                         }
                     }
