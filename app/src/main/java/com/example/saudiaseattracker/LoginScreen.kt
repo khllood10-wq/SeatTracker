@@ -41,34 +41,36 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                         ): android.webkit.WebResourceResponse? {
                             val url = request?.url.toString()
                             
-                            // نوسع النطاق ليشمل www.saudia.com أيضاً
                             if (!hasIntercepted && url.contains("saudia.com")) {
                                 val authHeader = request?.requestHeaders?.get("Authorization")
                                 val xdToken = request?.requestHeaders?.get("x-d-token")
-                                val sessionId = request?.requestHeaders?.get("saa-session-id")
                                 
                                 if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
                                     
-                                    var finalSessionId = sessionId
+                                    // 🔥 سحب الكوكيز من المتصفح
+                                    val cookieManager = android.webkit.CookieManager.getInstance()
+                                    val webCookies = cookieManager.getCookie("https://www.saudia.com") ?: ""
+                                    val apiCookies = cookieManager.getCookie("https://dapi.saudia.com") ?: ""
                                     
-                                    // إذا لم نجدها في الترويسات، نبحث عنها في الكوكيز
-                                    if (finalSessionId.isNullOrEmpty()) {
-                                        val cookies = android.webkit.CookieManager.getInstance().getCookie("https://www.saudia.com")
-                                        if (cookies != null) {
-                                            for (cookie in cookies.split(";")) {
-                                                if (cookie.trim().startsWith("saa-session-id=")) {
-                                                    finalSessionId = cookie.substringAfter("=").trim()
-                                                    break
-                                                }
-                                            }
+                                    // دمج الكوكيز
+                                    val allCookies = "$webCookies; $apiCookies"
+                                    
+                                    // محاولة استخراج saa-session-id من الكوكيز
+                                    var sessionId = ""
+                                    for (cookie in allCookies.split(";")) {
+                                        if (cookie.trim().startsWith("saa-session-id=")) {
+                                            sessionId = cookie.substringAfter("=").trim()
+                                            break
                                         }
                                     }
                                     
-                                    if (finalSessionId.isNullOrEmpty()) {
-                                        finalSessionId = java.util.UUID.randomUUID().toString()
+                                    // إذا لم نجدها في الكوكيز، نأخذها من الترويسات
+                                    if (sessionId.isEmpty()) {
+                                        sessionId = request?.requestHeaders?.get("saa-session-id") ?: ""
                                     }
 
-                                    viewModel.saveTokens(authHeader, xdToken ?: "", finalSessionId)
+                                    // حفظ كل شيء (التوكن، الكوكيز، الجلسة)
+                                    viewModel.saveTokens(authHeader, xdToken ?: "", sessionId, allCookies)
                                     hasIntercepted = true
                                     
                                     view?.post {
