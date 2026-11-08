@@ -10,7 +10,6 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -31,8 +30,6 @@ fun PassengerWebViewScreen(
 
     LaunchedEffect(captured) {
         if (captured != null) {
-            // نحن الآن في WebView — نعود لـ PassengersScreen تلقائياً
-            // ViewModel سيرسل PATCH عبر Retrofit ثم ينتقل للدفع
             navController.popBackStack()
         }
     }
@@ -72,14 +69,12 @@ fun PassengerWebViewScreen(
                         "AppleWebKit/537.36 (KHTML, like Gecko) " +
                         "Chrome/120.0.0.0 Safari/537.36"
 
-                    // نقل كوكيز Retrofit إلى WebView (نفس الجلسة = نفس السلة)
-                    CookieManager.getInstance().apply {
-                        setAcceptCookie(true)
-                        setAcceptThirdPartyCookies(this@apply, true)
-                        viewModel.getCookiesForWebView().forEach { cookie ->
-                            setCookie("https://www.saudia.com/", cookie)
-                            setCookie("https://dapi.saudia.com/", cookie)
-                        }
+                    // ✅ نقل كوكيز Retrofit إلى WebView
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    viewModel.getCookiesForWebView().forEach { cookie ->
+                        CookieManager.getInstance().setCookie("https://www.saudia.com/", cookie)
+                        CookieManager.getInstance().setCookie("https://dapi.saudia.com/", cookie)
                     }
 
                     addJavascriptInterface(
@@ -91,7 +86,6 @@ fun PassengerWebViewScreen(
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
                             viewModel.addLog("🌐 صفحة محملة: ${url?.take(80)}")
-                            // نضخ الـ Hook — يستبدل XHR/fetch في الصفحة
                             view?.evaluateJavascript(JS_HOOK, null)
                         }
 
@@ -100,7 +94,6 @@ fun PassengerWebViewScreen(
                             request: WebResourceRequest?
                         ): Boolean {
                             val url = request?.url?.toString() ?: return false
-                            // لا نسمح للصفحة بالانتقال لأي مكان بعد الحجز
                             if (!url.contains("saudia.com")) return true
                             return false
                         }
@@ -111,7 +104,6 @@ fun PassengerWebViewScreen(
             }
         )
 
-        // شريط السجل المصغر
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth().height(80.dp)
@@ -151,7 +143,6 @@ private const val JS_HOOK = """
     if (window.__saudiaHookInstalled) return;
     window.__saudiaHookInstalled = true;
 
-    // ═══ Override XMLHttpRequest (Angular يستخدمه) ═══
     const OrigXHR = window.XMLHttpRequest;
     window.XMLHttpRequest = function() {
         const xhr = new OrigXHR();
@@ -174,7 +165,6 @@ private const val JS_HOOK = """
                     const parsed = JSON.parse(body);
                     if (parsed.key && parsed.body) {
                         AndroidBridge.onTravelerPayload(parsed.key, parsed.body);
-                        // نُعيد 200 وهمي لمنع الطلب الحقيقي
                         setTimeout(function() {
                             try {
                                 Object.defineProperty(xhr, 'readyState', {value: 4, configurable: true});
@@ -198,7 +188,6 @@ private const val JS_HOOK = """
         return xhr;
     };
 
-    // ═══ Override fetch (احتياط) ═══
     const origFetch = window.fetch;
     window.fetch = function(input, init) {
         const url = typeof input === 'string' ? input : (input && input.url) || '';
