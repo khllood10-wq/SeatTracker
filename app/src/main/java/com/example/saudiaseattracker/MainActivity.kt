@@ -46,9 +46,6 @@ fun AppNavigation() {
             composable(Screen.Search.route) {
                 SearchScreen(navController = navController, viewModel = viewModel)
             }
-            composable(Screen.FlightDetails.route) {
-                FlightDetailsScreen(navController = navController, viewModel = viewModel)
-            }
             composable(Screen.Passengers.route) {
                 PassengersScreen(navController = navController, viewModel = viewModel)
             }
