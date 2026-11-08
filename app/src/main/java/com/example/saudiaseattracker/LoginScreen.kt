@@ -21,7 +21,7 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
             Spacer(modifier = Modifier.height(16.dp))
-            Text("جاري تجهيز الاتصال بالخطوط السعودية...")
+            Text("جاري تجاوز حماية السيرفر...")
         }
 
         AndroidView(
@@ -41,36 +41,19 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                         ): android.webkit.WebResourceResponse? {
                             val url = request?.url.toString()
                             
-                            if (!hasIntercepted && url.contains("saudia.com")) {
+                            if (!hasIntercepted && url.contains("dapi.saudia.com")) {
                                 val authHeader = request?.requestHeaders?.get("Authorization")
                                 val xdToken = request?.requestHeaders?.get("x-d-token")
+                                val sessionId = request?.requestHeaders?.get("saa-session-id")
                                 
                                 if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
                                     
-                                    // 🔥 سحب الكوكيز من المتصفح
-                                    val cookieManager = android.webkit.CookieManager.getInstance()
-                                    val webCookies = cookieManager.getCookie("https://www.saudia.com") ?: ""
-                                    val apiCookies = cookieManager.getCookie("https://dapi.saudia.com") ?: ""
+                                    val finalSessionId = sessionId ?: java.util.UUID.randomUUID().toString()
                                     
-                                    // دمج الكوكيز
-                                    val allCookies = "$webCookies; $apiCookies"
-                                    
-                                    // محاولة استخراج saa-session-id من الكوكيز
-                                    var sessionId = ""
-                                    for (cookie in allCookies.split(";")) {
-                                        if (cookie.trim().startsWith("saa-session-id=")) {
-                                            sessionId = cookie.substringAfter("=").trim()
-                                            break
-                                        }
-                                    }
-                                    
-                                    // إذا لم نجدها في الكوكيز، نأخذها من الترويسات
-                                    if (sessionId.isEmpty()) {
-                                        sessionId = request?.requestHeaders?.get("saa-session-id") ?: ""
-                                    }
+                                    // 🔥 سحب الـ User-Agent الحقيقي من المتصفح
+                                    val userAgent = settings.userAgentString
 
-                                    // حفظ كل شيء (التوكن، الكوكيز، الجلسة)
-                                    viewModel.saveTokens(authHeader, xdToken ?: "", sessionId, allCookies)
+                                    viewModel.saveTokens(authHeader, xdToken ?: "", finalSessionId, userAgent)
                                     hasIntercepted = true
                                     
                                     view?.post {
@@ -81,6 +64,18 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                                 }
                             }
                             return super.shouldInterceptRequest(view, request)
+                        }
+                        
+                        // التأكد من انتظار تحميل الجافاسكريبت بالكامل
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            // ننتظر ثانيتين إضافيتين بعد تحميل الصفحة لضمان انتهاء تحدي Imperva
+                            view?.postDelayed({
+                                if (!hasIntercepted) {
+                                    // إذا لم نلتقط التوكن بعد، نعيد التحميل
+                                    view.reload()
+                                }
+                            }, 2000)
                         }
                     }
                     loadUrl("https://www.saudia.com/ar-SA")
