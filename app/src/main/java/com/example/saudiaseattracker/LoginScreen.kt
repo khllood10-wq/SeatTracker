@@ -1,6 +1,7 @@
 package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
+import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
@@ -17,7 +18,6 @@ import androidx.navigation.NavController
 fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
     var hasIntercepted by remember { mutableStateOf(false) }
 
-    // واجهة بسيطة تظهر أثناء جلب التوكن
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
@@ -25,7 +25,6 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("جاري تجهيز الاتصال بالخطوط السعودية...")
         }
 
-        // المتصفح المخفي بحجم 0x0 (لن يراه المستخدم ولكنه سيعمل في الخلفية)
         AndroidView(
             modifier = Modifier.size(0.dp),
             factory = { context ->
@@ -33,8 +32,8 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     
-                    android.webkit.CookieManager.getInstance().setAcceptCookie(true)
-                    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
@@ -42,17 +41,36 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                             request: android.webkit.WebResourceRequest?
                         ): android.webkit.WebResourceResponse? {
                             val url = request?.url.toString()
-                            // نلتقط التوكن الخاص بأي طلب يذهب للسعودية
+                            
                             if (!hasIntercepted && url.contains("saudia.com")) {
                                 val authHeader = request?.requestHeaders?.get("Authorization")
                                 val xdToken = request?.requestHeaders?.get("x-d-token")
                                 
-                                // تأكد أنه توكن حقيقي وليس فارغ
                                 if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
-                                    viewModel.saveTokens(authHeader, xdToken ?: "")
+                                    
+                                    // محاولة استخراج رقم الجلسة من الكوكيز
+                                    val cookies = CookieManager.getInstance().getCookie("https://www.saudia.com")
+                                    var sessionId = ""
+                                    
+                                    // إذا لقينا كوكيز، نبحث عن saa-session-id أو نولد واحد وهمي
+                                    if (cookies != null) {
+                                        val cookieList = cookies.split(";")
+                                        for (cookie in cookieList) {
+                                            if (cookie.trim().startsWith("saa-session-id=")) {
+                                                sessionId = cookie.substringAfter("=").trim()
+                                                break
+                                            }
+                                        }
+                                    }
+                                    
+                                    // إذا ما لقينا كوكي، نولد رقم عشوائي عشان نتجاوز الجدار
+                                    if (sessionId.isEmpty()) {
+                                        sessionId = java.util.UUID.randomUUID().toString()
+                                    }
+
+                                    viewModel.saveTokens(authHeader, xdToken ?: "", sessionId)
                                     hasIntercepted = true
                                     
-                                    // العودة لصفحة البحث فوراً (استخدمنا ?. للسلامة من Null)
                                     view?.post {
                                         navController.navigate(Screen.Search.route) {
                                             popUpTo(Screen.Search.route) { inclusive = true }
@@ -63,8 +81,6 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                             return super.shouldInterceptRequest(view, request)
                         }
                     }
-
-                    // فتح الصفحة الرئيسية كضيف
                     loadUrl("https://www.saudia.com/ar-SA")
                 }
             }
