@@ -83,7 +83,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return prefs.getString("dynamic_cookies", null)
     }
 
-    // 🔥 تعديل دالة الهيدرز عشان نقبل رقم إصدار الـ API
     private fun buildHeaders(apiVersion: String): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
@@ -97,7 +96,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
-            "x-api-version" to apiVersion, // هنا بنحط الإصدار اللي بنمرره
+            "x-api-version" to apiVersion,
             "platform" to "Web",
             "version" to "27.0",
             "Accept" to "application/json",
@@ -161,7 +160,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
 
                     val response = RetrofitClient.api.searchAirBounds(
-                        headers = buildHeaders("4"), // 🔥 إصدار البحث 4
+                        headers = buildHeaders("4"), // إصدار البحث 4
                         request = request
                     )
                     
@@ -219,6 +218,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // 🔥 هنا السحر: إنشاء السلة ثم جلب بيانات صفحة المسافرين فوراً
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
         
@@ -226,37 +226,51 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         
         viewModelScope.launch {
             try {
-                val request = CreateCartRequest(airBoundIds = listOf(flight.airBoundId))
-                val response = RetrofitClient.api.createCart(
-                    headers = buildHeaders("2"), // 🔥 إصدار إنشاء السلة 2
-                    request = request
+                // 1. إنشاء السلة
+                val createRequest = CreateCartRequest(airBoundIds = listOf(flight.airBoundId))
+                val createResponse = RetrofitClient.api.createCart(
+                    headers = buildHeaders("2"), // إصدار إنشاء السلة 2
+                    request = createRequest
                 )
                 
-                saveCookiesFromResponse(response)
+                saveCookiesFromResponse(createResponse)
 
-                if (response.isSuccessful) {
-                    val responseBody = response.body()?.string() ?: ""
-                    _rawCartResponse.value = responseBody
+                if (createResponse.isSuccessful) {
+                    val responseBody = createResponse.body()?.string() ?: ""
                     
-                    try {
-                        val jsonObject = JsonParser.parseString(responseBody).asJsonObject
-                        val extractedCartId = jsonObject.get("cartId")?.asString 
-                            ?: jsonObject.get("id")?.asString 
-                            ?: ""
+                    // استخراج رقم السلة
+                    val jsonObject = JsonParser.parseString(responseBody).asJsonObject
+                    val extractedCartId = jsonObject.getAsJsonObject("data")?.get("id")?.asString 
+                        ?: jsonObject.get("id")?.asString ?: ""
+                    
+                    if (extractedCartId.isNotEmpty()) {
+                        _cartId.value = extractedCartId
+                        addLog("✅ تم إنشاء السلة: $extractedCartId")
                         
-                        if (extractedCartId.isNotEmpty()) {
-                            _cartId.value = extractedCartId
-                            addLog("✅ تم إنشاء السلة: $extractedCartId")
+                        // 2. جلب بيانات صفحة المسافرين باستخدام رقم السلة
+                        addLog("جاري جلب بيانات صفحة المسافرين...")
+                        val getCartResponse = RetrofitClient.api.getCartDetails(
+                            cartId = extractedCartId,
+                            headers = buildHeaders("3") // إصدار جلب السلة 3
+                        )
+                        
+                        saveCookiesFromResponse(getCartResponse)
+
+                        if (getCartResponse.isSuccessful) {
+                            val passengerPageData = getCartResponse.body()?.string() ?: ""
+                            _rawCartResponse.value = passengerPageData
+                            addLog("✅ تم جلب بيانات صفحة المسافرين بنجاح!")
                         } else {
-                            addLog("⚠️ لم نجد cartId في الرد.")
+                            addLog("❌ فشل جلب بيانات المسافرين. رمز الخطأ: ${getCartResponse.code()}")
+                            _rawCartResponse.value = getCartResponse.errorBody()?.string()
                         }
-                    } catch (e: Exception) {
-                         addLog("⚠️ فشل تحليل الرد: ${e.message}")
+
+                    } else {
+                        addLog("⚠️ لم نجد cartId في الرد.")
                     }
-                    
                 } else {
-                    addLog("❌ فشل إنشاء السلة. رمز الخطأ: ${response.code()}")
-                    _rawCartResponse.value = response.errorBody()?.string() ?: "خطأ غير معروف"
+                    addLog("❌ فشل إنشاء السلة. رمز الخطأ: ${createResponse.code()}")
+                    _rawCartResponse.value = createResponse.errorBody()?.string()
                 }
             } catch (e: Exception) {
                 addLog("❌ حدث خطأ: ${e.message}")
