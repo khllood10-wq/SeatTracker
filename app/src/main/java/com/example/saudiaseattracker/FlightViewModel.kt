@@ -26,6 +26,8 @@ data class FoundFlightDetails(
     val airBoundId: String
 )
 
+data class CapturedPayload(val key: String, val body: String)
+
 enum class SearchState { IDLE, SEARCHING, FOUND, ERROR, TOKEN_EXPIRED }
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
@@ -57,13 +59,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _paymentMethodsRaw = MutableStateFlow<String?>(null)
     val paymentMethodsRaw: StateFlow<String?> = _paymentMethodsRaw
 
+    // ✨ WebView flow
+    private val _capturedPayload = MutableStateFlow<CapturedPayload?>(null)
+    val capturedPayload: StateFlow<CapturedPayload?> = _capturedPayload
+
+    private val _needPassengerWebView = MutableStateFlow(false)
+    val needPassengerWebView: StateFlow<Boolean> = _needPassengerWebView
+
     private companion object {
-        const val HAR_ENCRYPTED_KEY =
-            "XkemQfguUodRJM/FrIbiU9QYGL9U7F2b0MWXyOO1FRa3VtlFelkhRvc7iP9DE34fSkJDlIP5ji6v7PpN21gmwaJR//vfeBTHums1dLkxIUDCz8DivhP2IbZqhFgK/9IADtFED6SJkdJJJeFaSmcIxNFDv5kTAj6lXK/JWu2zkRsjz0elXt6WKqetn5XpI7Ls09aUeKETCdarXRSwsLx/6kMo9F1NVWQHhT4CsoAo/1ad3BqxERmi4HIaT7B4osZhGETqZKgSCAg2G4keaIPnhOrifPzQtNMnBInoQXU4yfI1516rgcdPaNRPMbpkGjrB+4HBtj5oW7dyF56DXH67dUT/5z7Tcu8i7rHQMslo9UAbrtwpXdex9mJng0rZzFWSxd7Ed0RGNJRuQ8Xafjk1aA3FVYw6f01BP92reYJatj2ZeAoOfcL7GdDZ7EzdKNFgNzMG41MbLG5GzZXGPRRYMceULb5w3G6UcjSJBwLBgb6WSZH6M4lZH6UHDwgQ5SwCsqpHCHd4SuyK8VLHTUVRHjf9fowM08cb1zu21IygkkxRNIeXBofWAhqfr54jTlLW4g74bTlsbRHuZ76hmVZSz6ZxvXSs75S3f2giZ5eP9Kf0V/lYN0ONM8IFixIOALiO+7+n6nS0LYOEl7v8bM2xHfpEKPOChTZp0eHlOt5WvVw="
-
-        const val HAR_ENCRYPTED_BODY =
-            "73371f7a85ee58fad676d0d3e12ac45bf28470a88e7eb50e6089f1585cbcb6c39e97ac3cd9a03a40fdbdb5931e7bf5975afd8f2e224db709e99e3dad5d8a673a9b38d09826f65218df35fc61516f3fa7f6ac1941eba92b826583f281979975562c82c05bae4d6128d8989f42fde23a0b984c0d6d4a4d092d9d5580e2e1797ae83eb1f317277908c0eb4b60ca7149901858236e0cfd419116834cd7fe3817bba8b7ce7d775f607eea3525ca110580e0356cf034d08829d5dee5c59df2cde5011724b5e232f1795a87ae0efbd121122d138925264a1a9c19449a681757c215cc1cb372ccbc1d0c2110093d308a8974c0304ee8c2f7747775eb13438eec0fc5e0ff294d08a47563560bf98339b980af61ca354daacd8d3abe83ee075129d5bc34304479e792b95b472eba68f6c83e5ac49c0c7f4cf56dc5b805f6e40085cd5a72bbb04a1bb4d99a8526d69f96bf122858bcd72c0688a1e78b49a42a30b018be86738cf73731c5139b0a9be873498e40ffbdb4d4645cb25e4b385e748d35ffb0bbec1d20ff59f1e68f4bd5c1196793d5b57f75c6740b37954a6b6f63fe48b6bd107fe00165a3ed79a28d30a180ba6c6d357d32965d8ba0dc0b602888c202578f06c19b8495056d2744d10569d9caa4b5179961151f01ee3debf7237235e65d898b0fc1cfc8d7f9582af51ee558598716886a"
-
         const val HAR_ORDER_KEY =
             "Tfdn2colJ0iu60bGEOhBCPLPMxhp6FCvIh1SGlVo0GzimN8/NqEdptIzypLsDJCebFMwRSKVGhof4g0wOKcsEShmmfavAl9xv1NowevhMhm+jf8XQvaVRVCDx6LH4iD99pYizEXYcofDyX1m1LdS95mHA87po/mi+PyIIvCPFePf3H19N1zmUV8kY6Gt7ws3mB90Bxh55rroKxShXkGqNGLVqABMUSpEWFwFDamD4wHMcV+qZjL4/jpJjg8iqkwXrzWvLywIU8j3wsvYCyDFK4VWQoebkCEISU5jnJ4bNYEaW/jDD5EDFzj/JG3qNuCcwe309Zi4MNXnlRLampQs8DjSN1zwYNveUju5z8Q8ipQCzbLmWL1UPBmBSa199ttN6ZSH9JKnKo4zKUbqmYXpbz09IFFfAu+FHgfWbmvHxxI24R/Mv8kXUr54xgpg/3Q9u21ONOaBDWRQ4SnX9dD5jMRgAxQl50sCwbM4Z/m7l+fFzPeheQ74akm3xPF5w/TLSYQ33RwOoaRZmWnUPRk6fTcfZaYL9PxvXSDUYfk5Z0EjYoMLpR1Bh6Gw72cnHqzKkhB+mrZZZB83bQN9WjV6XZMJSUZb1FiGx3A1eI+VtUZAeKnFAVwpt/xUA8jnH2A2mMMB7UNmHsgRktQMgFtZYjpUqgwSiTGFMmxGk9OU0GQ="
 
@@ -71,7 +74,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "b653e6c66f6da5f96dd85a6acb8dd44efa8b0c41ac5a4ca71724210b7e2c876b46a6b237266c44b93d608c84b95cc637fe94dbbadcbf170c9a812cee1ac007f09c166f50a6cac0073542b3c48b713ed3483ce81d628c8ef597c56326452278e3ac1b7f41d5f1bd649795fbb54bc7bffd2439fb13e667129ecffae26ece21d3a9f5b28cf3a09d58e4683184730ed0f215a7637610a19d27615c310b77e3297434f6bf892299789a07e43d0574aaeaef067be85cb13c9f1b5b99b2901ab63660e2e487322afa360f67a47792edc38f398d1689e17bfd8841eb84d2797d835847c37d599ea222c0966fdd17fcd6a36de80d8cfd4b26fb588658ef2ade072ca69f10640c997aa5797747f4c5cec7290e185598797145dde220de3ccbcff3ded02b5315ce697e759d8ee081dd2f826d230b7ae0f53442f247b18cf15b014d69e870d573e08da7794018eeb3c09310af23dec6d62628eb2227672d6e73b20efef09c8e49b2a43ec00f3684a16841f59511ca44ce23eca459db899c8521e991c0b7532425808f5a1eafa083f5ef0d34463a61d329f7cbfd925fb3409d0cb8436c3d03c8"
 
         const val FIRST_TRAVELER_ID = "SKH-1-EXT"
-        const val FIRST_EXTENSION_ID = "EXN-1-EXN"
         const val TEST_DOCUMENT_NUMBER = "1071580342"
         const val TEST_DATE_OF_BIRTH = "1991-05-10"
         const val CONTACT_EMAIL = "khllood10@gmail.com"
@@ -117,6 +119,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
+
+    /** يستخدمها WebView لنقل الجلسة من Retrofit إلى CookieManager */
+    fun getCookiesForWebView(): List<String> {
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("dynamic_cookies", "").orEmpty()
+            .split("; ").filter { it.isNotBlank() }
+    }
 
     private fun buildHeaders(apiVersion: String): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
@@ -287,15 +296,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════
-    //   المسافرون → الدفع (الطلبات 1..4 ثم 5..10)
+    //   المسافرون → WebView → الدفع
     // ═══════════════════════════════════════════════════════
 
     private fun submitPassengersAndProceedToPayment(cartId: String) {
         viewModelScope.launch {
-            var travelerId = FIRST_TRAVELER_ID
-            var extensionId = FIRST_EXTENSION_ID
-
-            // ═══ [1/4] ELM ═══
+            // [1/4] ELM
             try {
                 addLog("🔐 [1/4] ELM...")
                 val r = RetrofitClient.api.verifyElmProfile(
@@ -313,54 +319,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("✅ [1/4] تم")
             } catch (e: Exception) { addLog("❌ [1/4] ${e.message}"); return@launch }
 
-            // ═══ [2/4] GET extensions — نستخرج IDs الحقيقية ═══
+            // [2/4] Extensions (اختياري)
             try {
                 addLog("📥 [2/4] الملحقات...")
                 val r = RetrofitClient.api.getCartExtensions(cartId, headers = buildHeaders("2"))
                 saveCookiesFromResponse(r)
-                val body = if (r.isSuccessful) r.body()?.string() else r.errorBody()?.string()
-                addLog("📦 [2/4] HTTP ${r.code()} — ${body?.take(400) ?: ""}")
+                addLog("📦 [2/4] HTTP ${r.code()}")
+            } catch (e: Exception) { addLog("⚠️ [2/4] ${e.message}") }
 
-                if (!body.isNullOrBlank()) {
-                    try {
-                        val json = JsonParser.parseString(body)
-                        if (json.isJsonArray) {
-                            val arr = json.asJsonArray
-                            if (arr.size() > 0) {
-                                val ext = arr.get(0).asJsonObject
-                                extensionId = ext.get("id")?.asString ?: extensionId
-                                travelerId = ext.get("travelerId")?.asString ?: travelerId
-                                addLog("🔍 extensionId = $extensionId")
-                            }
-                        } else if (json.isJsonObject) {
-                            val obj = json.asJsonObject
-                            val data = obj.get("data")
-                            val arr = when {
-                                data?.isJsonArray == true -> data.asJsonArray
-                                data?.isJsonObject == true -> {
-                                    data.asJsonObject.getAsJsonArray("extensions")
-                                        ?: data.asJsonObject.getAsJsonArray("items")
-                                }
-                                else -> obj.getAsJsonArray("extensions")
-                            }
-                            if (arr != null && arr.size() > 0) {
-                                val ext = arr.get(0).asJsonObject
-                                extensionId = ext.get("id")?.asString ?: extensionId
-                                travelerId = ext.get("travelerId")?.asString ?: travelerId
-                                addLog("🔍 extensionId = $extensionId")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        addLog("⚠️ تحليل: ${e.message}")
-                    }
-                }
-            } catch (e: Exception) {
-                addLog("⚠️ [2/4] ${e.message} — سنتجاوز")
-            }
-
-            // ═══ [3/4] PATCH extensions — جرّب، لا يوقف إن فشل ═══
+            // [3/4] Patch Extensions (قد يفشل — لا يوقف)
             try {
-                addLog("🩺 [3/4] الحالة الصحية (id=$extensionId)...")
+                addLog("🩺 [3/4] الحالة الصحية...")
                 val inner = """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}"""
                 val b64 = android.util.Base64.encodeToString(
                     inner.toByteArray(), android.util.Base64.NO_WRAP
@@ -369,27 +338,37 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     cartId = cartId,
                     headers = buildHeaders("2"),
                     request = listOf(
-                        CartExtensionRequest(content = b64, travelerId = travelerId, id = extensionId)
+                        CartExtensionRequest(content = b64, travelerId = FIRST_TRAVELER_ID)
                     )
                 )
                 saveCookiesFromResponse(r)
-                if (r.isSuccessful) {
-                    addLog("✅ [3/4] تم")
-                } else {
-                    addLog("⚠️ [3/4] ${r.code()} — سنتجاوز للمسافر")
-                }
-            } catch (e: Exception) {
-                addLog("⚠️ [3/4] ${e.message} — سنتجاوز")
-            }
+                addLog(if (r.isSuccessful) "✅ [3/4] تم" else "⚠️ [3/4] ${r.code()}")
+            } catch (e: Exception) { addLog("⚠️ [3/4] ${e.message}") }
 
-            // ═══ [4/4] patchTraveler — لا يتوقف حتى لو فشل [3] ═══
+            // [4/4] تفويض WebView لاستخراج التشفير
+            addLog("🌐 [4/4] فتح WebView لاستخراج تشفير المسافر...")
+            _needPassengerWebView.value = true
+        }
+    }
+
+    /** يُستدعى من WebBridge في WebView */
+    fun onPayloadCaptured(key: String, body: String) {
+        addLog("🔑 تم استخراج التشفير — key(${key.length}), body(${body.length})")
+        _capturedPayload.value = CapturedPayload(key, body)
+        _needPassengerWebView.value = false
+        _cartId.value?.let { continueWithCapturedPayload(it, key, body) }
+    }
+
+    private fun continueWithCapturedPayload(cartId: String, key: String, body: String) {
+        viewModelScope.launch {
+            // [4/4] PATCH traveler عبر Retrofit
             try {
-                addLog("👤 [4/4] المسافر (id=$travelerId)...")
+                addLog("👤 [4/4] إرسال المسافر عبر Retrofit...")
                 val r = RetrofitClient.api.patchTravelerWeb(
                     cartId = cartId,
-                    travelerId = travelerId,
+                    travelerId = FIRST_TRAVELER_ID,
                     headers = buildHeaders("2"),
-                    request = EncryptedTravelerRequest(HAR_ENCRYPTED_KEY, HAR_ENCRYPTED_BODY)
+                    request = EncryptedTravelerRequest(key, body)
                 )
                 saveCookiesFromResponse(r)
                 if (!r.isSuccessful) {
@@ -397,9 +376,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 addLog("✅ [4/4] المسافر مقبول")
-            } catch (e: Exception) { addLog("❌ [4/4] ${e.message}"); return@launch }
+            } catch (e: Exception) {
+                addLog("❌ [4/4] ${e.message}"); return@launch
+            }
 
-            // ═══ الدفع ═══
             proceedToPayment(cartId)
         }
     }
