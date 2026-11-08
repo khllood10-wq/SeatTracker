@@ -1,6 +1,9 @@
 package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
+import android.view.ViewGroup
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
@@ -16,6 +19,7 @@ import androidx.navigation.NavController
 @Composable
 fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
     var hasIntercepted by remember { mutableStateOf(false) }
+    var loadAttempts by remember { mutableStateOf(0) } // لحماية التطبيق من حلقة التحديث اللانهائية
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -25,11 +29,20 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
         }
 
         AndroidView(
-            modifier = Modifier.size(0.dp),
+            // ⚠️ تم تغيير الحجم إلى 1.dp لمنع الكراش
+            modifier = Modifier.size(1.dp), 
             factory = { context ->
                 WebView(context).apply {
+                    layoutParams = ViewGroup.LayoutParams(1, 1) // إجبار المتصفح على أخذ مساحة صغيرة
+                    
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.loadWithOverviewMode = true
+                    settings.useWideViewPort = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    
+                    // 🔥 إضافة WebChromeClient ضرورية لاستقرار WebView
+                    webChromeClient = WebChromeClient() 
                     
                     android.webkit.CookieManager.getInstance().setAcceptCookie(true)
                     android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -47,10 +60,7 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                                 val sessionId = request?.requestHeaders?.get("saa-session-id")
                                 
                                 if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
-                                    
                                     val finalSessionId = sessionId ?: java.util.UUID.randomUUID().toString()
-                                    
-                                    // 🔥 سحب الـ User-Agent الحقيقي من المتصفح
                                     val userAgent = settings.userAgentString
 
                                     viewModel.saveTokens(authHeader, xdToken ?: "", finalSessionId, userAgent)
@@ -66,16 +76,15 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                             return super.shouldInterceptRequest(view, request)
                         }
                         
-                        // التأكد من انتظار تحميل الجافاسكريبت بالكامل
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            // ننتظر ثانيتين إضافيتين بعد تحميل الصفحة لضمان انتهاء تحدي Imperva
-                            view?.postDelayed({
-                                if (!hasIntercepted) {
-                                    // إذا لم نلتقط التوكن بعد، نعيد التحميل
-                                    view.reload()
-                                }
-                            }, 2000)
+                            // إذا انتهى التحميل ولم نلتقط التوكن، ننتظر ثم نعيد التحميل (بحد أقصى 3 مرات)
+                            if (!hasIntercepted && loadAttempts < 3) {
+                                loadAttempts++
+                                view?.postDelayed({ 
+                                    if (!hasIntercepted) view.reload() 
+                                }, 3000)
+                            }
                         }
                     }
                     loadUrl("https://www.saudia.com/ar-SA")
