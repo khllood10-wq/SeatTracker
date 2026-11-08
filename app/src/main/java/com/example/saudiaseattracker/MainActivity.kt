@@ -4,11 +4,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -33,6 +35,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
+    // ✨ نسخة واحدة مشتركة بين كل الشاشات
+    val viewModel: FlightViewModel = viewModel()
+
     Scaffold { padding ->
         NavHost(
             navController = navController,
@@ -40,19 +45,22 @@ fun AppNavigation() {
             modifier = Modifier.padding(padding)
         ) {
             composable(Screen.Login.route) {
-                LoginScreen(navController = navController)
+                LoginScreen(navController = navController, viewModel = viewModel)
             }
             composable(Screen.Search.route) {
-                SearchScreen(navController = navController)
+                SearchScreen(navController = navController, viewModel = viewModel)
+            }
+            composable(Screen.FlightDetails.route) {
+                FlightDetailsScreen(navController = navController, viewModel = viewModel)
             }
             composable(Screen.Passengers.route) {
-                PassengersScreen(navController = navController)
+                PassengersScreen(navController = navController, viewModel = viewModel)
             }
             composable(Screen.Seats.route) {
-                SeatsScreen(navController = navController)
+                SeatsScreen(navController = navController, viewModel = viewModel)
             }
             composable(Screen.Payment.route) {
-                PaymentScreen(navController = navController)
+                PaymentScreen(navController = navController, viewModel = viewModel)
             }
         }
     }
