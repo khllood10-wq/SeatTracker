@@ -101,10 +101,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         const val TRAVELER_LAST_NAME = "Otudi"
     }
 
-    // ═══════════════════════════════════════════════════════
-    //   حفظ / استرجاع
-    // ═══════════════════════════════════════════════════════
-
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
@@ -177,7 +173,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════
-    //   البحث
+    //   البحث — إعادة 401/403 إلى TOKEN_EXPIRED (السلوك القديم)
     // ═══════════════════════════════════════════════════════
 
     fun startSearchingFlight(flightNumber: String) {
@@ -242,22 +238,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
                     } else {
-                        // ✅ التمييز بين 401 و 403
-                        when (response.code()) {
-                            401 -> {
-                                addLog("🔒 401 — التوكن منتهي، سنعيد تسجيل الدخول")
-                                _uiState.value = SearchState.TOKEN_EXPIRED
-                                return@launch
-                            }
-                            403 -> {
-                                addLog("🚫 403 — Imperva يحظر الطلبات")
-                                addLog("⚠️ انتظر 15 دقيقة أو استخدم VPN، لا تعيد تسجيل الدخول")
-                                _uiState.value = SearchState.ERROR
-                                return@launch
-                            }
-                            else -> {
-                                addLog("❌ فشل HTTP ${response.code()} — ${response.errorBody()?.string()?.take(200)}")
-                            }
+                        addLog("❌ فشل HTTP ${response.code()}")
+                        // ✅ السلوك القديم: 401 و 403 كلاهما يعني "أعد تسجيل الدخول"
+                        if (response.code() == 401 || response.code() == 403) {
+                            _uiState.value = SearchState.TOKEN_EXPIRED
+                            return@launch
                         }
                     }
                 } catch (e: Exception) {
@@ -518,10 +503,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             _paymentReady.value = true
         }
     }
-
-    // ═══════════════════════════════════════════════════════
-    //   الدفع بسداد
-    // ═══════════════════════════════════════════════════════
 
     fun payWithSadad() {
         viewModelScope.launch {
