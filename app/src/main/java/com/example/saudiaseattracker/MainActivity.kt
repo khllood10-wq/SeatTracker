@@ -49,7 +49,7 @@ fun MainAppScreen() {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
             
-            // إخفاء الشريط السفلي فقط في صفحة التجهيز (إذا احتجناها لاحقاً)
+            // إخفاء الشريط السفلي في صفحة التجهيز (Login)
             if (currentRoute != Screen.Login.route) {
                 NavigationBar {
                     val currentDestination = navBackStackEntry?.destination
@@ -84,33 +84,23 @@ fun MainAppScreen() {
     ) { innerPadding ->
         NavHost(
             navController = navController, 
-            // 🔥 هنا التعديل: صار يبدأ من صفحة البحث مباشرة
-            startDestination = Screen.Search.route, 
+            startDestination = Screen.Login.route, // نبدأ من صفحة تجهيز التوكن
             modifier = Modifier.padding(innerPadding)
         ) {
-            // صفحة البحث الرئيسية
+            composable(Screen.Login.route) { 
+                LoginScreen(navController, flightViewModel) 
+            }
             composable(Screen.Search.route) { 
                 SearchScreen(navController, flightViewModel) 
             }
-            
-            // صفحة بيانات الرحلة
             composable(Screen.FlightDetails.route) { 
                 FlightDetailsScreen(navController, flightViewModel) 
             }
-            
-            // صفحة المسافرين
             composable(Screen.Passengers.route) { 
                 PassengersScreen(navController, flightViewModel) 
             }
-            
-            // صفحة الدفع
             composable(Screen.Payment.route) { 
                 PaymentScreen(navController) 
-            }
-            
-            // صفحة التجهيز (احتفظنا بها كـ مسار احتياطي فقط، لكن التطبيق ما يبدأ منها)
-            composable(Screen.Login.route) { 
-                LoginScreen(navController, flightViewModel) 
             }
         }
     }
