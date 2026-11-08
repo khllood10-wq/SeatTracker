@@ -8,25 +8,27 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     navController: NavController,
-    viewModel: FlightViewModel = viewModel()
+    viewModel: FlightViewModel
 ) {
     var flightNumber by remember { mutableStateOf("") }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val searchLogs by viewModel.searchLogs.collectAsStateWithLifecycle()
 
-    // هذا الجزء يراقب الحالة، إذا وجد الرحلة ينتقل تلقائياً
+    // مراقبة الحالة للتنقل التلقائي
     LaunchedEffect(uiState) {
         if (uiState == SearchState.FOUND) {
+            // إذا وجدنا الرحلة، ننتقل للمسافرين
             navController.navigate(Screen.Passengers.route)
-            // إعادة الحالة إلى IDLE حتى لا يعيد الانتقال مرة أخرى عند الرجوع
             viewModel.stopSearch() 
+        } else if (uiState == SearchState.TOKEN_EXPIRED) {
+            // إذا انتهى التوكن، ننتقل لصفحة التجهيز لجلب توكن جديد
+            navController.navigate(Screen.Login.route) 
         }
     }
 
@@ -76,7 +78,6 @@ fun SearchScreen(
         
         Spacer(modifier = Modifier.height(8.dp))
 
-        // السجل
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(searchLogs) { log ->
                 Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
