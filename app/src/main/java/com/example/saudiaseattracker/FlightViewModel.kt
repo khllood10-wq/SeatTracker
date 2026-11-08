@@ -2,7 +2,6 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
-import android.webkit.CookieManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.delay
@@ -50,7 +49,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val ddParentId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         val ddTraceId = Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
 
-        val headers = mutableMapOf(
+        // 🚀 الترويسات بالضبط كما في تطبيق الويندوز (بدون كوكيز)
+        return mapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
             "saa-session-id" to sessionId,
@@ -61,8 +61,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
             "Referer" to "https://www.saudia.com/",
-            "User-Agent" to userAgent,
-            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7", // 🔥 الترويسة المهمة
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", // 🚀 User-Agent ويندوز
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "request-id" to requestId,
             "traceparent" to traceparent,
             "x-datadog-origin" to "rum",
@@ -70,17 +70,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to ddTraceId
         )
-
-        // 🔥 سحب الكوكيز من الموقع الرئيسي (وليس dapi) وإضافتها للطلب
-        val currentCookies = CookieManager.getInstance().getCookie("https://www.saudia.com")
-        if (!currentCookies.isNullOrEmpty()) {
-            headers["Cookie"] = currentCookies
-            addLog("🍪 تم العثور على كوكيز الموقع الرئيسي وإضافتها للطلب!")
-        } else {
-            addLog("⚠️ لم يتم العثور على كوكيز في www.saudia.com")
-        }
-
-        return headers
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -89,7 +78,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val authToken = getSavedAuthToken()
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
-        val userAgent = getSavedUserAgent() ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         if (authToken == null) {
             addLog("❌ لا يوجد توكن! جاري التحديث...")
@@ -132,14 +120,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
 
-                    // استدعاء الدالة التي تجهز الترويسات (والتي تجلب الكوكيز الآن)
-                    val headers = buildHeaders(authToken, xDToken, sessionId, userAgent)
+                    // بناء الترويسات بدون كوكيز
+                    val headers = buildHeaders(authToken, xDToken, sessionId, getSavedUserAgent() ?: "")
 
                     addLog("--- تفاصيل ما نرسله الآن ---")
-                    addLog("User-Agent: $userAgent")
-                    addLog("Authorization: ${authToken.take(20)}...")
+                    addLog("Authorization: ${authToken.take(30)}...")
+                    addLog("x-d-token: ${xDToken.take(30)}...")
                     addLog("saa-session-id: $sessionId")
-                    addLog("Cookie: ${headers["Cookie"] ?: "لا يوجد"}")
+                    addLog("User-Agent: ويندوز")
                     addLog("----------------------------")
 
                     val response = RetrofitClient.api.searchAirBounds(
@@ -159,7 +147,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         } else if (response.code() == 403) {
-                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب. الكوكيز أو الترويسات غير متطابقة.")
+                            addLog("❌ ممنوع (403)! السيرفر رفض الطلب.")
                             _uiState.value = SearchState.ERROR
                             return@launch
                         }
