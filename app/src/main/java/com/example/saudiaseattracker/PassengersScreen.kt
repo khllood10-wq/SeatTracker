@@ -1,10 +1,20 @@
 package com.example.saudiaseattracker
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -14,15 +24,17 @@ import androidx.navigation.NavController
 fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
     val foundFlight by viewModel.foundFlight.collectAsState()
     val cartId by viewModel.cartId.collectAsState()
+    val rawResponse by viewModel.rawCartResponse.collectAsState()
+    val context = LocalContext.current
 
-    // 🔥 هذا السطر هو اللي يشغل إنشاء السلة أول ما الصفحة تفتح
+    // تشغيل إنشاء السلة أول ما الصفحة تفتح
     LaunchedEffect(Unit) {
-        if (cartId == null && foundFlight != null) {
+        if (cartId == null && foundFlight != null && rawResponse == null) {
             viewModel.createCartAndProceedToPassenger()
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("بيانات المسافرين", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -36,45 +48,58 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
                     Text("الرحلة: SV${foundFlight!!.flightNumber}")
                     Text("المسار: ${foundFlight!!.origin} ✈️ ${foundFlight!!.destination}")
                     Text("السعر: ${foundFlight!!.price} ريال")
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Divider()
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    if (cartId == null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("جاري إنشاء السلة وحجز المقعد...", color = MaterialTheme.colorScheme.primary)
-                        }
-                    } else {
-                        Text("رقم السلة (Cart ID):", fontWeight = FontWeight.Bold)
-                        Text(cartId!!, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("رقم السلة: ${cartId ?: "جاري الإنشاء..."}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 }
             }
-        } else {
-            Text("لا توجد بيانات رحلة. يرجى البحث أولاً.")
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        Text("إدخال بيانات المسافر (قريباً)", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(8.dp))
-        OutlinedTextField(
-            value = "",
-            onValueChange = {},
-            label = { Text("الاسم الكامل") },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = false
-        )
+        // 🔥 عرض الرد الكامل من السيرفر
+        if (rawResponse != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("📄 الرد الكامل من السيرفر (انسخه وأرسله):", style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Raw Response", rawResponse))
+                    Toast.makeText(context, "تم نسخ الرد!", Toast.LENGTH_SHORT).show()
+                }) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = "نسخ", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            SelectionContainer {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Text(
+                        text = rawResponse ?: "",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("جاري جلب الرد من السيرفر...")
+            }
+        }
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(24.dp))
 
         Button(
             onClick = { navController.navigate(Screen.Payment.route) },
             modifier = Modifier.fillMaxWidth(),
-            enabled = cartId != null // الزر يشتغل فقط إذا تم إنشاء السلة
+            enabled = cartId != null
         ) {
             Text("الانتقال للدفع (سداد)")
         }
