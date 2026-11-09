@@ -12,10 +12,7 @@ import androidx.navigation.NavController
 import kotlinx.coroutines.delay
 
 @Composable
-fun LoginScreen(
-    navController: NavController,
-    viewModel: FlightViewModel
-) {
+fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
     val context = LocalContext.current
     var statusText by remember { mutableStateOf("جاري تجهيز الاتصال...") }
     var isError by remember { mutableStateOf(false) }
@@ -24,72 +21,52 @@ fun LoginScreen(
     LaunchedEffect(retryKey) {
         isError = false
         statusText = "جاري تجهيز الاتصال..."
-
-        // 1. مسح كل بيانات المصادقة القديمة
         viewModel.clearAuth()
-
-        // 2. تصفير WebView القديم وفتح جديد
         WebViewManager.reset()
         WebViewManager.init(context)
 
-        // 3. انتظار التقاط الـ auth (حد أقصى 25 ثانية)
         var waited = 0
-        while (waited < 250 && WebViewManager.capturedAuth == null) {
+        while (waited < 300 &&
+            (WebViewManager.capturedAuth == null || WebViewManager.capturedXD == null)
+        ) {
             delay(100)
             waited++
         }
 
-        // 4. لو ما التقطش → خطأ
-        if (WebViewManager.capturedAuth == null) {
+        if (WebViewManager.capturedAuth == null || WebViewManager.capturedXD == null) {
             isError = true
-            statusText = "تعذّر التقاط التوكن بعد 25 ثانية"
+            statusText = "auth=${WebViewManager.capturedAuth != null} xd=${WebViewManager.capturedXD != null}"
             return@LaunchedEffect
         }
 
-        // 5. نحفظ auth فقط — بدون x-d-token وبدون session-id
+        // نحفظ كل التوكنات — الكود الأصلي
         viewModel.saveTokens(
             auth = WebViewManager.capturedAuth!!,
-            xDToken = "",
-            sessionId = "",
+            xDToken = WebViewManager.capturedXD!!,
+            sessionId = WebViewManager.capturedSession ?: "",
             userAgent = ""
         )
 
-        // 6. الانتقال لصفحة البحث
         navController.navigate(Screen.Search.route) {
             popUpTo(Screen.Login.route) { inclusive = true }
         }
     }
 
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(24.dp)
         ) {
             if (isError) {
-                Text(
-                    text = "❌",
-                    style = MaterialTheme.typography.displayLarge
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = statusText,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = { retryKey++ }) {
-                    Text("🔄 إعادة المحاولة")
-                }
+                Text("❌", style = MaterialTheme.typography.displayLarge)
+                Spacer(Modifier.height(12.dp))
+                Text(statusText, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { retryKey++ }) { Text("🔄 إعادة المحاولة") }
             } else {
                 CircularProgressIndicator()
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = statusText,
-                    fontSize = 13.sp
-                )
+                Spacer(Modifier.height(16.dp))
+                Text(statusText, fontSize = 13.sp)
             }
         }
     }
