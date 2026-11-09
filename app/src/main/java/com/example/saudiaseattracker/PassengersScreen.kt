@@ -20,12 +20,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 
@@ -49,39 +51,15 @@ fun PassengersScreen(
         viewModel.createCartAndProceedToPassenger()
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("صفحة المسافرين", style = MaterialTheme.typography.headlineMedium)
-
-        foundFlight?.let { f ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("ملخص الحجز:", fontWeight = FontWeight.Bold)
-                    Text("الرحلة: ${f.flightNumber}")
-                    Text("المسار: ${f.origin} → ${f.destination}")
-                    Text("السعر: ${f.price} SAR")
-                    Text("الفئة: ${f.fareFamily}")
-                }
-            }
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (cartId.isNullOrEmpty()) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                Text("جاري إنشاء السلة...")
-            } else {
-                Text("✅ cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-            }
-        }
-
+    Box(modifier = Modifier.fillMaxSize()) {
+        
+        // ═══ WebView مخفي (شفاف) لالتقاط الطلب ═══
         if (!cartId.isNullOrEmpty() && !webViewStarted) {
             AndroidView(
-                modifier = Modifier.size(1.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(0.01f) // شفاف جداً (المستخدم لن يراه) ولكن المتصفح يعمل بكامل قوته
+                    .zIndex(-1f), // خلف الواجهة
                 factory = { ctx ->
                     webViewStarted = true
                     WebView(ctx).apply {
@@ -94,6 +72,10 @@ fun PassengersScreen(
 
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        
+                        // إجبار المتصفح على تشغيل المؤقتات وعدم تجميدها
+                        resumeTimers()
+                        onResume()
 
                         addJavascriptInterface(object {
                             @JavascriptInterface
@@ -143,7 +125,6 @@ fun PassengersScreen(
 
                                         AndroidBridge.onCaptured('__INSTALLED__', 'capture ready');
 
-                                        // دوال مساعدة
                                         function setInput(name, val) {
                                             var el = document.querySelector('input[formcontrolname="' + name + '"]');
                                             if (!el) return false;
@@ -206,7 +187,6 @@ fun PassengersScreen(
                                                     step = 1; timer = 0;
                                                 }
                                             } else if (step === 1) {
-                                                // التخلص من وقت الانتظار بعد ملء الأسماء
                                                 selectCombo('title', 'Mr');
                                                 selectCombo('gender', 'Male');
                                                 selectCombo('documentType', 'National ID');
@@ -215,14 +195,13 @@ fun PassengersScreen(
                                                 AndroidBridge.onCaptured('__STEP_2_DETAILS__', 'Details filled');
                                                 step = 2; timer = 0;
                                             } else if (step === 2) {
-                                                if(timer > 4) { // الانتظار ثانيتين
+                                                if(timer > 4) { 
                                                     var c = clickBtn(['تأكيد', 'Confirm', 'حفظ', 'موافق']);
                                                     AndroidBridge.onCaptured('__CONFIRM_CLICKED__', c || 'not found');
                                                     step = 3; timer = 0;
                                                 }
                                             } else if (step === 3) {
-                                                if(timer > 6) { // الانتظار 3 ثواني بعد التأكيد
-                                                    // بيانات الاتصال
+                                                if(timer > 6) { 
                                                     setInput('email', 'Khllood10@gmail.com');
                                                     setInput('phoneNumber', '572260016');
                                                     selectCombo('phoneCountryCode', '966');
@@ -234,8 +213,7 @@ fun PassengersScreen(
                                                 }
                                             }
                                             
-                                            // حماية من التعليق
-                                            if(timer > 40) { clearInterval(loop); AndroidBridge.onCaptured('__TIMEOUT__', 'Stopped at step ' + step); }
+                                            if(timer > 60) { clearInterval(loop); AndroidBridge.onCaptured('__TIMEOUT__', 'Stopped at step ' + step); }
                                         }, 500);
                                     })();
                                 """.trimIndent(), null)
@@ -248,82 +226,114 @@ fun PassengersScreen(
             )
         }
 
-        HorizontalDivider()
+        // ═══ واجهة المستخدم (تظهر فوق المتصفح الشفاف) ═══
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("صفحة المسافرين", style = MaterialTheme.typography.headlineMedium)
 
-        if (confirmResponse.isNotEmpty()) {
-            Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
-            SelectionContainer {
+            foundFlight?.let { f ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    Text(
-                        text = confirmResponse,
-                        modifier = Modifier.padding(12.dp),
-                        fontFamily = FontFamily.Monospace, fontSize = 10.sp
-                    )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("ملخص الحجز:", fontWeight = FontWeight.Bold)
+                        Text("الرحلة: ${f.flightNumber}")
+                        Text("المسار: ${f.origin} → ${f.destination}")
+                        Text("السعر: ${f.price} SAR")
+                        Text("الفئة: ${f.fareFamily}")
+                    }
                 }
             }
-        }
 
-        if (capturedBody != null) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (cartId.isNullOrEmpty()) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text("جاري إنشاء السلة...")
+                } else {
+                    Text("✅ cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                }
+            }
+
+            HorizontalDivider()
+
+            if (confirmResponse.isNotEmpty()) {
+                Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
+                SelectionContainer {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text(
+                            text = confirmResponse,
+                            modifier = Modifier.padding(12.dp),
+                            fontFamily = FontFamily.Monospace, fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+
+            if (capturedBody != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🎯 Captured Body:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Button(onClick = {
+                        val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cb.setPrimaryClip(ClipData.newPlainText("Captured", capturedBody))
+                        Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null)
+                        Text(" نسخ")
+                    }
+                }
+                SelectionContainer {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text(
+                            text = capturedBody!!,
+                            modifier = Modifier.padding(12.dp),
+                            fontFamily = FontFamily.Monospace, fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("🎯 Captured Body:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text("استجابة السلة (JSON):", style = MaterialTheme.typography.titleSmall)
                 Button(onClick = {
                     val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cb.setPrimaryClip(ClipData.newPlainText("Captured", capturedBody))
+                    cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
                     Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
-                }) {
+                }, enabled = rawCartResponse.isNotEmpty()) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null)
                     Text(" نسخ")
                 }
             }
+
             SelectionContainer {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                 ) {
                     Text(
-                        text = capturedBody!!,
+                        text = rawCartResponse.ifEmpty { "بانتظار الاستجابة..." },
                         modifier = Modifier.padding(12.dp),
                         fontFamily = FontFamily.Monospace, fontSize = 10.sp
                     )
                 }
-            }
-        }
-
-        HorizontalDivider()
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("استجابة السلة (JSON):", style = MaterialTheme.typography.titleSmall)
-            Button(onClick = {
-                val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
-                Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
-            }, enabled = rawCartResponse.isNotEmpty()) {
-                Icon(Icons.Default.ContentCopy, contentDescription = null)
-                Text(" نسخ")
-            }
-        }
-
-        SelectionContainer {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-            ) {
-                Text(
-                    text = rawCartResponse.ifEmpty { "بانتظار الاستجابة..." },
-                    modifier = Modifier.padding(12.dp),
-                    fontFamily = FontFamily.Monospace, fontSize = 10.sp
-                )
             }
         }
     }
