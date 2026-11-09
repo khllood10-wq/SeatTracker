@@ -109,11 +109,16 @@ fun PassengersScreen(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
                                 viewModel.addLog("📄 WebView page loaded: $url")
+                                
+                                // 1. حقن كود اعتراض الطلب
+                                // 2. محاولة تعبئة البيانات تلقائياً
+                                // 3. الضغط على زر المتابعة
                                 view?.evaluateJavascript("""
                                     (function() {
                                         if (window.__captureInstalled) return;
                                         window.__captureInstalled = true;
 
+                                        // اعتراض fetch و XHR
                                         var of = window.fetch;
                                         window.fetch = function(u, o) {
                                             try {
@@ -141,6 +146,45 @@ fun PassengersScreen(
                                         };
 
                                         AndroidBridge.onCaptured('__INSTALLED__', 'capture ready');
+
+                                        // دالة مساعدة لملء الحقول
+                                        function setVal(sel, val) {
+                                            var el = document.querySelector(sel);
+                                            if (!el) return false;
+                                            var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                            setter.call(el, val);
+                                            el.dispatchEvent(new Event('input', {bubbles:true}));
+                                            el.dispatchEvent(new Event('change', {bubbles:true}));
+                                            return true;
+                                        }
+
+                                        // الانتظار 3 ثواني حتى يتم تحميل الفورم بالكامل ثم التعبئة
+                                        setTimeout(function() {
+                                            try {
+                                                // تعبئة البيانات (قد تحتاج لتعديل الحقول إذا كانت أسماء الحقول مختلفة)
+                                                setVal('input[formcontrolname="firstName"]', 'Mohammed');
+                                                setVal('input[formcontrolname="lastName"]', 'Alotudi');
+                                                setVal('input[formcontrolname="dateOfBirth"]', '1991-05-10');
+                                                setVal('input[formcontrolname="documentNumber"]', '1234567890');
+                                                
+                                                AndroidBridge.onCaptured('__FILLED__', 'fields filled');
+                                                
+                                                // الانتظار 1.5 ثانية بعد التعبئة والضغط على زر المتابعة
+                                                setTimeout(function() {
+                                                    var btns = document.querySelectorAll('button');
+                                                    for (var i = 0; i < btns.length; i++) {
+                                                        var t = (btns[i].innerText || '').trim();
+                                                        if (t.indexOf('متابعة') > -1 || t.indexOf('Continue') > -1 || t.indexOf('التالي') > -1) {
+                                                            btns[i].click();
+                                                            AndroidBridge.onCaptured('__CLICKED__', t);
+                                                            break;
+                                                        }
+                                                    }
+                                                }, 1500);
+                                            } catch(e) {
+                                                AndroidBridge.onCaptured('__ERROR__', String(e));
+                                            }
+                                        }, 3000);
                                     })();
                                 """.trimIndent(), null)
                             }
