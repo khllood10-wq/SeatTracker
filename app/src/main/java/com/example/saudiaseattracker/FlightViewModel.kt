@@ -65,7 +65,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
 
-    // استبدال ذكي للكوكيز (بدون تكرار)
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isEmpty()) return
@@ -92,11 +91,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
-    /**
-     * @param apiVersion رقم إصدار API
-     * @param isWebEndpoint إن كان endpoint من نوع /web/ (يحذف browserid + channel)
-     * @param referer قيمة Referer المطلوبة
-     */
     private fun buildHeaders(
         apiVersion: String,
         isWebEndpoint: Boolean = false,
@@ -132,12 +126,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         if (isWebEndpoint) {
-            // ترويسات مختصرة للـ /web/ (بدون browserid/channel)
             headers["x-v-token"] = "ZjU2MTI0Y2I2YzYyODQzZGMxZjY1OTBmN2YyOWM2ZTQ3OTczOTVlY2M3YWJiYzQzMTNiNjA3MWEyMDI1NzNmODY0NDBhYTJjNWRmMjRlYTE1OGQ0ZGQwYzlkMjkyNDcxZWIwZjBkYjcyNWEzY2Q0YjIyNzVlMmFhZmQ1NWZjYTc="
         } else {
             headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
             headers["channel"] = "MOBILE_WEB"
-            headers["x-v-token"] = "ZjU2MTI0Y2I2YzYyODQzZGMxZjY1OTBmN2YyOWM2ZTQ3OTczOTVlY2M3YWJiYzQzMTNiNjA3MWEyMDI1NzNmODY0NDBhYTJjNWRmMjRlYTE1OGQ0ZGQwYzlkMjkyNDcxZWIwZjBkYjcyNWEzY2Q0YjIyNzVlMmFhZmQ1NWZjYTc="
         }
 
         val cookies = getSavedDynamicCookies()
@@ -227,14 +219,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("تم الإيقاف يدوياً")
     }
 
-    /**
-     * تسلسل كامل مطابق للمتصفح:
-     * 1. POST /shopping/carts → إنشاء السلة
-     * 2. GET /shopping/carts/{id}?pageIdentity=FlightResults → تحميل صفحة السلة
-     * 3. GET /shopping/carts/{id}?pageIdentity=PassengerDetails → تحميل صفحة المسافرين
-     * 4. GET /shopping/services/by-cart → تحميل الخدمات
-     * 5. POST /utility/get-gaca-mandate → فحص GACA
-     */
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
         addLog("═".repeat(40))
@@ -242,7 +226,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                // ═══════════════ [1] إنشاء السلة ═══════════════
                 addLog("📦 [1/5] إنشاء السلة...")
                 val createResp = RetrofitClient.api.createCart(
                     headers = buildHeaders("2", referer = "https://www.saudia.com/"),
@@ -264,7 +247,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _cartId.value = id
                 addLog("✅ [1/5] cartId = $id")
 
-                // ═══════════════ [2] تحميل صفحة السلة (FlightResults) ═══════════════
                 addLog("📄 [2/5] تحميل صفحة السلة (FlightResults)...")
                 val flightResultsResp = RetrofitClient.api.getCartDetails(
                     cartId = id,
@@ -276,7 +258,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     ?: flightResultsResp.errorBody()?.string() ?: ""
                 addLog("✅ [2/5] FlightResults: HTTP ${flightResultsResp.code()} (${frBody.length} حرف)")
 
-                // ═══════════════ [3] تحميل صفحة المسافرين ═══════════════
                 addLog("👤 [3/5] تحميل صفحة المسافرين (PassengerDetails)...")
                 val passengerResp = RetrofitClient.api.getCartDetails(
                     cartId = id,
@@ -291,7 +272,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("❌ [3/5] PassengerDetails: HTTP ${passengerResp.code()}")
                 }
 
-                // ═══════════════ [4] تحميل الخدمات ═══════════════
                 addLog("🎫 [4/5] تحميل الخدمات (by-cart)...")
                 val servicesResp = RetrofitClient.api.getServicesByCart(
                     cartId = id,
@@ -303,12 +283,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     ?: servicesResp.errorBody()?.string() ?: ""
                 addLog("✅ [4/5] الخدمات: HTTP ${servicesResp.code()} (${svcBody.length} حرف)")
 
-                // ═══════════════ [5] فحص GACA ═══════════════
                 addLog("🛂 [5/5] فحص GACA...")
                 val gacaResp = RetrofitClient.api.getGacaMandate(
                     headers = buildHeaders(
                         "1",
-                        isWebEndpoint = true,  // بدون browserid/channel
+                        isWebEndpoint = true,
                         referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
                     ),
                     request = GacaMandateRequest()
@@ -318,7 +297,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     ?: gacaResp.errorBody()?.string() ?: ""
                 addLog("✅ [5/5] GACA: HTTP ${gacaResp.code()} (${gacaBody.length} حرف)")
 
-                // ═══════════════ ملخص ═══════════════
                 addLog("═".repeat(40))
                 val savedCookies = getSavedDynamicCookies()
                 addLog("🍪 إجمالي الكوكيز: ${savedCookies?.length ?: 0} حرف")
@@ -373,13 +351,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(extResp)
                 addLog("✅ Extension: HTTP ${extResp.code()}")
 
-                addLog("💾 [3/3] حفظ بيانات المسافر (PATCH /web/)...")
-                val patchResp = RetrofitClient.api.updateTravelerWeb(
+                // 🔥 التغيير هنا: استخدام المسار بدون /web/ والترويسات العادية
+                addLog("💾 [3/3] حفظ بيانات المسافر (PATCH /travelers/ بدون web)...")
+                val patchResp = RetrofitClient.api.updateTraveler(
                     cartId = cartId,
                     travelerId = travelerId,
                     headers = buildHeaders(
                         "2",
-                        isWebEndpoint = true,
+                        isWebEndpoint = false, // ترويسات عادية (مع channel و browserid)
                         referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
                     ),
                     request = TravelerWebUpdateRequest(
@@ -400,9 +379,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("📡 PATCH result: HTTP ${patchResp.code()}")
 
                 when {
-                    patchResp.isSuccessful -> addLog("🎉 تم حفظ بيانات المسافر!")
-                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر رفض JSON عادي")
-                    patchResp.code() == 403 -> addLog("🚫 403 — ممنوع. غالباً مشكلة في الترتيب أو التشفير")
+                    patchResp.isSuccessful -> addLog("🎉 نجح الطلب بدون تشفير! تم حفظ بيانات المسافر!")
+                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر رفض JSON عادي حتى على المسار العادي")
+                    patchResp.code() == 404 -> addLog("🚫 404 — المسار غير موجود (نحتاج نرجع لـ /web/)")
+                    patchResp.code() == 403 -> addLog("🚫 403 — ممنوع")
                     else -> addLog("⚠️ رد غير متوقع: HTTP ${patchResp.code()}")
                 }
 
