@@ -79,29 +79,9 @@ interface SaudiaApi {
     ): Response<ResponseBody>
 
     @PATCH("shopping/carts/{cartId}/travelers/{travelerId}")
-    suspend fun updateTraveler(
-        @Path("cartId") cartId: String,
-        @Path("travelerId") travelerId: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
-        @Query("lang") lang: String = "ar-SA",
-        @HeaderMap headers: Map<String, String>,
-        @Body request: Any
-    ): Response<ResponseBody>
-
-    @PATCH("shopping/carts/{cartId}/travelers/{travelerId}")
     suspend fun updateTravelerRaw(
         @Path("cartId") cartId: String,
         @Path("travelerId") travelerId: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
-        @Query("lang") lang: String = "ar-SA",
-        @HeaderMap headers: Map<String, String>,
-        @Body request: RequestBody
-    ): Response<ResponseBody>
-
-    // ═══ 🧪 اختبار إنشاء الطلب (بدون /web/) ═══
-    @POST("purchase/orders")
-    suspend fun createOrderTest(
-        @Query("cartId") cartId: String,
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
