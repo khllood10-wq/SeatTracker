@@ -79,7 +79,6 @@ fun PassengersScreen(
             }
         }
 
-        // ═══ WebView مخفي لالتقاط PATCH travelers/web المشفر ═══
         if (!cartId.isNullOrEmpty() && !webViewStarted) {
             AndroidView(
                 modifier = Modifier.size(1.dp),
@@ -115,7 +114,7 @@ fun PassengersScreen(
                                         if (window.__captureInstalled) return;
                                         window.__captureInstalled = true;
 
-                                        // اعتراض fetch و XHR
+                                        // اعتراض الطلبات
                                         var of = window.fetch;
                                         window.fetch = function(u, o) {
                                             try {
@@ -144,14 +143,42 @@ fun PassengersScreen(
 
                                         AndroidBridge.onCaptured('__INSTALLED__', 'capture ready');
 
-                                        function setVal(sel, val) {
-                                            var el = document.querySelector(sel);
+                                        // دوال مساعدة
+                                        function setInput(name, val) {
+                                            var el = document.querySelector('input[formcontrolname="' + name + '"]');
                                             if (!el) return false;
                                             var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                                             setter.call(el, val);
                                             el.dispatchEvent(new Event('input', {bubbles:true}));
                                             el.dispatchEvent(new Event('change', {bubbles:true}));
                                             return true;
+                                        }
+
+                                        function selectCombo(name, matchText) {
+                                            var el = document.querySelector('[formcontrolname="' + name + '"]');
+                                            if (!el) return false;
+                                            if (el.tagName.toLowerCase() === 'select') {
+                                                for(var i=0; i<el.options.length; i++) {
+                                                    if(el.options[i].text.includes(matchText)) {
+                                                        el.selectedIndex = i;
+                                                        el.dispatchEvent(new Event('change', {bubbles:true}));
+                                                        return true;
+                                                    }
+                                                }
+                                            } else {
+                                                el.click(); // فتح القائمة المنسدلة
+                                                setTimeout(function(){
+                                                    var opts = document.querySelectorAll('mat-option, .mat-option');
+                                                    for(var i=0; i<opts.length; i++){
+                                                        if(opts[i].innerText.includes(matchText) || opts[i].textContent.includes(matchText)){
+                                                            opts[i].click();
+                                                            break;
+                                                        }
+                                                    }
+                                                }, 500);
+                                                return true;
+                                            }
+                                            return false;
                                         }
 
                                         function clickBtn(keywords) {
@@ -168,46 +195,47 @@ fun PassengersScreen(
                                             return null;
                                         }
 
-                                        // نظام المراقبة الذكي: يفحص الصفحة كل نصف ثانية
-                                        var state = 0;
-                                        var stateTimer = 0;
-                                        var globalInterval = setInterval(function() {
-                                            stateTimer++;
+                                        var step = 0;
+                                        var timer = 0;
+                                        var loop = setInterval(function() {
+                                            timer++;
                                             
-                                            if (state === 0) {
-                                                // الخطوة 0: البحث عن حقول المسافر
-                                                if (setVal('input[formcontrolname="firstName"]', 'Khaled') && 
-                                                    setVal('input[formcontrolname="lastName"]', 'Otudi')) {
-                                                    
-                                                    setVal('input[formcontrolname="dateOfBirth"]', '1991-05-10');
-                                                    setVal('input[formcontrolname="documentNumber"]', '1071580342');
-                                                    
-                                                    AndroidBridge.onCaptured('__FILLED__', 'passenger fields filled');
-                                                    state = 1;
-                                                    stateTimer = 0;
-                                                } else if (stateTimer > 60) { // مهلة 30 ثانية كحد أقصى للتحميل
-                                                    clearInterval(globalInterval);
-                                                    AndroidBridge.onCaptured('__TIMEOUT__', 'Form not found');
+                                            if (step === 0) {
+                                                if (setInput('firstName', 'Khaled') && setInput('lastName', 'Otudi')) {
+                                                    AndroidBridge.onCaptured('__STEP_1_NAMES__', 'Names filled');
+                                                    step = 1; timer = 0;
                                                 }
-                                            } else if (state === 1) {
-                                                // الخطوة 1: الانتظار 3 ثواني (6 * 500ms) ثم الضغط على تأكيد
-                                                if (stateTimer > 6) { 
-                                                    var clickedConfirm = clickBtn(['تأكيد', 'Confirm', 'حفظ', 'موافق']);
-                                                    AndroidBridge.onCaptured('__CONFIRM_CLICKED__', clickedConfirm || 'not found');
-                                                    state = 2;
-                                                    stateTimer = 0;
+                                            } else if (step === 1) {
+                                                // التخلص من وقت الانتظار بعد ملء الأسماء
+                                                selectCombo('title', 'Mr');
+                                                selectCombo('gender', 'Male');
+                                                selectCombo('documentType', 'National ID');
+                                                setInput('dateOfBirth', '1991-05-10');
+                                                setInput('documentNumber', '1071580342');
+                                                AndroidBridge.onCaptured('__STEP_2_DETAILS__', 'Details filled');
+                                                step = 2; timer = 0;
+                                            } else if (step === 2) {
+                                                if(timer > 4) { // الانتظار ثانيتين
+                                                    var c = clickBtn(['تأكيد', 'Confirm', 'حفظ', 'موافق']);
+                                                    AndroidBridge.onCaptured('__CONFIRM_CLICKED__', c || 'not found');
+                                                    step = 3; timer = 0;
                                                 }
-                                            } else if (state === 2) {
-                                                // الخطوة 2: الانتظار 3 ثواني ثم ملء بيانات الاتصال والضغط على متابعة
-                                                if (stateTimer > 6) { 
-                                                    setVal('input[formcontrolname="email"]', 'Khllood10@gmail.com');
-                                                    setVal('input[formcontrolname="phoneNumber"]', '572260016');
-                                                    var clickedNext = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار', 'الدفع']);
-                                                    AndroidBridge.onCaptured('__NEXT_CLICKED__', clickedNext || 'not found');
-                                                    state = 3;
-                                                    stateTimer = 0;
+                                            } else if (step === 3) {
+                                                if(timer > 6) { // الانتظار 3 ثواني بعد التأكيد
+                                                    // بيانات الاتصال
+                                                    setInput('email', 'Khllood10@gmail.com');
+                                                    setInput('phoneNumber', '572260016');
+                                                    selectCombo('phoneCountryCode', '966');
+                                                    selectCombo('countryCode', '966');
+                                                    
+                                                    var n = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار', 'الدفع']);
+                                                    AndroidBridge.onCaptured('__NEXT_CLICKED__', n || 'not found');
+                                                    step = 4; timer = 0;
                                                 }
                                             }
+                                            
+                                            // حماية من التعليق
+                                            if(timer > 40) { clearInterval(loop); AndroidBridge.onCaptured('__TIMEOUT__', 'Stopped at step ' + step); }
                                         }, 500);
                                     })();
                                 """.trimIndent(), null)
@@ -238,7 +266,6 @@ fun PassengersScreen(
             }
         }
 
-        // ═══ عرض الـ captured body ═══
         if (capturedBody != null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
