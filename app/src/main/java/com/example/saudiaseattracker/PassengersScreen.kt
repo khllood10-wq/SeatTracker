@@ -35,9 +35,10 @@ fun PassengersScreen(
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
 
-    var customJson by remember {
-        mutableStateOf("""{"passengerTypeCode":"ADT","gender":"male"}""")
-    }
+    var firstName by remember { mutableStateOf("KHALED") }
+    var lastName by remember { mutableStateOf("OTUDI") }
+    var documentNumber by remember { mutableStateOf("1071580342") }
+    var dateOfBirth by remember { mutableStateOf("1991-05-10") }
 
     LaunchedEffect(Unit) { viewModel.createCartAndProceedToPassenger() }
 
@@ -45,7 +46,7 @@ fun PassengersScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("صفحة المسافرين - اختبار", style = MaterialTheme.typography.headlineMedium)
+        Text("صفحة المسافرين", style = MaterialTheme.typography.headlineMedium)
 
         foundFlight?.let { f ->
             Card(
@@ -70,31 +71,17 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        Text("🧪 لوحة الاختبار", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-
-        OutlinedTextField(
-            value = customJson,
-            onValueChange = { customJson = it },
-            modifier = Modifier.fillMaxWidth().height(150.dp),
-            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-        )
+        Text("بيانات المسافر:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        OutlinedTextField(value = firstName, onValueChange = { firstName = it }, label = { Text("الاسم الأول") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(value = lastName, onValueChange = { lastName = it }, label = { Text("اللقب") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(value = documentNumber, onValueChange = { documentNumber = it }, label = { Text("رقم الهوية") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(value = dateOfBirth, onValueChange = { dateOfBirth = it }, label = { Text("تاريخ الميلاد (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
 
         Button(
-            onClick = { viewModel.sendRawPassengerPayload(customJson) },
+            onClick = { viewModel.confirmPassengerData(firstName, lastName, documentNumber, dateOfBirth) },
             modifier = Modifier.fillMaxWidth(),
-            enabled = !cartId.isNullOrEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-        ) { Text("📤 PATCH /travelers") }
-
-        Button(
-            onClick = {
-                val payload = """{"travelers":[{"id":"SKH-1-EXT","passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-10","title":"Mr","givenName":"KHALED","surname":"OTUDI","documents":[{"type":"NATIONAL_ID","number":"1071580342","countryOfIssuance":"SA"}]}]}"""
-                viewModel.testCreateOrder(payload)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !cartId.isNullOrEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-        ) { Text("🧪 POST /purchase/orders (بدون web)") }
+            enabled = !cartId.isNullOrEmpty()
+        ) { Text("💾 حفظ بيانات المسافر (WebView)") }
 
         if (confirmResponse.isNotEmpty()) {
             Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
