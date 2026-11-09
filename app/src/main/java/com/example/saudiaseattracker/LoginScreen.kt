@@ -1,9 +1,5 @@
 package com.example.saudiaseattracker
 
-import android.annotation.SuppressLint
-import android.util.Log
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,83 +7,90 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import kotlinx.coroutines.delay
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
+fun LoginScreen(
+    navController: NavController,
+    viewModel: FlightViewModel
+) {
     val context = LocalContext.current
-    var capturedAuth by remember { mutableStateOf<String?>(null) }
-    var capturedXD by remember { mutableStateOf<String?>(null) }
-    var capturedSession by remember { mutableStateOf<String?>(null) }
-    var capturedUA by remember { mutableStateOf<String?>(null) }
-    var hasNavigated by remember { mutableStateOf(false) }
+    var statusText by remember { mutableStateOf("جاري تجهيز الاتصال...") }
+    var isError by remember { mutableStateOf(false) }
+    var retryKey by remember { mutableIntStateOf(0) }
 
-    // تهيئة WebViewManager للاستخدام اللاحق
-    LaunchedEffect(Unit) {
+    LaunchedEffect(retryKey) {
+        isError = false
+        statusText = "جاري تجهيز الاتصال..."
+
+        // 1. مسح كل بيانات المصادقة القديمة
+        viewModel.clearAuth()
+
+        // 2. تصفير WebView القديم وفتح جديد
+        WebViewManager.reset()
         WebViewManager.init(context)
-    }
 
-    LaunchedEffect(capturedAuth) {
-        if (capturedAuth != null && !hasNavigated) {
-            hasNavigated = true
-            viewModel.saveTokens(
-                auth = capturedAuth!!,
-                xDToken = capturedXD ?: "",
-                sessionId = capturedSession ?: "",
-                userAgent = capturedUA ?: ""
-            )
-            navController.navigate(Screen.Search.route) {
-                popUpTo(Screen.Login.route) { inclusive = true }
-            }
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("جاري تجهيز الاتصال...", style = MaterialTheme.typography.titleLarge)
-            if (capturedAuth == null) {
-                Spacer(Modifier.height(8.dp))
-                CircularProgressIndicator()
-                Spacer(Modifier.height(8.dp))
-                Text("بانتظار التوكن...", style = MaterialTheme.typography.bodySmall)
-            }
+        // 3. انتظار التقاط الـ auth (حد أقصى 25 ثانية)
+        var waited = 0
+        while (waited < 250 && WebViewManager.capturedAuth == null) {
+            delay(100)
+            waited++
         }
 
-        // WebView مخفي 0.dp — يلتقط كل التوكنات المطلوبة
-        androidx.compose.ui.viewinterop.AndroidView(
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    layoutParams = android.view.ViewGroup.LayoutParams(0, 0)
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.userAgentString =
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        // 4. لو ما التقطش → خطأ
+        if (WebViewManager.capturedAuth == null) {
+            isError = true
+            statusText = "تعذّر التقاط التوكن بعد 25 ثانية"
+            return@LaunchedEffect
+        }
 
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(
-                            view: WebView?,
-                            request: android.webkit.WebResourceRequest?
-                        ): android.webkit.WebResourceResponse? {
-                            val headers = request?.requestHeaders ?: emptyMap()
-                            val auth = headers["Authorization"]
-                            if (auth != null && auth.startsWith("Bearer ") && capturedAuth == null) {
-                                capturedAuth = auth
-                                capturedXD = headers["x-d-token"]
-                                capturedSession = headers["saa-session-id"]
-                                capturedUA = headers["User-Agent"]
-                                Log.d("TOKEN", "Auth: ${auth.take(30)}...")
-                                Log.d("TOKEN", "XD: ${capturedXD?.take(30)}...")
-                                Log.d("TOKEN", "Session: $capturedSession")
-                            }
-                            return super.shouldInterceptRequest(view, request)
-                        }
-                    }
-                    loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails")
-                }
-            },
-            modifier = Modifier.size(0.dp)
+        // 5. نحفظ auth فقط — بدون x-d-token وبدون session-id
+        viewModel.saveTokens(
+            auth = WebViewManager.capturedAuth!!,
+            xDToken = "",
+            sessionId = "",
+            userAgent = ""
         )
+
+        // 6. الانتقال لصفحة البحث
+        navController.navigate(Screen.Search.route) {
+            popUpTo(Screen.Login.route) { inclusive = true }
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp)
+        ) {
+            if (isError) {
+                Text(
+                    text = "❌",
+                    style = MaterialTheme.typography.displayLarge
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = statusText,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = { retryKey++ }) {
+                    Text("🔄 إعادة المحاولة")
+                }
+            } else {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = statusText,
+                    fontSize = 13.sp
+                )
+            }
+        }
     }
 }
