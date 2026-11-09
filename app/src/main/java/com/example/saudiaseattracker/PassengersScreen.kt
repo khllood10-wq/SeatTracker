@@ -34,8 +34,16 @@ fun PassengersScreen(
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
+    val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
 
-    LaunchedEffect(Unit) {
+    var hasKey by remember { mutableStateOf(false) }
+
+    // فحص وجود المفتاح
+    LaunchedEffect(cartId) {
+        hasKey = !prefs.getString("rsa_public_key", null).isNullOrEmpty()
+        if (!cartId.isNullOrEmpty() && !hasKey) {
+            prefs.edit().putString("cart_id_for_capture", cartId).apply()
+        }
         if (viewModel.cartId.value.isNullOrEmpty()) {
             viewModel.createCartAndProceedToPassenger()
         }
@@ -45,7 +53,7 @@ fun PassengersScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("صفحة المسافرين (تشفير Kotlin)", style = MaterialTheme.typography.headlineMedium)
+        Text("صفحة المسافرين", style = MaterialTheme.typography.headlineMedium)
 
         foundFlight?.let { f ->
             Card(
@@ -70,14 +78,31 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // زر واحد فقط — لا WebView، لا تعبئة يدوية
-        Button(
-            onClick = { viewModel.sendEncryptedPassengerPayload() },
-            modifier = Modifier.fillMaxWidth().height(60.dp),
-            enabled = !cartId.isNullOrEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-        ) {
-            Text("🔐 إرسال PATCH مشفر من Kotlin", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        // 1. زر التقاط المفتاح (إن لم يوجد)
+        if (!cartId.isNullOrEmpty() && !hasKey) {
+            Text("لا يوجد مفتاح تشفير محفوظ. يجب التقاطه مرة واحدة.", style = MaterialTheme.typography.titleSmall)
+            Button(
+                onClick = {
+                    prefs.edit().putString("cart_id_for_capture", cartId).apply()
+                    navController.navigate(Screen.KeyCapture.route)
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+            ) {
+                Text("🔐 التقاط المفتاح (مرة واحدة)", fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // 2. زر الإرسال المشفر (إن وُجد المفتاح)
+        if (hasKey) {
+            Text("✅ المفتاح محفوظ — جاهز للتشفير من Kotlin", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Button(
+                onClick = { viewModel.sendEncryptedPassengerPayload() },
+                modifier = Modifier.fillMaxWidth().height(60.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) {
+                Text("🔐 إرسال PATCH مشفر من Kotlin", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
         }
 
         if (confirmResponse.isNotEmpty()) {
