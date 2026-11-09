@@ -1,6 +1,5 @@
 package com.example.saudiaseattracker
 
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -20,13 +19,10 @@ import com.example.saudiaseattracker.ui.theme.SaudiaSeatTrackerTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val prefs = getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        val hasKey = !prefs.getString("rsa_public_key", null).isNullOrEmpty()
-
         setContent {
             SaudiaSeatTrackerTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    AppNavigation(startAtKeyCapture = !hasKey)
+                    AppNavigation()
                 }
             }
         }
@@ -34,18 +30,15 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppNavigation(startAtKeyCapture: Boolean) {
+fun AppNavigation() {
     val navController = rememberNavController()
     val viewModel: FlightViewModel = viewModel()
     Scaffold { padding ->
         NavHost(
             navController = navController,
-            startDestination = if (startAtKeyCapture) Screen.KeyCapture.route else Screen.Login.route,
+            startDestination = Screen.Login.route,
             modifier = Modifier.padding(padding)
         ) {
-            composable(Screen.KeyCapture.route) {
-                KeyCaptureScreen(navController = navController)
-            }
             composable(Screen.Login.route) {
                 LoginScreen(navController = navController, viewModel = viewModel)
             }
@@ -57,6 +50,9 @@ fun AppNavigation(startAtKeyCapture: Boolean) {
             }
             composable(Screen.Payment.route) {
                 PaymentScreen(navController = navController, viewModel = viewModel)
+            }
+            composable(Screen.KeyCapture.route) {
+                KeyCaptureScreen(navController = navController)
             }
         }
     }
