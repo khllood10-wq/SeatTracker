@@ -48,15 +48,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
+    // ═══ التعديل هنا: لا نمسح القيم القديمة بقيم فاضية ═══
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        prefs.edit()
-            .putString("auth_token", auth)
-            .putString("xd_token", xDToken)
-            .putString("session_id", sessionId)
-            .putString("user_agent", userAgent)
-            .apply()
-        addLog("✅ تم التقاط التوكن (${auth.take(20)}...)")
+        val editor = prefs.edit()
+        if (auth.isNotEmpty()) editor.putString("auth_token", auth)
+        if (xDToken.isNotEmpty()) editor.putString("xd_token", xDToken)
+        if (sessionId.isNotEmpty()) editor.putString("session_id", sessionId)
+        if (userAgent.isNotEmpty()) editor.putString("user_agent", userAgent)
+        editor.apply()
+        addLog("✅ التوكن محفوظ (auth=${auth.take(20)}..., xd=${xDToken.take(10)}...)")
     }
 
     private fun getSavedAuthToken(): String? =
