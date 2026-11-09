@@ -44,6 +44,7 @@ fun PassengersScreen(
 
     var customJson by remember { mutableStateOf("""{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-10"}""") }
     var webViewStarted by remember { mutableStateOf(false) }
+    var capturedBody by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.createCartAndProceedToPassenger()
@@ -79,9 +80,7 @@ fun PassengersScreen(
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // WebView مخفي لالتقاط طلب PATCH travelers/web المشفر
-        // ═══════════════════════════════════════════════════════════
+        // ═══ WebView مخفي لالتقاط PATCH travelers/web المشفر ═══
         if (!cartId.isNullOrEmpty() && !webViewStarted) {
             AndroidView(
                 modifier = Modifier.size(1.dp),
@@ -102,15 +101,15 @@ fun PassengersScreen(
                             @JavascriptInterface
                             fun onCaptured(url: String, body: String) {
                                 viewModel.addLog("🎯 URL: $url")
-                                viewModel.addLog("🎯 BODY: $body")
-                                viewModel.setCapturedEncryptedBody(url, body)
+                                viewModel.addLog("🎯 BODY: ${body.take(120)}...")
+                                capturedBody = "$url\n\n$body"
                             }
                         }, "AndroidBridge")
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                viewModel.addLog("📄 WebView page: $url")
+                                viewModel.addLog("📄 WebView page loaded: $url")
                                 view?.evaluateJavascript("""
                                     (function() {
                                         if (window.__captureInstalled) return;
@@ -119,7 +118,7 @@ fun PassengersScreen(
                                         var of = window.fetch;
                                         window.fetch = function(u, o) {
                                             try {
-                                                if (o && o.body && u && u.indexOf('travelers/web') > -1) {
+                                                if (o && o.body && u && String(u).indexOf('travelers/web') > -1) {
                                                     AndroidBridge.onCaptured(String(u), String(o.body));
                                                 }
                                             } catch(e) {}
@@ -180,6 +179,39 @@ fun PassengersScreen(
                 ) {
                     Text(
                         text = confirmResponse,
+                        modifier = Modifier.padding(12.dp),
+                        fontFamily = FontFamily.Monospace, fontSize = 10.sp
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider()
+
+        // ═══ عرض الـ captured body ═══
+        if (capturedBody != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🎯 Captured Body:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Button(onClick = {
+                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cb.setPrimaryClip(ClipData.newPlainText("Captured", capturedBody))
+                    Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
+                }) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null)
+                    Text(" نسخ")
+                }
+            }
+            SelectionContainer {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(
+                        text = capturedBody!!,
                         modifier = Modifier.padding(12.dp),
                         fontFamily = FontFamily.Monospace, fontSize = 10.sp
                     )
