@@ -35,34 +35,14 @@ fun PassengersScreen(
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
 
-    // 📝 محرر JSON
     var customJson by remember {
         mutableStateOf("""{"passengerTypeCode":"ADT","gender":"male"}""")
     }
 
-    // 🎯 قائمة اختبارات جاهزة (اضغط زر → يتحط الـ JSON في المربع)
-    val testCases = remember {
-        listOf(
-            "✅ 1. (أساس - نجح)" to """{"passengerTypeCode":"ADT","gender":"male"}""",
-            "🧪 2. + title" to """{"passengerTypeCode":"ADT","gender":"male","title":"MR"}""",
-            "🧪 3. + givenName + surname" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST"}""",
-            "🧪 4. + firstName + lastName (بديل)" to """{"passengerTypeCode":"ADT","gender":"male","firstName":"TEST","lastName":"TEST"}""",
-            "🧪 5. + nationality" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST","nationality":"SA"}""",
-            "🧪 6. + documents[]" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST","documents":[{"type":"NATIONAL_ID","number":"123456789"}]}""",
-            "🧪 7. + documentNumber (بديل)" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST","documentNumber":"123456789"}""",
-            "🎯 8. المجموعة الكاملة" to """{"passengerTypeCode":"ADT","gender":"male","title":"MR","givenName":"TEST","surname":"TEST","dateOfBirth":"1991-05-10","nationality":"SA","documents":[{"type":"NATIONAL_ID","number":"123456789","countryOfIssuance":"SA"}]}"""
-        )
-    }
-
-    LaunchedEffect(Unit) {
-        viewModel.createCartAndProceedToPassenger()
-    }
+    LaunchedEffect(Unit) { viewModel.createCartAndProceedToPassenger() }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("صفحة المسافرين - اختبار", style = MaterialTheme.typography.headlineMedium)
@@ -74,7 +54,7 @@ fun PassengersScreen(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("ملخص الحجز:", fontWeight = FontWeight.Bold)
-                    Text("الرحلة: ${f.flightNumber} | المسار: ${f.origin} → ${f.destination}")
+                    Text("الرحلة: ${f.flightNumber} | ${f.origin} → ${f.destination}")
                 }
             }
         }
@@ -90,31 +70,12 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // ═══════════ الأزرار الجاهزة ═══════════
-        Text("اختر السيناريو:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text("🧪 لوحة الاختبار", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
-        testCases.forEach { (label, json) ->
-            Button(
-                onClick = { customJson = json },
-                modifier = Modifier.fillMaxWidth(),
-                colors = if (label.startsWith("✅")) {
-                    ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                } else {
-                    ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                }
-            ) {
-                Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
-            }
-        }
-
-        HorizontalDivider()
-
-        // ═══════════ محرر JSON ═══════════
-        Text("JSON المُرسل:", style = MaterialTheme.typography.titleSmall)
         OutlinedTextField(
             value = customJson,
             onValueChange = { customJson = it },
-            modifier = Modifier.fillMaxWidth().height(180.dp),
+            modifier = Modifier.fillMaxWidth().height(150.dp),
             textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
         )
 
@@ -122,12 +83,19 @@ fun PassengersScreen(
             onClick = { viewModel.sendRawPassengerPayload(customJson) },
             modifier = Modifier.fillMaxWidth(),
             enabled = !cartId.isNullOrEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-        ) {
-            Text("📤 إرسال", fontWeight = FontWeight.Bold)
-        }
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+        ) { Text("📤 PATCH /travelers") }
 
-        // ═══════════ عرض الرد ═══════════
+        Button(
+            onClick = {
+                val payload = """{"travelers":[{"id":"SKH-1-EXT","passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-10","title":"Mr","givenName":"KHALED","surname":"OTUDI","documents":[{"type":"NATIONAL_ID","number":"1071580342","countryOfIssuance":"SA"}]}]}"""
+                viewModel.testCreateOrder(payload)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !cartId.isNullOrEmpty(),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+        ) { Text("🧪 POST /purchase/orders (بدون web)") }
+
         if (confirmResponse.isNotEmpty()) {
             Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
@@ -147,20 +115,17 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // ═══════════ استجابة السلة ═══════════
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("استجابة السلة (JSON):", style = MaterialTheme.typography.titleSmall)
-            Button(
-                onClick = {
-                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
-                    Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
-                }
-            ) {
+            Button(onClick = {
+                val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
+                Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
+            }) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null)
                 Text(" نسخ")
             }
