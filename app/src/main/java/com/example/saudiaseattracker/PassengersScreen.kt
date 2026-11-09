@@ -35,11 +35,10 @@ fun PassengersScreen(
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
 
-    // حقول إدخال المسافر
-    var firstName by remember { mutableStateOf("TEST") }
-    var lastName by remember { mutableStateOf("TEST") }
-    var documentNumber by remember { mutableStateOf("123456789") }
-    var dateOfBirth by remember { mutableStateOf("1991-05-10") }
+    // 📝 حقل نصي للـ JSON الخام (نبدأ بالبيانات اللي نجحت)
+    var customJson by remember {
+        mutableStateOf("""{"passengerTypeCode":"ADT","gender":"male"}""")
+    }
 
     LaunchedEffect(Unit) {
         viewModel.createCartAndProceedToPassenger()
@@ -52,7 +51,7 @@ fun PassengersScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("صفحة المسافرين", style = MaterialTheme.typography.headlineMedium)
+        Text("صفحة المسافرين - اختبار", style = MaterialTheme.typography.headlineMedium)
 
         foundFlight?.let { f ->
             Card(
@@ -61,21 +60,15 @@ fun PassengersScreen(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("ملخص الحجز:", fontWeight = FontWeight.Bold)
-                    Text("الرحلة: ${f.flightNumber}")
-                    Text("المسار: ${f.origin} → ${f.destination}")
-                    Text("السعر: ${f.price} SAR")
-                    Text("الفئة: ${f.fareFamily}")
+                    Text("الرحلة: ${f.flightNumber} | المسار: ${f.origin} → ${f.destination}")
                 }
             }
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             if (cartId.isNullOrEmpty()) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                Text("جاري إنشاء السلة...")
+                Text(" جاري إنشاء السلة...")
             } else {
                 Text("✅ cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
@@ -83,56 +76,29 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // ═══════════ فورم بيانات المسافر ═══════════
-        Text("بيانات المسافر:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        // ═══════════ 🧪 لوحة الاختبار ═══════════
+        Text("🧪 أداة اختبار الحقول", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("عدل الـ JSON اللي تحت واضغط إرسال", fontSize = 12.sp)
 
         OutlinedTextField(
-            value = firstName,
-            onValueChange = { firstName = it },
-            label = { Text("الاسم الأول") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        OutlinedTextField(
-            value = lastName,
-            onValueChange = { lastName = it },
-            label = { Text("اللقب") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        OutlinedTextField(
-            value = documentNumber,
-            onValueChange = { documentNumber = it },
-            label = { Text("رقم الهوية") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        OutlinedTextField(
-            value = dateOfBirth,
-            onValueChange = { dateOfBirth = it },
-            label = { Text("تاريخ الميلاد (YYYY-MM-DD)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            value = customJson,
+            onValueChange = { customJson = it },
+            modifier = Modifier.fillMaxWidth().height(150.dp),
+            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         )
 
         Button(
-            onClick = {
-                viewModel.confirmPassengerData(
-                    firstName = firstName,
-                    lastName = lastName,
-                    documentNumber = documentNumber,
-                    dateOfBirth = dateOfBirth
-                )
-            },
+            onClick = { viewModel.sendRawPassengerPayload(customJson) },
             modifier = Modifier.fillMaxWidth(),
-            enabled = !cartId.isNullOrEmpty()
+            enabled = !cartId.isNullOrEmpty(),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
         ) {
-            Text("تأكيد بيانات المسافر")
+            Text("📤 إرسال الـ JSON ده للسيرفر")
         }
 
-        // ═══════════ عرض نتيجة PATCH ═══════════
+        // ═══════════ عرض الرد ═══════════
         if (confirmResponse.isNotEmpty()) {
-            Text("نتيجة تأكيد المسافر:", style = MaterialTheme.typography.titleSmall)
+            Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -150,7 +116,6 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // ═══════════ عرض استجابة السلة (JSON) ═══════════
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -162,8 +127,7 @@ fun PassengersScreen(
                     val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
                     Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
-                },
-                enabled = rawCartResponse.isNotEmpty()
+                }
             ) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null)
                 Text(" نسخ")
