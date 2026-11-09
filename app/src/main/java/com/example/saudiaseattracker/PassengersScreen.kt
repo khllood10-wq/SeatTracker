@@ -144,14 +144,19 @@ fun PassengersScreen(
 
                                         AndroidBridge.onCaptured('__INSTALLED__', 'capture ready');
 
-                                        // دالة مساعدة لملء الحقول
+                                        // دالة مساعدة لملء الحقول (تدعم input و select)
                                         function setVal(sel, val) {
                                             var el = document.querySelector(sel);
                                             if (!el) return false;
-                                            var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                                            setter.call(el, val);
-                                            el.dispatchEvent(new Event('input', {bubbles:true}));
-                                            el.dispatchEvent(new Event('change', {bubbles:true}));
+                                            if (el.tagName === 'SELECT') {
+                                                el.value = val;
+                                                el.dispatchEvent(new Event('change', {bubbles:true}));
+                                            } else {
+                                                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                setter.call(el, val);
+                                                el.dispatchEvent(new Event('input', {bubbles:true}));
+                                                el.dispatchEvent(new Event('change', {bubbles:true}));
+                                            }
                                             return true;
                                         }
 
@@ -170,33 +175,49 @@ fun PassengersScreen(
                                             return null;
                                         }
 
-                                        // 1. التعبئة بعد 3 ثواني
+                                        // 1. التعبئة بعد 5 ثواني
                                         setTimeout(function() {
                                             try {
-                                                setVal('input[formcontrolname="firstName"]', 'Mohammed');
-                                                setVal('input[formcontrolname="lastName"]', 'Alotudi');
+                                                // بيانات المسافر
+                                                setVal('input[formcontrolname="firstName"]', 'Khaled');
+                                                setVal('input[formcontrolname="lastName"]', 'Otudi');
                                                 setVal('input[formcontrolname="dateOfBirth"]', '1991-05-10');
-                                                setVal('input[formcontrolname="documentNumber"]', '1234567890');
+                                                setVal('input[formcontrolname="documentNumber"]', '1071580342');
                                                 
-                                                AndroidBridge.onCaptured('__FILLED__', 'fields filled');
+                                                // محاولة اختيار الجنس واللقب
+                                                var selects = document.querySelectorAll('select');
+                                                for(var i=0; i<selects.length; i++){
+                                                    if(selects[i].innerHTML.indexOf('Mr') > -1 || selects[i].innerHTML.indexOf('السيد') > -1) {
+                                                        if(selects[i].options.length > 1) selects[i].selectedIndex = 1;
+                                                    }
+                                                }
+
+                                                AndroidBridge.onCaptured('__FILLED__', 'passenger fields filled');
                                                 
-                                                // 2. الضغط على زر "تأكيد" بعد 2 ثانية
+                                                // 2. الضغط على زر "تأكيد" بعد 3 ثواني
                                                 setTimeout(function() {
-                                                    var clickedConfirm = clickBtn(['تأكيد', 'Confirm', 'حفظ']);
+                                                    var clickedConfirm = clickBtn(['تأكيد', 'Confirm', 'حفظ', 'موافق']);
                                                     AndroidBridge.onCaptured('__CONFIRM_CLICKED__', clickedConfirm || 'not found');
                                                     
-                                                    // 3. الانتظار 3 ثواني بعد التأكيد، ثم الضغط على زر "متابعة"
+                                                    // 3. بعد التأكيد بـ 3 ثواني، نملأ بيانات الاتصال (لأنها غالباً تظهر)
                                                     setTimeout(function() {
-                                                        var clickedNext = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار']);
-                                                        AndroidBridge.onCaptured('__NEXT_CLICKED__', clickedNext || 'not found');
+                                                        setVal('input[formcontrolname="email"]', 'Khllood10@gmail.com');
+                                                        setVal('input[formcontrolname="phoneNumber"]', '572260016');
+                                                        
+                                                        // 4. ثم ننتظر ثانية ونضغط متابعة
+                                                        setTimeout(function() {
+                                                            var clickedNext = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار', 'الدفع']);
+                                                            AndroidBridge.onCaptured('__NEXT_CLICKED__', clickedNext || 'not found');
+                                                        }, 1500);
+
                                                     }, 3000);
                                                     
-                                                }, 2000);
+                                                }, 3000);
                                                 
                                             } catch(e) {
                                                 AndroidBridge.onCaptured('__ERROR__', String(e));
                                             }
-                                        }, 3000);
+                                        }, 5000);
                                     })();
                                 """.trimIndent(), null)
                             }
