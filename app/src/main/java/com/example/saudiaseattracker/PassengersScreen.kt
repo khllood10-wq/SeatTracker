@@ -35,22 +35,6 @@ fun PassengersScreen(
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
 
-    // 📝 مربع النص لتعديل الـ JSON يدوياً
-    var customJson by remember {
-        mutableStateOf(
-            """{
-  "passengerTypeCode": "ADT",
-  "gender": "male",
-  "title": "MR",
-  "givenName": "Khaled",
-  "surname": "Otudi",
-  "dateOfBirth": "1991-05-10",
-  "nationality": "SA",
-  "documents": [{"type": "NATIONAL_ID", "number": "1071580342", "countryOfIssuance": "SA"}]
-}""".trimIndent()
-        )
-    }
-
     LaunchedEffect(Unit) {
         if (viewModel.cartId.value.isNullOrEmpty()) {
             viewModel.createCartAndProceedToPassenger()
@@ -61,7 +45,7 @@ fun PassengersScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("صفحة المسافرين (API مباشر)", style = MaterialTheme.typography.headlineMedium)
+        Text("صفحة المسافرين (تشفير Kotlin)", style = MaterialTheme.typography.headlineMedium)
 
         foundFlight?.let { f ->
             Card(
@@ -70,7 +54,7 @@ fun PassengersScreen(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("ملخص الحجز:", fontWeight = FontWeight.Bold)
-                    Text("الرحلة: ${f.flightNumber} | المسار: ${f.origin} → ${f.destination}")
+                    Text("الرحلة: ${f.flightNumber} | ${f.origin} → ${f.destination} | ${f.price} SAR")
                 }
             }
         }
@@ -86,37 +70,16 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // ═══ 1. زر التسلسل التلقائي ═══
+        // زر واحد فقط — لا WebView، لا تعبئة يدوية
         Button(
-            onClick = { viewModel.executeFullPassengerSequence() },
-            modifier = Modifier.fillMaxWidth(),
+            onClick = { viewModel.sendEncryptedPassengerPayload() },
+            modifier = Modifier.fillMaxWidth().height(60.dp),
             enabled = !cartId.isNullOrEmpty(),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
         ) {
-            Text("🚀 تنفيذ التسلسل التلقائي الكامل", fontWeight = FontWeight.Bold)
+            Text("🔐 إرسال PATCH مشفر من Kotlin", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         }
 
-        // ═══ 2. محرر JSON اليدوي ═══
-        Text("تعديل الـ JSON يدوياً:", style = MaterialTheme.typography.titleSmall)
-        OutlinedTextField(
-            value = customJson,
-            onValueChange = { customJson = it },
-            modifier = Modifier.fillMaxWidth().height(180.dp),
-            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-        )
-
-        Button(
-            onClick = { viewModel.sendRawPassengerPayload(customJson) },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !cartId.isNullOrEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-        ) {
-            Text("📤 إرسال (PATCH) - بدون تشفير", fontWeight = FontWeight.Bold)
-        }
-
-        HorizontalDivider()
-
-        // ═══ 3. عرض الرد ═══
         if (confirmResponse.isNotEmpty()) {
             Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
@@ -127,8 +90,7 @@ fun PassengersScreen(
                     Text(
                         text = confirmResponse,
                         modifier = Modifier.padding(12.dp),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp
+                        fontFamily = FontFamily.Monospace, fontSize = 10.sp
                     )
                 }
             }
@@ -136,13 +98,12 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // ═══ 4. عرض استجابة السلة ═══
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("استجابة السلة (JSON):", style = MaterialTheme.typography.titleSmall)
+            Text("استجابة السلة:", style = MaterialTheme.typography.titleSmall)
             Button(onClick = {
                 val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
