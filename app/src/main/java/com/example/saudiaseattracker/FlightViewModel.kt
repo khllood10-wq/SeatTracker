@@ -351,21 +351,23 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(extResp)
                 addLog("✅ Extension: HTTP ${extResp.code()}")
 
-                // 🔥 التغيير هنا: استخدام المسار بدون /web/ والترويسات العادية
                 addLog("💾 [3/3] حفظ بيانات المسافر (PATCH /travelers/ بدون web)...")
                 val patchResp = RetrofitClient.api.updateTraveler(
                     cartId = cartId,
                     travelerId = travelerId,
                     headers = buildHeaders(
                         "2",
-                        isWebEndpoint = false, // ترويسات عادية (مع channel و browserid)
+                        isWebEndpoint = false,
                         referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
                     ),
-                    request = TravelerWebUpdateRequest(
+                    request = TravelerUpdateRequest(
+                        passengerTypeCode = "ADT",
                         firstName = firstName,
                         lastName = lastName,
-                        documentNumber = documentNumber,
-                        dateOfBirth = dateOfBirth
+                        gender = "male",
+                        dateOfBirth = dateOfBirth,
+                        nationality = "SA",
+                        documentNumber = documentNumber
                     )
                 )
                 saveCookiesFromResponse(patchResp)
@@ -380,7 +382,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 when {
                     patchResp.isSuccessful -> addLog("🎉 نجح الطلب بدون تشفير! تم حفظ بيانات المسافر!")
-                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر رفض JSON عادي حتى على المسار العادي")
+                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر طلب حقول إضافية أو صيغة مختلفة")
                     patchResp.code() == 404 -> addLog("🚫 404 — المسار غير موجود (نحتاج نرجع لـ /web/)")
                     patchResp.code() == 403 -> addLog("🚫 403 — ممنوع")
                     else -> addLog("⚠️ رد غير متوقع: HTTP ${patchResp.code()}")
