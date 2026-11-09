@@ -41,6 +41,25 @@ interface SaudiaApi {
         @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
 
+    @GET("shopping/services/by-cart")
+    suspend fun getServicesByCart(
+        @Query("cartId") cartId: String,
+        @Query("pointOfSale") pointOfSale: String = "SA",
+        @Query("flow") flow: String = "booking",
+        @Query("pageIdentity") pageIdentity: String = "PassengerDetails",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>
+    ): Response<ResponseBody>
+
+    @POST("utility/get-gaca-mandate")
+    suspend fun getGacaMandate(
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: GacaMandateRequest
+    ): Response<ResponseBody>
+
     @POST("security/elm-profiles/status-verification")
     suspend fun verifyElmProfile(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
