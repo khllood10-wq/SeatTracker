@@ -45,8 +45,13 @@ fun PassengersScreen(
     
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
+    // جلب التوكنات من الذاكرة لحقنها في المتصفح
+    val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+    val sessionId = prefs.getString("session_id", "") ?: ""
+    val xDToken = prefs.getString("xd_token", "") ?: ""
+    val authToken = prefs.getString("auth_token", "") ?: ""
+
     LaunchedEffect(Unit) {
-        // ننشئ السلة فقط إذا كانت غير موجودة
         if (viewModel.cartId.value.isNullOrEmpty()) {
             viewModel.createCartAndProceedToPassenger()
         }
@@ -68,7 +73,6 @@ fun PassengersScreen(
                 ) {
                     Text("حالة الحجز التلقائي", style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = { 
-                        // إعادة تحميل الصفحة بنفس الرابط الصحيح
                         webViewRef?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                     }) {
                         Icon(Icons.Default.Refresh, contentDescription = "تحديث")
@@ -76,8 +80,7 @@ fun PassengersScreen(
                 }
                 Text("cartId: ${cartId ?: "جاري الإنشاء..."}", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                 
-                // عرض آخر 4 أحداث
-                logs.take(4).forEach { log ->
+                logs.take(5).forEach { log ->
                     Text(log, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                 }
 
@@ -136,14 +139,40 @@ fun PassengersScreen(
                                 super.onPageFinished(view, url)
                                 viewModel.addLog("📄 Loaded: ${url?.take(40)}...")
                                 
-                                // ننتظر 3 ثواني بعد اكتمال التحميل لضمان بناء الفورم
                                 view?.postDelayed({
                                     view.evaluateJavascript("""
                                         (function() {
                                             if (window.__captureInstalled) return;
                                             window.__captureInstalled = true;
 
-                                            // اعتراض الطلبات
+                                            // 1. حقن التوكنات عشان الصفحة تتحمل وتعرض البيانات
+                                            var origOpen = XMLHttpRequest.prototype.open;
+                                            XMLHttpRequest.prototype.open = function() {
+                                                this.addEventListener('readystatechange', function() {
+                                                    if (this.readyState === 1 && this.responseURL && this.responseURL.indexOf('dapi.saudia.com') > -1) {
+                                                        try {
+                                                            this.setRequestHeader('saa-session-id', '${sessionId}');
+                                                            this.setRequestHeader('x-d-token', '${xDToken}');
+                                                            this.setRequestHeader('Authorization', 'Bearer ${authToken}');
+                                                        } catch(e){}
+                                                    }
+                                                }, false);
+                                                origOpen.apply(this, arguments);
+                                            };
+
+                                            var origFetch = window.fetch;
+                                            window.fetch = function(u, o) {
+                                                if (u && String(u).indexOf('dapi.saudia.com') > -1) {
+                                                    o = o || {};
+                                                    o.headers = o.headers || {};
+                                                    o.headers['saa-session-id'] = '${sessionId}';
+                                                    o.headers['x-d-token'] = '${xDToken}';
+                                                    o.headers['Authorization'] = 'Bearer ${authToken}';
+                                                }
+                                                return origFetch.apply(this, arguments);
+                                            };
+
+                                            // 2. اعتراض الطلبات لسرقة الـ PATCH
                                             var of = window.fetch;
                                             window.fetch = function(u, o) {
                                                 try {
@@ -169,8 +198,6 @@ fun PassengersScreen(
                                                 this.__u__ = String(u);
                                                 return oo.apply(this, arguments);
                                             };
-
-                                            AndroidBridge.onLog("✅ JS Ready. Waiting for form...");
 
                                             function setInput(name, val) {
                                                 var el = document.querySelector('input[formcontrolname="' + name + '"]');
@@ -203,7 +230,7 @@ fun PassengersScreen(
                                                                 break;
                                                             }
                                                         }
-                                                    }, 500);
+                                                    }, 300);
                                                     return true;
                                                 }
                                                 return false;
@@ -223,53 +250,59 @@ fun PassengersScreen(
                                                 return null;
                                             }
 
-                                            var step = 0;
-                                            var timer = 0;
-                                            var loop = setInterval(function() {
-                                                timer++;
+                                            // 3. مراقبة ظهور الفورم (بدون انتظار طويل)
+                                            AndroidBridge.onLog("👀 Waiting for form...");
+                                            var observer = new MutationObserver(function(mutations, obs) {
+                                                if (document.querySelector('input[formcontrolname="firstName"]')) {
+                                                    obs.disconnect();
+                                                    AndroidBridge.onLog("✅ Form found! Filling...");
+                                                    startFilling();
+                                                }
+                                            });
+                                            observer.observe(document.body, { childList: true, subtree: true });
+                                            
+                                            // مهلة 15 ثانية فقط إذا ما ظهر شيء
+                                            setTimeout(function() {
+                                                if (!document.querySelector('input[formcontrolname="firstName"]')) {
+                                                    observer.disconnect();
+                                                    AndroidBridge.onLog("⚠️ 15s Timeout: Page is empty. Cart may be expired.");
+                                                }
+                                            }, 15000);
+
+                                            function startFilling() {
+                                                setInput('firstName', 'Khaled');
+                                                setInput('lastName', 'Otudi');
                                                 
-                                                if (step === 0) {
-                                                    if (setInput('firstName', 'Khaled') && setInput('lastName', 'Otudi')) {
-                                                        AndroidBridge.onLog("✅ Names filled");
-                                                        step = 1; timer = 0;
-                                                    } else if (timer > 30) { // مهلة 15 ثانية للبحث عن الفورم
-                                                        clearInterval(loop);
-                                                        AndroidBridge.onLog("⚠️ Timeout: Form not found. Make sure you are logged in or cart is valid.");
-                                                    }
-                                                } else if (step === 1) {
+                                                setTimeout(function() {
                                                     selectCombo('title', 'Mr');
                                                     selectCombo('gender', 'Male');
                                                     selectCombo('documentType', 'National ID');
                                                     setInput('dateOfBirth', '1991-05-10');
                                                     setInput('documentNumber', '1071580342');
-                                                    AndroidBridge.onLog("✅ Details filled");
-                                                    step = 2; timer = 0;
-                                                } else if (step === 2) {
-                                                    if(timer > 4) { 
+                                                    AndroidBridge.onLog("✅ Passenger filled!");
+                                                    
+                                                    setTimeout(function() {
                                                         var c = clickBtn(['تأكيد', 'Confirm', 'حفظ', 'موافق']);
                                                         AndroidBridge.onLog("👉 Confirm: " + (c || "not found"));
-                                                        step = 3; timer = 0;
-                                                    }
-                                                } else if (step === 3) {
-                                                    if(timer > 6) { 
-                                                        setInput('email', 'Khllood10@gmail.com');
-                                                        setInput('phoneNumber', '572260016');
-                                                        selectCombo('phoneCountryCode', '966');
-                                                        selectCombo('countryCode', '966');
                                                         
-                                                        var n = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار', 'الدفع']);
-                                                        AndroidBridge.onLog("👉 Next: " + (n || "not found"));
-                                                        step = 4; timer = 0;
-                                                    }
-                                                }
-                                            }, 500);
+                                                        setTimeout(function() {
+                                                            setInput('email', 'Khllood10@gmail.com');
+                                                            setInput('phoneNumber', '572260016');
+                                                            selectCombo('phoneCountryCode', '966');
+                                                            selectCombo('countryCode', '966');
+                                                            
+                                                            var n = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار', 'الدفع']);
+                                                            AndroidBridge.onLog("👉 Next: " + (n || "not found"));
+                                                        }, 3000);
+                                                    }, 2000);
+                                                }, 1000);
+                                            }
                                         })();
                                     """.trimIndent(), null)
-                                }, 3000)
+                                }, 1500) // انتظار بسيط لضمان تحميل الصفحة الأساسية
                             }
                         }
 
-                        // التوجيه المباشر لصفحة المسافرين
                         loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                     }
                 }
