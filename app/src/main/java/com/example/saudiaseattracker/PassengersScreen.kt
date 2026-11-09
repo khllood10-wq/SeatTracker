@@ -6,14 +6,14 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
@@ -23,12 +23,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import java.io.ByteArrayInputStream
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +38,7 @@ fun PassengersScreen(
     viewModel: FlightViewModel
 ) {
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
+    val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
 
     var capturedBody by remember { mutableStateOf<String?>(null) }
@@ -48,7 +49,10 @@ fun PassengersScreen(
     val sessionId = prefs.getString("session_id", "") ?: ""
     val xDToken = prefs.getString("xd_token", "") ?: ""
     val authToken = prefs.getString("auth_token", "") ?: ""
-    val dynamicCookies = prefs.getString("dynamic_cookies", "") ?: "" // سحب الكوكيز من ردود API
+    val dynamicCookies = prefs.getString("dynamic_cookies", "") ?: ""
+    
+    // التوكن السري من ملف الـ HAR
+    val xVToken = "NjFkOGRhYzE0YWU4MDE4NDZhYmU0MzJiZGQ4YWZmYWE4ZTIyODdhMmVhMGVkZjY3ZTFkODc5MjA0NjFkYzdmODIxMTRiNTNiM2RhYTc2NTRiMzQ5Yzc4NDdlYjg1OTk0MTU2OGY3MTdiMWYwZjU3YjQyYWY2ZGYzMGMyZTA5NWQ="
 
     LaunchedEffect(Unit) {
         if (viewModel.cartId.value.isNullOrEmpty()) {
@@ -113,20 +117,10 @@ fun PassengersScreen(
                         cookieManager.setAcceptCookie(true)
                         cookieManager.setAcceptThirdPartyCookies(this, true)
                         
-                        // ═══ حقن الكوكيز اللي جابتنا من ردود الـ API في المتصفح ═══
                         if (dynamicCookies.isNotEmpty()) {
-                            val domains = listOf(
-                                "https://www.saudia.com",
-                                "https://dapi.saudia.com",
-                                "https://saudia.com"
-                            )
-                            domains.forEach { domain ->
-                                cookieManager.setCookie(domain, dynamicCookies)
-                            }
+                            val domains = listOf("https://www.saudia.com", "https://dapi.saudia.com")
+                            domains.forEach { domain -> cookieManager.setCookie(domain, dynamicCookies) }
                             cookieManager.flush()
-                            viewModel.addLog("🍪 تم حقن كوكيز الجلسة في المتصفح")
-                        } else {
-                            viewModel.addLog("⚠️ لا توجد كوكيز محفوظة")
                         }
 
                         addJavascriptInterface(object {
@@ -140,15 +134,31 @@ fun PassengersScreen(
                         }, "AndroidBridge")
 
                         webViewClient = object : WebViewClient() {
+                            
+                            // ═══ السحر الحقيقي هنا: اعتراض طلب جلب السلة وإرجاع بياناتنا الجاهزة ═══
+                            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                                val url = request?.url.toString()
+                                
+                                if (url.contains("/shopping/carts/") && url.contains("pageIdentity=PassengerDetails") && !url.contains("/services")) {
+                                    if (rawCartResponse.isNotEmpty()) {
+                                        viewModel.addLog("💉 تم اعتراض طلب السلة وتزويد المتصفح بالبيانات")
+                                        return WebResourceResponse(
+                                            "application/json",
+                                            "UTF-8",
+                                            ByteArrayInputStream(rawCartResponse.toByteArray())
+                                        )
+                                    }
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
                             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
-                                // حقن التوكنات في الـ localStorage
                                 view?.evaluateJavascript("""
                                     localStorage.setItem('saa-session-id', '${sessionId}');
                                     localStorage.setItem('x-d-token', '${xDToken}');
                                     localStorage.setItem('authorization', 'Bearer ${authToken}');
-                                    localStorage.setItem('browserid', 'db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9');
-                                    localStorage.setItem('channel', 'MOBILE_WEB');
+                                    localStorage.setItem('x-v-token', '${xVToken}');
                                 """.trimIndent(), null)
                             }
 
@@ -161,7 +171,6 @@ fun PassengersScreen(
                                         if (window.__installed) return;
                                         window.__installed = true;
 
-                                        // اعتراض الطلبات وحقن الهيدرز (بما فيها الكوكيز)
                                         var origFetch = window.fetch;
                                         window.fetch = function(u, o) {
                                             if (u && String(u).indexOf('dapi.saudia.com') > -1) {
@@ -173,7 +182,7 @@ fun PassengersScreen(
                                                 o.headers['browserid'] = 'db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9';
                                                 o.headers['channel'] = 'MOBILE_WEB';
                                                 o.headers['x-api-version'] = '3';
-                                                if ('${dynamicCookies}') o.headers['Cookie'] = '${dynamicCookies}';
+                                                o.headers['x-v-token'] = '${xVToken}';
                                             }
                                             try {
                                                 if (o && o.body && u && String(u).indexOf('travelers/web') > -1) {
@@ -194,7 +203,7 @@ fun PassengersScreen(
                                                         this.setRequestHeader('browserid', 'db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9');
                                                         this.setRequestHeader('channel', 'MOBILE_WEB');
                                                         this.setRequestHeader('x-api-version', '3');
-                                                        if ('${dynamicCookies}') this.setRequestHeader('Cookie', '${dynamicCookies}');
+                                                        this.setRequestHeader('x-v-token', '${xVToken}');
                                                     } catch(e){}
                                                 }
                                             }, false);
@@ -217,7 +226,7 @@ fun PassengersScreen(
                                             return oo.apply(this, arguments);
                                         };
 
-                                        AndroidBridge.onLog("✅ Tokens & Cookies injected.");
+                                        AndroidBridge.onLog("✅ JS Ready. Waiting for form...");
 
                                         function setInput(name, val) {
                                             var el = document.querySelector('input[formcontrolname="' + name + '"]');
