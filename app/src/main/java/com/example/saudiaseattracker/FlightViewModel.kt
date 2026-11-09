@@ -49,7 +49,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _rawCartResponse = MutableStateFlow<String?>(null)
     val rawCartResponse: StateFlow<String?> = _rawCartResponse
 
-    // ════════════ NEW: حالة نتيجة تأكيد المسافر ════════════
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
@@ -85,7 +84,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
-    private fun buildHeaders(apiVersion: String): Map<String, String> {
+    /**
+     * بناء الترويسات
+     * @param apiVersion رقم إصدار API
+     * @param isWebEndpoint هل الـ endpoint من نوع /web/ (زي travelers/web)
+     */
+    private fun buildHeaders(apiVersion: String, isWebEndpoint: Boolean = false): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
@@ -106,10 +110,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Accept" to "application/json",
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
-            "Referer" to "https://www.saudia.com/",
             "User-Agent" to userAgent,
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "channel" to "MOBILE_WEB",
             "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
@@ -118,6 +120,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
+
+        if (isWebEndpoint) {
+            // ═══ ترويسات خاصة بالـ /web/ endpoints ═══
+            headers["Referer"] = "https://www.saudia.com/ar-SA/booking/passengerDetails"
+            // نضيف x-v-token (نفس القيمة اللي ظهرت في HAR)
+            headers["x-v-token"] = "OWQ5MGQyNzdjMjRmOWQwMmMwNWFmZTBhZjIzNDQ2YzBlN2UxMWM1ZGU2NTlhNzJiZjViMWVmZTBkMDVjY2E2Yjg5MzM2MDFkMDRkMzQ0YTcwYTJlMmU2NjE1MGI1MTdiZmFlMWI2YzczMGVkYzQ5YTkwYzJhNmRkMjJmZGJkN2E="
+            // ⚠️ لا نضيف channel هنا لأن طلب المتصفح مكانش فيه
+        } else {
+            headers["Referer"] = "https://www.saudia.com/"
+            headers["channel"] = "MOBILE_WEB"
+        }
 
         val cookies = getSavedDynamicCookies()
         if (!cookies.isNullOrEmpty()) headers["Cookie"] = cookies
@@ -245,9 +258,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  NEW: تأكيد بيانات المسافر (3 خطوات متتالية)
-    // ═══════════════════════════════════════════════════════════
     fun confirmPassengerData(
         firstName: String,
         lastName: String,
@@ -265,7 +275,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             _passengerConfirmResponse.value = null
 
             try {
-                // ═══ الخطوة 1: التحقق من الهوية (Elm) ═══
+                // ═══ الخطوة 1: التحقق من الهوية ═══
                 addLog("🔍 [1/3] التحقق من الهوية...")
                 val verifyResp = RetrofitClient.api.verifyElmProfile(
                     headers = buildHeaders("2"),
@@ -298,12 +308,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(extResp)
                 addLog("✅ Extension: HTTP ${extResp.code()}")
 
-                // ═══ الخطوة 3: حفظ بيانات المسافر ═══
-                addLog("💾 [3/3] حفظ بيانات المسافر...")
+                // ═══ الخطوة 3: حفظ بيانات المسافر (بترويسات web) ═══
+                addLog("💾 [3/3] حفظ بيانات المسافر (مع ترويسات /web/)...")
                 val patchResp = RetrofitClient.api.updateTravelerWeb(
                     cartId = cartId,
                     travelerId = travelerId,
-                    headers = buildHeaders("2"),
+                    headers = buildHeaders("2", isWebEndpoint = true),
                     request = TravelerWebUpdateRequest(
                         firstName = firstName,
                         lastName = lastName,
@@ -329,10 +339,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         addLog("🎉 تم حفظ بيانات المسافر بنجاح!")
                     }
                     patchResp.code() in listOf(400, 415, 422) -> {
-                        addLog("⚠️ السيرفر رفض JSON العادي — نحتاج التشفير (المسار 2)")
+                        addLog("⚠️ السيرفر رفض JSON العادي — التشفير إلزامي")
                     }
-                    patchResp.code() in listOf(401, 403) -> {
-                        addLog("❌ مشكلة في التوكن أو الصلاحيات")
+                    patchResp.code() == 403 -> {
+                        addLog("🚫 403 — حتى مع الترويسات المصححة، ممنوع. غالباً التشفير إلزامي")
                     }
                     else -> {
                         addLog("⚠️ رد غير متوقع: HTTP ${patchResp.code()}")
