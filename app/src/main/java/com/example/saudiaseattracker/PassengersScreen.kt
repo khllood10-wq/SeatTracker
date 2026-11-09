@@ -42,14 +42,13 @@ fun PassengersScreen(
 
     var capturedBody by remember { mutableStateOf<String?>(null) }
     val logs = viewModel.searchLogs.collectAsStateWithLifecycle().value
-    
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // جلب التوكنات من الذاكرة لحقنها في المتصفح
     val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
     val sessionId = prefs.getString("session_id", "") ?: ""
     val xDToken = prefs.getString("xd_token", "") ?: ""
     val authToken = prefs.getString("auth_token", "") ?: ""
+    val dynamicCookies = prefs.getString("dynamic_cookies", "") ?: "" // سحب الكوكيز من ردود API
 
     LaunchedEffect(Unit) {
         if (viewModel.cartId.value.isNullOrEmpty()) {
@@ -57,10 +56,7 @@ fun PassengersScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        // ═══ 1. الجزء العلوي: السجل والتحكم ═══
+    Column(modifier = Modifier.fillMaxSize()) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -78,33 +74,27 @@ fun PassengersScreen(
                         Icon(Icons.Default.Refresh, contentDescription = "تحديث")
                     }
                 }
-                Text("cartId: ${cartId ?: "جاري الإنشاء..."}", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                
+                Text("cartId: ${cartId ?: "..."}", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                 logs.take(5).forEach { log ->
                     Text(log, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                 }
-
                 if (capturedBody != null) {
                     Button(
                         onClick = {
                             val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cb.setPrimaryClip(ClipData.newPlainText("Captured", capturedBody))
-                            Toast.makeText(context, "تم نسخ الـ Body المشفر!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                    ) {
-                        Text("نسخ الطلب المشفر (Captured Body)")
-                    }
+                    ) { Text("نسخ الطلب المشفر") }
                 }
             }
         }
 
-        // ═══ 2. الجزء السفلي: الـ WebView ═══
         if (cartId.isNullOrEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
-                Text("جاري إنشاء السلة...", modifier = Modifier.padding(top = 16.dp))
             }
         } else {
             AndroidView(
@@ -119,8 +109,25 @@ fun PassengersScreen(
                         settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-                        CookieManager.getInstance().setAcceptCookie(true)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        val cookieManager = CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+                        
+                        // ═══ حقن الكوكيز اللي جابتنا من ردود الـ API في المتصفح ═══
+                        if (dynamicCookies.isNotEmpty()) {
+                            val domains = listOf(
+                                "https://www.saudia.com",
+                                "https://dapi.saudia.com",
+                                "https://saudia.com"
+                            )
+                            domains.forEach { domain ->
+                                cookieManager.setCookie(domain, dynamicCookies)
+                            }
+                            cookieManager.flush()
+                            viewModel.addLog("🍪 تم حقن كوكيز الجلسة في المتصفح")
+                        } else {
+                            viewModel.addLog("⚠️ لا توجد كوكيز محفوظة")
+                        }
 
                         addJavascriptInterface(object {
                             @JavascriptInterface
@@ -129,177 +136,128 @@ fun PassengersScreen(
                                 capturedBody = "$url\n\n$body"
                             }
                             @JavascriptInterface
-                            fun onLog(msg: String) {
-                                viewModel.addLog(msg)
-                            }
+                            fun onLog(msg: String) { viewModel.addLog(msg) }
                         }, "AndroidBridge")
 
                         webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                super.onPageStarted(view, url, favicon)
+                                // حقن التوكنات في الـ localStorage
+                                view?.evaluateJavascript("""
+                                    localStorage.setItem('saa-session-id', '${sessionId}');
+                                    localStorage.setItem('x-d-token', '${xDToken}');
+                                    localStorage.setItem('authorization', 'Bearer ${authToken}');
+                                    localStorage.setItem('browserid', 'db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9');
+                                    localStorage.setItem('channel', 'MOBILE_WEB');
+                                """.trimIndent(), null)
+                            }
+
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
                                 viewModel.addLog("📄 Loaded: ${url?.take(40)}...")
                                 
-                                view?.postDelayed({
-                                    view.evaluateJavascript("""
-                                        (function() {
-                                            if (window.__captureInstalled) return;
-                                            window.__captureInstalled = true;
+                                view?.evaluateJavascript("""
+                                    (function() {
+                                        if (window.__installed) return;
+                                        window.__installed = true;
 
-                                            // 1. حقن التوكنات عشان الصفحة تتحمل وتعرض البيانات
-                                            var origOpen = XMLHttpRequest.prototype.open;
-                                            XMLHttpRequest.prototype.open = function() {
-                                                this.addEventListener('readystatechange', function() {
-                                                    if (this.readyState === 1 && this.responseURL && this.responseURL.indexOf('dapi.saudia.com') > -1) {
-                                                        try {
-                                                            this.setRequestHeader('saa-session-id', '${sessionId}');
-                                                            this.setRequestHeader('x-d-token', '${xDToken}');
-                                                            this.setRequestHeader('Authorization', 'Bearer ${authToken}');
-                                                        } catch(e){}
-                                                    }
-                                                }, false);
-                                                origOpen.apply(this, arguments);
-                                            };
-
-                                            var origFetch = window.fetch;
-                                            window.fetch = function(u, o) {
-                                                if (u && String(u).indexOf('dapi.saudia.com') > -1) {
-                                                    o = o || {};
-                                                    o.headers = o.headers || {};
-                                                    o.headers['saa-session-id'] = '${sessionId}';
-                                                    o.headers['x-d-token'] = '${xDToken}';
-                                                    o.headers['Authorization'] = 'Bearer ${authToken}';
-                                                }
-                                                return origFetch.apply(this, arguments);
-                                            };
-
-                                            // 2. اعتراض الطلبات لسرقة الـ PATCH
-                                            var of = window.fetch;
-                                            window.fetch = function(u, o) {
-                                                try {
-                                                    if (o && o.body && u && String(u).indexOf('travelers/web') > -1) {
-                                                        AndroidBridge.onCaptured(String(u), String(o.body));
-                                                    }
-                                                } catch(e) {}
-                                                return of.apply(this, arguments);
-                                            };
-
-                                            var ox = XMLHttpRequest.prototype.send;
-                                            XMLHttpRequest.prototype.send = function(b) {
-                                                try {
-                                                    if (b && this.__u__ && this.__u__.indexOf('travelers/web') > -1) {
-                                                        AndroidBridge.onCaptured(String(this.__u__), String(b));
-                                                    }
-                                                } catch(e) {}
-                                                return ox.apply(this, arguments);
-                                            };
-
-                                            var oo = XMLHttpRequest.prototype.open;
-                                            XMLHttpRequest.prototype.open = function(m, u) {
-                                                this.__u__ = String(u);
-                                                return oo.apply(this, arguments);
-                                            };
-
-                                            function setInput(name, val) {
-                                                var el = document.querySelector('input[formcontrolname="' + name + '"]');
-                                                if (!el) return false;
-                                                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                                                setter.call(el, val);
-                                                el.dispatchEvent(new Event('input', {bubbles:true}));
-                                                el.dispatchEvent(new Event('change', {bubbles:true}));
-                                                return true;
+                                        // اعتراض الطلبات وحقن الهيدرز (بما فيها الكوكيز)
+                                        var origFetch = window.fetch;
+                                        window.fetch = function(u, o) {
+                                            if (u && String(u).indexOf('dapi.saudia.com') > -1) {
+                                                o = o || {};
+                                                o.headers = o.headers || {};
+                                                o.headers['saa-session-id'] = '${sessionId}';
+                                                o.headers['x-d-token'] = '${xDToken}';
+                                                o.headers['Authorization'] = 'Bearer ${authToken}';
+                                                o.headers['browserid'] = 'db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9';
+                                                o.headers['channel'] = 'MOBILE_WEB';
+                                                o.headers['x-api-version'] = '3';
+                                                if ('${dynamicCookies}') o.headers['Cookie'] = '${dynamicCookies}';
                                             }
-
-                                            function selectCombo(name, matchText) {
-                                                var el = document.querySelector('[formcontrolname="' + name + '"]');
-                                                if (!el) return false;
-                                                if (el.tagName.toLowerCase() === 'select') {
-                                                    for(var i=0; i<el.options.length; i++) {
-                                                        if(el.options[i].text.includes(matchText)) {
-                                                            el.selectedIndex = i;
-                                                            el.dispatchEvent(new Event('change', {bubbles:true}));
-                                                            return true;
-                                                        }
-                                                    }
-                                                } else {
-                                                    el.click();
-                                                    setTimeout(function(){
-                                                        var opts = document.querySelectorAll('mat-option, .mat-option');
-                                                        for(var i=0; i<opts.length; i++){
-                                                            if(opts[i].innerText.includes(matchText) || opts[i].textContent.includes(matchText)){
-                                                                opts[i].click();
-                                                                break;
-                                                            }
-                                                        }
-                                                    }, 300);
-                                                    return true;
+                                            try {
+                                                if (o && o.body && u && String(u).indexOf('travelers/web') > -1) {
+                                                    AndroidBridge.onCaptured(String(u), String(o.body));
                                                 }
-                                                return false;
-                                            }
+                                            } catch(e) {}
+                                            return origFetch.apply(this, arguments);
+                                        };
 
-                                            function clickBtn(keywords) {
-                                                var elements = document.querySelectorAll('button, [role="button"], a');
-                                                for (var i = 0; i < elements.length; i++) {
-                                                    var text = (elements[i].innerText || elements[i].textContent || '').trim();
-                                                    for (var k = 0; k < keywords.length; k++) {
-                                                        if (text.indexOf(keywords[k]) > -1) {
-                                                            elements[i].click();
-                                                            return text;
-                                                        }
-                                                    }
+                                        var origOpen = XMLHttpRequest.prototype.open;
+                                        XMLHttpRequest.prototype.open = function() {
+                                            this.addEventListener('readystatechange', function() {
+                                                if (this.readyState === 1 && this.responseURL && this.responseURL.indexOf('dapi.saudia.com') > -1) {
+                                                    try {
+                                                        this.setRequestHeader('saa-session-id', '${sessionId}');
+                                                        this.setRequestHeader('x-d-token', '${xDToken}');
+                                                        this.setRequestHeader('Authorization', 'Bearer ${authToken}');
+                                                        this.setRequestHeader('browserid', 'db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9');
+                                                        this.setRequestHeader('channel', 'MOBILE_WEB');
+                                                        this.setRequestHeader('x-api-version', '3');
+                                                        if ('${dynamicCookies}') this.setRequestHeader('Cookie', '${dynamicCookies}');
+                                                    } catch(e){}
                                                 }
-                                                return null;
-                                            }
+                                            }, false);
+                                            origOpen.apply(this, arguments);
+                                        };
 
-                                            // 3. مراقبة ظهور الفورم (بدون انتظار طويل)
-                                            AndroidBridge.onLog("👀 Waiting for form...");
-                                            var observer = new MutationObserver(function(mutations, obs) {
-                                                if (document.querySelector('input[formcontrolname="firstName"]')) {
-                                                    obs.disconnect();
-                                                    AndroidBridge.onLog("✅ Form found! Filling...");
-                                                    startFilling();
+                                        var ox = XMLHttpRequest.prototype.send;
+                                        XMLHttpRequest.prototype.send = function(b) {
+                                            try {
+                                                if (b && this.__u__ && this.__u__.indexOf('travelers/web') > -1) {
+                                                    AndroidBridge.onCaptured(String(this.__u__), String(b));
                                                 }
-                                            });
-                                            observer.observe(document.body, { childList: true, subtree: true });
-                                            
-                                            // مهلة 15 ثانية فقط إذا ما ظهر شيء
-                                            setTimeout(function() {
-                                                if (!document.querySelector('input[formcontrolname="firstName"]')) {
-                                                    observer.disconnect();
-                                                    AndroidBridge.onLog("⚠️ 15s Timeout: Page is empty. Cart may be expired.");
-                                                }
-                                            }, 15000);
+                                            } catch(e) {}
+                                            return ox.apply(this, arguments);
+                                        };
+                                        
+                                        var oo = XMLHttpRequest.prototype.open;
+                                        XMLHttpRequest.prototype.open = function(m, u) {
+                                            this.__u__ = String(u);
+                                            return oo.apply(this, arguments);
+                                        };
 
-                                            function startFilling() {
-                                                setInput('firstName', 'Khaled');
-                                                setInput('lastName', 'Otudi');
-                                                
+                                        AndroidBridge.onLog("✅ Tokens & Cookies injected.");
+
+                                        function setInput(name, val) {
+                                            var el = document.querySelector('input[formcontrolname="' + name + '"]');
+                                            if (!el) return false;
+                                            var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                            setter.call(el, val);
+                                            el.dispatchEvent(new Event('input', {bubbles:true}));
+                                            el.dispatchEvent(new Event('change', {bubbles:true}));
+                                            return true;
+                                        }
+
+                                        var attempts = 0;
+                                        var loop = setInterval(function() {
+                                            attempts++;
+                                            if (setInput('firstName', 'Khaled') && setInput('lastName', 'Otudi')) {
+                                                clearInterval(loop);
+                                                AndroidBridge.onLog("✅ Form found and filled!");
                                                 setTimeout(function() {
-                                                    selectCombo('title', 'Mr');
-                                                    selectCombo('gender', 'Male');
-                                                    selectCombo('documentType', 'National ID');
                                                     setInput('dateOfBirth', '1991-05-10');
                                                     setInput('documentNumber', '1071580342');
-                                                    AndroidBridge.onLog("✅ Passenger filled!");
+                                                    setInput('email', 'Khllood10@gmail.com');
+                                                    setInput('phoneNumber', '572260016');
                                                     
-                                                    setTimeout(function() {
-                                                        var c = clickBtn(['تأكيد', 'Confirm', 'حفظ', 'موافق']);
-                                                        AndroidBridge.onLog("👉 Confirm: " + (c || "not found"));
-                                                        
-                                                        setTimeout(function() {
-                                                            setInput('email', 'Khllood10@gmail.com');
-                                                            setInput('phoneNumber', '572260016');
-                                                            selectCombo('phoneCountryCode', '966');
-                                                            selectCombo('countryCode', '966');
-                                                            
-                                                            var n = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار', 'الدفع']);
-                                                            AndroidBridge.onLog("👉 Next: " + (n || "not found"));
-                                                        }, 3000);
-                                                    }, 2000);
+                                                    var btns = document.querySelectorAll('button');
+                                                    for (var i = 0; i < btns.length; i++) {
+                                                        var t = (btns[i].innerText || '').trim();
+                                                        if (t.indexOf('تأكيد') > -1 || t.indexOf('Confirm') > -1) {
+                                                            btns[i].click();
+                                                            AndroidBridge.onLog("👉 Confirm clicked");
+                                                            break;
+                                                        }
+                                                    }
                                                 }, 1000);
+                                            } else if (attempts > 30) {
+                                                clearInterval(loop);
+                                                AndroidBridge.onLog("⚠️ Timeout: Form never appeared.");
                                             }
-                                        })();
-                                    """.trimIndent(), null)
-                                }, 1500) // انتظار بسيط لضمان تحميل الصفحة الأساسية
+                                        }, 500);
+                                    })();
+                                """.trimIndent(), null)
                             }
                         }
 
