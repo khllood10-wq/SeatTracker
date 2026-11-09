@@ -2,7 +2,6 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
-import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -309,69 +308,28 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             try {
-                addLog("🔍 [1/3] التحقق من الهوية (Elm)...")
-                val verifyResp = RetrofitClient.api.verifyElmProfile(
-                    headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = ElmVerifyRequest(
-                        documentType = "I",
-                        documentNumber = documentNumber,
-                        nationality = "SA",
-                        dateOfBirth = dateOfBirth
-                    )
-                )
-                saveCookiesFromResponse(verifyResp)
-                addLog("✅ التحقق: HTTP ${verifyResp.code()}")
+                addLog("💾 [WebView] حفظ بيانات المسافر (تشفير تلقائي)...")
+                val payload = """
+                    {
+                      "passengerTypeCode": "ADT",
+                      "gender": "male",
+                      "dateOfBirth": "$dateOfBirth",
+                      "title": "Mr",
+                      "givenName": "$firstName",
+                      "surname": "$lastName",
+                      "documents": [
+                        {
+                          "type": "NATIONAL_ID",
+                          "number": "$documentNumber",
+                          "countryOfIssuance": "SA"
+                        }
+                      ]
+                    }
+                """.trimIndent()
 
-                addLog("📎 [2/3] إضافة Extension...")
-                val extensionContent = Base64.encodeToString(
-                    """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}""".toByteArray(),
-                    Base64.NO_WRAP
-                )
-                val extResp = RetrofitClient.api.addCartExtension(
-                    cartId = cartId,
-                    headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = listOf(CartExtensionRequest(content = extensionContent, travelerId = travelerId))
-                )
-                saveCookiesFromResponse(extResp)
-                addLog("✅ Extension: HTTP ${extResp.code()}")
-
-                addLog("💾 [3/3] حفظ بيانات المسافر (PATCH)...")
-                val patchResp = RetrofitClient.api.updateTraveler(
-                    cartId = cartId,
-                    travelerId = travelerId,
-                    headers = buildHeaders("2", isWebEndpoint = false, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = TravelerUpdateRequest(
-                        passengerTypeCode = "ADT",
-                        givenName = firstName,
-                        surname = lastName,
-                        gender = "male",
-                        dateOfBirth = dateOfBirth,
-                        nationality = "SA",
-                        documents = listOf(
-                            TravelerDocument(
-                                type = "NATIONAL_ID",
-                                number = documentNumber,
-                                countryOfIssuance = "SA"
-                            )
-                        )
-                    )
-                )
-                saveCookiesFromResponse(patchResp)
-                val responseBody = if (patchResp.isSuccessful) {
-                    patchResp.body()?.string() ?: ""
-                } else {
-                    patchResp.errorBody()?.string() ?: ""
-                }
-                _passengerConfirmResponse.value = "HTTP ${patchResp.code()}\n\n${responseBody.ifEmpty { "(empty body)" }}"
-                addLog("📡 PATCH result: HTTP ${patchResp.code()}")
-
-                when {
-                    patchResp.isSuccessful -> addLog("🎉 نجح! تم حفظ بيانات المسافر!")
-                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر طلب تعديل في الحقول")
-                    patchResp.code() == 404 -> addLog("🚫 404 — مسار غلط")
-                    patchResp.code() == 403 -> addLog("🚫 403 — ممنوع")
-                    else -> addLog("⚠️ HTTP ${patchResp.code()}")
-                }
+                val result = WebViewManager.submitEncryptedPassenger(cartId, travelerId, payload)
+                _passengerConfirmResponse.value = "WebView Result:\n\n$result"
+                addLog("📡 WebView PATCH result: ${result.take(80)}...")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
                 _passengerConfirmResponse.value = "Exception: ${e.message}"
@@ -404,7 +362,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══ 🧪 اختبار إنشاء الطلب ═══
     fun testCreateOrder(payloadJson: String) {
         val cartId = _cartId.value
         if (cartId.isNullOrEmpty()) { addLog("❌ لا يوجد cartId!"); return }
