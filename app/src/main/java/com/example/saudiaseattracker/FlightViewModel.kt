@@ -48,22 +48,27 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
+    // ═══ التعديل: نحفظ auth فقط — x-d-token يبقى فاضي (زي ما كان شغّال) ═══
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val editor = prefs.edit()
         if (auth.isNotEmpty()) editor.putString("auth_token", auth)
-        if (xDToken.isNotEmpty()) editor.putString("xd_token", xDToken)
-        if (sessionId.isNotEmpty()) editor.putString("session_id", sessionId)
+        // ❌ لا نحفظ x-d-token ولا session-id من WebView
         if (userAgent.isNotEmpty()) editor.putString("user_agent", userAgent)
         editor.apply()
-        addLog("✅ التوكن محفوظ (auth=${auth.take(20)}..., xd=${xDToken.take(10)}...)")
+        addLog("✅ التوكن محفوظ (auth فقط، بدون x-d-token)")
     }
 
     fun saveDirectCookies(cookies: String) {
-        if (cookies.isEmpty()) return
+        // ❌ لا نمسح/نستبدل الكوكيز — نتجاهل الدالة
+        // (الكوكيز بتتراكم من الـ responses تلقائياً)
+        addLog("ℹ️ تجاهل كوكيز WebView (نبقي على كوكيزنا)")
+    }
+
+    fun clearAuth() {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("dynamic_cookies", cookies).apply()
-        addLog("🍪 كوكيز: ${cookies.length} حرف")
+        prefs.edit().clear().apply()
+        addLog("🧹 تم مسح جميع بيانات المصادقة")
     }
 
     private fun getSavedAuthToken(): String? =
@@ -110,8 +115,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         val headers = mutableMapOf(
             "Authorization" to authToken,
-            "x-d-token" to xDToken,
-            "saa-session-id" to sessionId,
             "x-api-version" to apiVersion,
             "platform" to "Web",
             "version" to "27.0",
@@ -129,6 +132,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
+
+        // نضيف x-d-token و session فقط لو موجودين (مش بنستخدمهم — بس لو احتاجناهم)
+        // ❌ نحذفهم — تركناهم فارغين عمداً
+        // if (xDToken.isNotEmpty()) headers["x-d-token"] = xDToken
+        // if (sessionId.isNotEmpty()) headers["saa-session-id"] = sessionId
 
         if (isWebEndpoint) {
             headers["x-v-token"] = "ZjU2MTI0Y2I2YzYyODQzZGMxZjY1OTBmN2YyOWM2ZTQ3OTczOTVlY2M3YWJiYzQzMTNiNjA3MWEyMDI1NzNmODY0NDBhYTJjNWRmMjRlYTE1OGQ0ZGQwYzlkMjkyNDcxZWIwZjBkYjcyNWEzY2Q0YjIyNzVlMmFhZmQ1NWZjYTc="
@@ -293,16 +301,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("═".repeat(40))
                 addLog("🍪 كوكيز: ${getSavedDynamicCookies()?.length ?: 0} حرف")
-                addLog("🎯 جاهز للتأكيد (PATCH).")
+                addLog("🎯 جاهز للتأكيد (WebView PATCH).")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
             }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // ⚠️ النسخة الجديدة: تستخدم WebViewManager.encryptedFetch
-    // ═══════════════════════════════════════════════════════════
     fun confirmPassengerData(
         firstName: String,
         lastName: String,
