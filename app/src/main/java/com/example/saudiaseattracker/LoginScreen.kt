@@ -29,9 +29,9 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
             factory = { context ->
                 val webView = WebView(context)
                 val capturedUserAgent = webView.settings.userAgentString
-                
+
                 webView.layoutParams = ViewGroup.LayoutParams(1, 1)
-                
+
                 webView.settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -39,11 +39,14 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                     useWideViewPort = true
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 }
-                
+
                 webView.webChromeClient = WebChromeClient()
-                
+
                 android.webkit.CookieManager.getInstance().setAcceptCookie(true)
                 android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+
+                // ═══ 🔥 السطر الجديد: اربط الـ WebView بـ WebViewManager ═══
+                WebViewManager.attach(webView)
 
                 webView.webViewClient = object : WebViewClient() {
                     override fun shouldInterceptRequest(
@@ -51,20 +54,16 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                         request: android.webkit.WebResourceRequest?
                     ): android.webkit.WebResourceResponse? {
                         val url = request?.url.toString()
-                        
+
                         if (!hasIntercepted && url.contains("dapi.saudia.com")) {
                             val authHeader = request?.requestHeaders?.get("Authorization")
                             val xdToken = request?.requestHeaders?.get("x-d-token")
                             val sessionId = request?.requestHeaders?.get("saa-session-id")
-                            
+
                             if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
                                 val finalSessionId = sessionId ?: java.util.UUID.randomUUID().toString()
-                                
-                                // حفظ التوكن في الـ ViewModel والـ SharedPreferences
                                 viewModel.saveTokens(authHeader, xdToken ?: "", finalSessionId, capturedUserAgent)
                                 hasIntercepted = true
-                                
-                                // الانتقال لصفحة البحث فوراً
                                 view?.post {
                                     navController.navigate(Screen.Search.route) {
                                         popUpTo(Screen.Search.route) { inclusive = true }
@@ -74,18 +73,18 @@ fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
                         }
                         return super.shouldInterceptRequest(view, request)
                     }
-                    
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
                         if (!hasIntercepted && loadAttempts < 3) {
                             loadAttempts++
-                            view?.postDelayed({ 
-                                if (!hasIntercepted) view.reload() 
+                            view?.postDelayed({
+                                if (!hasIntercepted) view.reload()
                             }, 2000)
                         }
                     }
                 }
-                
+
                 webView.loadUrl("https://www.saudia.com/ar-SA")
                 webView
             }
