@@ -68,10 +68,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isEmpty()) return
-
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val current = prefs.getString("dynamic_cookies", "") ?: ""
-
         val cookieMap = mutableMapOf<String, String>()
         if (current.isNotEmpty()) {
             current.split("; ").forEach { pair ->
@@ -99,7 +97,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
-
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
 
@@ -131,7 +128,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
             headers["channel"] = "MOBILE_WEB"
         }
-
         val cookies = getSavedDynamicCookies()
         if (!cookies.isNullOrEmpty()) headers["Cookie"] = cookies
         return headers
@@ -222,8 +218,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
         addLog("═".repeat(40))
-        addLog("🎬 بدء تسلسل صفحة المسافرين (محاكاة المتصفح)...")
-
+        addLog("🎬 بدء تسلسل صفحة المسافرين...")
         viewModelScope.launch {
             try {
                 addLog("📦 [1/5] إنشاء السلة...")
@@ -241,24 +236,23 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val id = json.getAsJsonObject("data")?.get("id")?.asString
                     ?: json.get("id")?.asString ?: ""
                 if (id.isEmpty()) {
-                    addLog("⚠️ لا يوجد cartId في الاستجابة")
+                    addLog("⚠️ لا يوجد cartId")
                     return@launch
                 }
                 _cartId.value = id
                 addLog("✅ [1/5] cartId = $id")
 
-                addLog("📄 [2/5] تحميل صفحة السلة (FlightResults)...")
-                val flightResultsResp = RetrofitClient.api.getCartDetails(
+                addLog("📄 [2/5] تحميل صفحة السلة...")
+                RetrofitClient.api.getCartDetails(
                     cartId = id,
                     pageIdentity = "FlightResults",
                     headers = buildHeaders("3", referer = "https://www.saudia.com/ar-SA/booking")
-                )
-                saveCookiesFromResponse(flightResultsResp)
-                val frBody = flightResultsResp.body()?.string()
-                    ?: flightResultsResp.errorBody()?.string() ?: ""
-                addLog("✅ [2/5] FlightResults: HTTP ${flightResultsResp.code()} (${frBody.length} حرف)")
+                ).let {
+                    saveCookiesFromResponse(it)
+                    addLog("✅ [2/5] FlightResults: HTTP ${it.code()}")
+                }
 
-                addLog("👤 [3/5] تحميل صفحة المسافرين (PassengerDetails)...")
+                addLog("👤 [3/5] تحميل صفحة المسافرين...")
                 val passengerResp = RetrofitClient.api.getCartDetails(
                     cartId = id,
                     pageIdentity = "PassengerDetails",
@@ -268,40 +262,30 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (passengerResp.isSuccessful) {
                     _rawCartResponse.value = passengerResp.body()?.string() ?: ""
                     addLog("✅ [3/5] PassengerDetails: HTTP ${passengerResp.code()}")
-                } else {
-                    addLog("❌ [3/5] PassengerDetails: HTTP ${passengerResp.code()}")
                 }
 
-                addLog("🎫 [4/5] تحميل الخدمات (by-cart)...")
-                val servicesResp = RetrofitClient.api.getServicesByCart(
+                addLog("🎫 [4/5] تحميل الخدمات...")
+                RetrofitClient.api.getServicesByCart(
                     cartId = id,
                     pageIdentity = "PassengerDetails",
                     headers = buildHeaders("3", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails")
-                )
-                saveCookiesFromResponse(servicesResp)
-                val svcBody = servicesResp.body()?.string()
-                    ?: servicesResp.errorBody()?.string() ?: ""
-                addLog("✅ [4/5] الخدمات: HTTP ${servicesResp.code()} (${svcBody.length} حرف)")
+                ).let {
+                    saveCookiesFromResponse(it)
+                    addLog("✅ [4/5] الخدمات: HTTP ${it.code()}")
+                }
 
                 addLog("🛂 [5/5] فحص GACA...")
-                val gacaResp = RetrofitClient.api.getGacaMandate(
-                    headers = buildHeaders(
-                        "1",
-                        isWebEndpoint = true,
-                        referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
-                    ),
+                RetrofitClient.api.getGacaMandate(
+                    headers = buildHeaders("1", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
                     request = GacaMandateRequest()
-                )
-                saveCookiesFromResponse(gacaResp)
-                val gacaBody = gacaResp.body()?.string()
-                    ?: gacaResp.errorBody()?.string() ?: ""
-                addLog("✅ [5/5] GACA: HTTP ${gacaResp.code()} (${gacaBody.length} حرف)")
+                ).let {
+                    saveCookiesFromResponse(it)
+                    addLog("✅ [5/5] GACA: HTTP ${it.code()}")
+                }
 
                 addLog("═".repeat(40))
-                val savedCookies = getSavedDynamicCookies()
-                addLog("🍪 إجمالي الكوكيز: ${savedCookies?.length ?: 0} حرف")
-                addLog("🎯 التسلسل الكامل انتهى. جاهز للتأكيد (PATCH).")
-
+                addLog("🍪 كوكيز: ${getSavedDynamicCookies()?.length ?: 0} حرف")
+                addLog("🎯 جاهز للتأكيد (PATCH).")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
             }
@@ -323,7 +307,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
-
             try {
                 addLog("🔍 [1/3] التحقق من الهوية (Elm)...")
                 val verifyResp = RetrofitClient.api.verifyElmProfile(
@@ -351,27 +334,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(extResp)
                 addLog("✅ Extension: HTTP ${extResp.code()}")
 
-                addLog("💾 [3/3] حفظ بيانات المسافر (PATCH /travelers/ بدون web)...")
+                // 🔥 التعديل: givenName + surname + documents[]
+                addLog("💾 [3/3] حفظ بيانات المسافر (PATCH /travelers/)...")
                 val patchResp = RetrofitClient.api.updateTraveler(
                     cartId = cartId,
                     travelerId = travelerId,
-                    headers = buildHeaders(
-                        "2",
-                        isWebEndpoint = false,
-                        referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
-                    ),
+                    headers = buildHeaders("2", isWebEndpoint = false, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
                     request = TravelerUpdateRequest(
                         passengerTypeCode = "ADT",
-                        firstName = firstName,
-                        lastName = lastName,
+                        givenName = firstName,
+                        surname = lastName,
                         gender = "male",
                         dateOfBirth = dateOfBirth,
                         nationality = "SA",
-                        documentNumber = documentNumber
+                        documents = listOf(
+                            TravelerDocument(
+                                type = "NATIONAL_ID",
+                                number = documentNumber,
+                                countryOfIssuance = "SA"
+                            )
+                        )
                     )
                 )
                 saveCookiesFromResponse(patchResp)
-
                 val responseBody = if (patchResp.isSuccessful) {
                     patchResp.body()?.string() ?: ""
                 } else {
@@ -381,13 +366,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("📡 PATCH result: HTTP ${patchResp.code()}")
 
                 when {
-                    patchResp.isSuccessful -> addLog("🎉 نجح الطلب بدون تشفير! تم حفظ بيانات المسافر!")
-                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر طلب حقول إضافية أو صيغة مختلفة")
-                    patchResp.code() == 404 -> addLog("🚫 404 — المسار غير موجود (نحتاج نرجع لـ /web/)")
+                    patchResp.isSuccessful -> addLog("🎉 نجح! تم حفظ بيانات المسافر!")
+                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر لسه عايز تعديل في الحقول")
+                    patchResp.code() == 404 -> addLog("🚫 404 — مسار غلط")
                     patchResp.code() == 403 -> addLog("🚫 403 — ممنوع")
-                    else -> addLog("⚠️ رد غير متوقع: HTTP ${patchResp.code()}")
+                    else -> addLog("⚠️ HTTP ${patchResp.code()}")
                 }
-
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
                 _passengerConfirmResponse.value = "Exception: ${e.message}"
