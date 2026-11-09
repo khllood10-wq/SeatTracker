@@ -2,7 +2,7 @@ package com.example.saudiaseattracker
 
 import com.google.gson.annotations.SerializedName
 
-// ═══════════════ REQUEST MODELS (موجود من قبل) ═══════════════
+// ═══════════════ REQUEST MODELS ═══════════════
 
 data class SaudiaSearchRequest(
     @SerializedName("region") val region: String = "KSA",
@@ -44,7 +44,19 @@ data class OfferCodeAvailabilityInput(
     @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
 )
 
-// ═══════════════ PASSENGER CONFIRMATION MODELS (جديد) ═══════════════
+// ═══════════════ GACA MANDATE MODELS ═══════════════
+
+data class GacaMandateRequest(
+    @SerializedName("bounds") val bounds: List<GacaBound> = listOf(GacaBound())
+)
+
+data class GacaBound(
+    @SerializedName("originCountryCode") val originCountryCode: String = "SA",
+    @SerializedName("destinationCountryCode") val destinationCountryCode: String = "SA",
+    @SerializedName("stopOverCountryCodes") val stopOverCountryCodes: List<String> = emptyList()
+)
+
+// ═══════════════ PASSENGER CONFIRMATION MODELS ═══════════════
 
 data class ElmVerifyRequest(
     @SerializedName("documentType") val documentType: String = "I",
@@ -69,7 +81,7 @@ data class TravelerWebUpdateRequest(
     @SerializedName("gender") val gender: String = "M"
 )
 
-// ═══════════════ RESPONSE MODELS (موجود من قبل) ═══════════════
+// ═══════════════ RESPONSE MODELS ═══════════════
 
 data class SaudiaResponse(
     @SerializedName("data") val data: SaudiaData?
