@@ -12,8 +12,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
@@ -48,27 +46,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
-    // ═══ التعديل: نحفظ auth فقط — x-d-token يبقى فاضي (زي ما كان شغّال) ═══
+    // ═══ الكود الأصلي — يحفظ كل التوكنات ═══
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        val editor = prefs.edit()
-        if (auth.isNotEmpty()) editor.putString("auth_token", auth)
-        // ❌ لا نحفظ x-d-token ولا session-id من WebView
-        if (userAgent.isNotEmpty()) editor.putString("user_agent", userAgent)
-        editor.apply()
-        addLog("✅ التوكن محفوظ (auth فقط، بدون x-d-token)")
-    }
-
-    fun saveDirectCookies(cookies: String) {
-        // ❌ لا نمسح/نستبدل الكوكيز — نتجاهل الدالة
-        // (الكوكيز بتتراكم من الـ responses تلقائياً)
-        addLog("ℹ️ تجاهل كوكيز WebView (نبقي على كوكيزنا)")
+        prefs.edit()
+            .putString("auth_token", auth)
+            .putString("xd_token", xDToken)
+            .putString("session_id", sessionId)
+            .putString("user_agent", userAgent)
+            .apply()
+        addLog("✅ التوكن محفوظ (auth=${auth.take(20)}..., xd=${xDToken.take(10)}...)")
     }
 
     fun clearAuth() {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit().clear().apply()
-        addLog("🧹 تم مسح جميع بيانات المصادقة")
+        addLog("🧹 مسح البيانات")
     }
 
     private fun getSavedAuthToken(): String? =
@@ -102,6 +95,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
+    // ═══ الكود الأصلي — يبعت كل التوكنات ═══
     private fun buildHeaders(
         apiVersion: String,
         isWebEndpoint: Boolean = false,
@@ -115,6 +109,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         val headers = mutableMapOf(
             "Authorization" to authToken,
+            "x-d-token" to xDToken,
+            "saa-session-id" to sessionId,
             "x-api-version" to apiVersion,
             "platform" to "Web",
             "version" to "27.0",
@@ -132,11 +128,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
-
-        // نضيف x-d-token و session فقط لو موجودين (مش بنستخدمهم — بس لو احتاجناهم)
-        // ❌ نحذفهم — تركناهم فارغين عمداً
-        // if (xDToken.isNotEmpty()) headers["x-d-token"] = xDToken
-        // if (sessionId.isNotEmpty()) headers["saa-session-id"] = sessionId
 
         if (isWebEndpoint) {
             headers["x-v-token"] = "ZjU2MTI0Y2I2YzYyODQzZGMxZjY1OTBmN2YyOWM2ZTQ3OTczOTVlY2M3YWJiYzQzMTNiNjA3MWEyMDI1NzNmODY0NDBhYTJjNWRmMjRlYTE1OGQ0ZGQwYzlkMjkyNDcxZWIwZjBkYjcyNWEzY2Q0YjIyNzVlMmFhZmQ1NWZjYTc="
@@ -159,7 +150,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.value = SearchState.SEARCHING
         _searchLogs.value = emptyList()
         _foundFlight.value = null
-        addLog("بدء البحث عن الرحلة: $flightNumber")
+        addLog("بدء البحث: $flightNumber")
 
         viewModelScope.launch {
             var attempts = 1
@@ -181,14 +172,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     saveCookiesFromResponse(response)
                     if (response.isSuccessful) {
-                        val data = response.body()
-                        val matching = data?.data?.airBoundGroups?.filter { group ->
+                        val matching = response.body()?.data?.airBoundGroups?.filter { group ->
                             group.boundDetails?.segments?.any {
                                 it.flightId?.contains(flightNumber, ignoreCase = true) == true
                             } == true
                         }
                         if (matching.isNullOrEmpty()) {
-                            addLog("⚠️ لم يتم العثور على الرحلة $flightNumber")
+                            addLog("⚠️ لم يتم العثور على $flightNumber")
                         } else {
                             val group = matching.first()
                             val fares = group.airBounds?.filter { it.status?.value != "soldOut" } ?: emptyList()
@@ -203,22 +193,20 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                                     fareFamily = cheapest?.fareFamilyCode ?: "غير معروف",
                                     airBoundId = cheapest?.airBoundId ?: ""
                                 )
-                                addLog("🎉 وُجد مقعد متاح!")
+                                addLog("🎉 وُجد مقعد!")
                                 _uiState.value = SearchState.FOUND
                                 return@launch
-                            } else {
-                                addLog("🚫 الرحلة ممتلئة. انتظار 15ث...")
-                            }
+                            } else addLog("🚫 ممتلئة...")
                         }
                     } else {
-                        addLog("❌ فشل HTTP ${response.code()}")
+                        addLog("❌ HTTP ${response.code()}")
                         if (response.code() == 401 || response.code() == 403) {
                             _uiState.value = SearchState.TOKEN_EXPIRED
                             return@launch
                         }
                     }
                 } catch (e: Exception) {
-                    addLog("❌ خطأ: ${e.message}")
+                    addLog("❌ ${e.message}")
                 }
                 delay(15000)
                 attempts++
@@ -228,160 +216,72 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun stopSearch() {
         _uiState.value = SearchState.IDLE
-        addLog("تم الإيقاف يدوياً")
+        addLog("تم الإيقاف")
     }
 
     fun createCartAndProceedToPassenger() {
         val flight = _foundFlight.value ?: return
-        addLog("═".repeat(40))
-        addLog("🎬 بدء تسلسل صفحة المسافرين...")
         viewModelScope.launch {
             try {
-                addLog("📦 [1/5] إنشاء السلة...")
                 val createResp = RetrofitClient.api.createCart(
                     headers = buildHeaders("2", referer = "https://www.saudia.com/"),
                     request = CreateCartRequest(listOf(flight.airBoundId))
                 )
                 saveCookiesFromResponse(createResp)
-                if (!createResp.isSuccessful) {
-                    addLog("❌ فشل إنشاء السلة: HTTP ${createResp.code()}")
-                    return@launch
-                }
-                val body = createResp.body()?.string() ?: ""
-                val json = JsonParser.parseString(body).asJsonObject
-                val id = json.getAsJsonObject("data")?.get("id")?.asString
-                    ?: json.get("id")?.asString ?: ""
-                if (id.isEmpty()) {
-                    addLog("⚠️ لا يوجد cartId")
-                    return@launch
-                }
+                if (!createResp.isSuccessful) return@launch
+                val json = JsonParser.parseString(createResp.body()?.string() ?: "").asJsonObject
+                val id = json.getAsJsonObject("data")?.get("id")?.asString ?: ""
+                if (id.isEmpty()) return@launch
                 _cartId.value = id
-                addLog("✅ [1/5] cartId = $id")
+                addLog("✅ cartId = $id")
 
-                addLog("📄 [2/5] تحميل صفحة السلة...")
                 RetrofitClient.api.getCartDetails(
-                    cartId = id,
-                    pageIdentity = "FlightResults",
+                    cartId = id, pageIdentity = "FlightResults",
                     headers = buildHeaders("3", referer = "https://www.saudia.com/ar-SA/booking")
-                ).let {
-                    saveCookiesFromResponse(it)
-                    addLog("✅ [2/5] FlightResults: HTTP ${it.code()}")
-                }
+                ).let { saveCookiesFromResponse(it) }
 
-                addLog("👤 [3/5] تحميل صفحة المسافرين...")
                 val passengerResp = RetrofitClient.api.getCartDetails(
-                    cartId = id,
-                    pageIdentity = "PassengerDetails",
+                    cartId = id, pageIdentity = "PassengerDetails",
                     headers = buildHeaders("3", referer = "https://www.saudia.com/ar-SA/booking")
                 )
                 saveCookiesFromResponse(passengerResp)
                 if (passengerResp.isSuccessful) {
                     _rawCartResponse.value = passengerResp.body()?.string() ?: ""
-                    addLog("✅ [3/5] PassengerDetails: HTTP ${passengerResp.code()}")
+                    addLog("✅ المسافرين: ${passengerResp.code()}")
                 }
 
-                addLog("🎫 [4/5] تحميل الخدمات...")
                 RetrofitClient.api.getServicesByCart(
-                    cartId = id,
-                    pageIdentity = "PassengerDetails",
+                    cartId = id, pageIdentity = "PassengerDetails",
                     headers = buildHeaders("3", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails")
-                ).let {
-                    saveCookiesFromResponse(it)
-                    addLog("✅ [4/5] الخدمات: HTTP ${it.code()}")
-                }
+                ).let { saveCookiesFromResponse(it) }
 
-                addLog("🛂 [5/5] فحص GACA...")
                 RetrofitClient.api.getGacaMandate(
                     headers = buildHeaders("1", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
                     request = GacaMandateRequest()
-                ).let {
-                    saveCookiesFromResponse(it)
-                    addLog("✅ [5/5] GACA: HTTP ${it.code()}")
-                }
-
-                addLog("═".repeat(40))
-                addLog("🍪 كوكيز: ${getSavedDynamicCookies()?.length ?: 0} حرف")
-                addLog("🎯 جاهز للتأكيد (WebView PATCH).")
+                ).let { saveCookiesFromResponse(it) }
             } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
+                addLog("❌ ${e.message}")
             }
         }
     }
 
+    // ═══ PATCH عبر WebView (الفكرة الجديدة) ═══
     fun confirmPassengerData(
-        firstName: String,
-        lastName: String,
-        documentNumber: String,
-        dateOfBirth: String,
+        firstName: String, lastName: String, documentNumber: String, dateOfBirth: String,
         travelerId: String = "SKH-1-EXT"
     ) {
-        val cartId = _cartId.value
-        if (cartId.isNullOrEmpty()) {
-            addLog("❌ لا يوجد cartId!")
-            return
-        }
+        val cartId = _cartId.value ?: return
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             try {
-                addLog("💾 [WebView] حفظ بيانات المسافر (تشفير تلقائي)...")
+                addLog("💾 PATCH عبر WebView...")
                 val url = "https://dapi.saudia.com/shopping/carts/$cartId/travelers/web/$travelerId?guestOfficeId=JEDSV08MA&lang=ar-SA"
-                val bodyJson = """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dateOfBirth","title":"Mr","givenName":"$firstName","surname":"$lastName","documents":[{"type":"NATIONAL_ID","number":"$documentNumber","countryOfIssuance":"SA"}]}"""
-
-                val result = WebViewManager.encryptedFetch(url, "PATCH", bodyJson)
+                val body = """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dateOfBirth","title":"Mr","givenName":"$firstName","surname":"$lastName","documents":[{"type":"NATIONAL_ID","number":"$documentNumber","countryOfIssuance":"SA"}]}"""
+                val result = WebViewManager.encryptedFetch(url, "PATCH", body)
                 _passengerConfirmResponse.value = "WebView Result:\n\n$result"
-                addLog("📡 WebView PATCH: ${result.take(100)}")
+                addLog("📡 ${result.take(100)}")
             } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
-                _passengerConfirmResponse.value = "Exception: ${e.message}"
-            }
-        }
-    }
-
-    fun sendRawPassengerPayload(rawJson: String) {
-        val cartId = _cartId.value
-        if (cartId.isNullOrEmpty()) { addLog("❌ لا يوجد cartId!"); return }
-        viewModelScope.launch {
-            _passengerConfirmResponse.value = null
-            try {
-                addLog("🧪 [اختبار] إرسال Body خام: ${rawJson.take(80)}...")
-                val body = rawJson.toRequestBody("application/json".toMediaType())
-                val resp = RetrofitClient.api.updateTravelerRaw(
-                    cartId = cartId,
-                    travelerId = "SKH-1-EXT",
-                    headers = buildHeaders("2", isWebEndpoint = false, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = body
-                )
-                saveCookiesFromResponse(resp)
-                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
-                _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody}"
-                addLog("📡 Test result: HTTP ${resp.code()}")
-            } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
-                _passengerConfirmResponse.value = "Exception: ${e.message}"
-            }
-        }
-    }
-
-    fun testCreateOrder(payloadJson: String) {
-        val cartId = _cartId.value
-        if (cartId.isNullOrEmpty()) { addLog("❌ لا يوجد cartId!"); return }
-        viewModelScope.launch {
-            _passengerConfirmResponse.value = null
-            try {
-                addLog("🧪 POST /purchase/orders")
-                val body = payloadJson.toRequestBody("application/json".toMediaType())
-                val resp = RetrofitClient.api.createOrderTest(
-                    cartId = cartId,
-                    headers = buildHeaders("4", referer = "https://www.saudia.com/ar-SA/payment"),
-                    request = body
-                )
-                saveCookiesFromResponse(resp)
-                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
-                _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody.take(2000)}"
-                addLog("📡 Order: HTTP ${resp.code()}")
-            } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
-                _passengerConfirmResponse.value = "Exception: ${e.message}"
+                addLog("❌ ${e.message}")
             }
         }
     }
