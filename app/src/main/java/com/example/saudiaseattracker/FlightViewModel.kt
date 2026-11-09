@@ -36,19 +36,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _uiState = MutableStateFlow(SearchState.IDLE)
     val uiState: StateFlow<SearchState> = _uiState
-
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
-
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
-
     private val _cartId = MutableStateFlow<String?>(null)
     val cartId: StateFlow<String?> = _cartId
-
     private val _rawCartResponse = MutableStateFlow<String?>(null)
     val rawCartResponse: StateFlow<String?> = _rawCartResponse
-
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
@@ -70,36 +65,43 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedSessionId(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
 
+    // ═══ إصلاح: إدارة كوكيز ذكية (تستبدل ولا تكرر) ═══
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
-        if (setCookieHeaders.isNotEmpty()) {
-            val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-            val current = prefs.getString("dynamic_cookies", "") ?: ""
-            val newCookies = setCookieHeaders.joinToString("; ") { it.split(";").first() }
-            val updated = if (current.isEmpty()) newCookies else "$current; $newCookies"
-            prefs.edit().putString("dynamic_cookies", updated).apply()
+        if (setCookieHeaders.isEmpty()) return
+
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val current = prefs.getString("dynamic_cookies", "") ?: ""
+
+        val cookieMap = mutableMapOf<String, String>()
+        if (current.isNotEmpty()) {
+            current.split("; ").forEach { pair ->
+                val parts = pair.split("=", limit = 2)
+                if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
+            }
         }
+        setCookieHeaders.forEach { header ->
+            val firstPart = header.split(";").first().trim()
+            val parts = firstPart.split("=", limit = 2)
+            if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
+        }
+        val updated = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        prefs.edit().putString("dynamic_cookies", updated).apply()
     }
 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
-    /**
-     * بناء الترويسات
-     * @param apiVersion رقم إصدار API
-     * @param isWebEndpoint هل الـ endpoint من نوع /web/ (زي travelers/web)
-     */
+    // ═══ إصلاح: ترويسات مختلفة للـ web endpoints (مطابقة HAR) ═══
     private fun buildHeaders(apiVersion: String, isWebEndpoint: Boolean = false): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
         val xDToken = getSavedXDToken() ?: ""
         val sessionId = getSavedSessionId() ?: ""
 
-        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
 
+        // الترويسات الأساسية (موجودة في كل طلبات HAR)
         val headers = mutableMapOf(
             "Authorization" to authToken,
             "x-d-token" to xDToken,
@@ -109,10 +111,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "version" to "27.0",
             "Accept" to "application/json",
             "Content-Type" to "application/json",
-            "Origin" to "https://www.saudia.com",
-            "User-Agent" to userAgent,
-            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
@@ -122,18 +120,28 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         if (isWebEndpoint) {
-            // ═══ ترويسات خاصة بالـ /web/ endpoints ═══
+            // للـ /web/ endpoints: ترويسات المتصفح فقط، بدون browserid/channel/x-v-token
+            headers["Origin"] = "https://www.saudia.com"
             headers["Referer"] = "https://www.saudia.com/ar-SA/booking/passengerDetails"
-            // نضيف x-v-token (نفس القيمة اللي ظهرت في HAR)
-            headers["x-v-token"] = "OWQ5MGQyNzdjMjRmOWQwMmMwNWFmZTBhZjIzNDQ2YzBlN2UxMWM1ZGU2NTlhNzJiZjViMWVmZTBkMDVjY2E2Yjg5MzM2MDFkMDRkMzQ0YTcwYTJlMmU2NjE1MGI1MTdiZmFlMWI2YzczMGVkYzQ5YTkwYzJhNmRkMjJmZGJkN2E="
-            // ⚠️ لا نضيف channel هنا لأن طلب المتصفح مكانش فيه
+            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            headers["Accept-Language"] = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
+            // ⚠️ لا نضيف: browserid, channel, x-v-token (غير موجودة في HAR PATCH)
         } else {
+            // للـ endpoints العادية: الترويسات الكاملة
+            headers["Origin"] = "https://www.saudia.com"
             headers["Referer"] = "https://www.saudia.com/"
+            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            headers["Accept-Language"] = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
+            headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
             headers["channel"] = "MOBILE_WEB"
         }
 
         val cookies = getSavedDynamicCookies()
-        if (!cookies.isNullOrEmpty()) headers["Cookie"] = cookies
+        if (!cookies.isNullOrEmpty()) {
+            headers["Cookie"] = cookies
+        }
         return headers
     }
 
@@ -245,6 +253,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         if (getResp.isSuccessful) {
                             _rawCartResponse.value = getResp.body()?.string() ?: ""
                             addLog("✅ تم جلب بيانات المسافرين بنجاح!")
+                            // 🔍 لوج للتأكد من الكوكيز
+                            val savedCookies = getSavedDynamicCookies()
+                            if (savedCookies.isNullOrEmpty()) {
+                                addLog("⚠️ لا توجد كوكيز محفوظة!")
+                            } else {
+                                addLog("🍪 كوكيز محفوظة: ${savedCookies.length} حرف")
+                            }
                         } else {
                             addLog("❌ فشل جلب البيانات: ${getResp.code()}")
                         }
@@ -275,7 +290,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             _passengerConfirmResponse.value = null
 
             try {
-                // ═══ الخطوة 1: التحقق من الهوية ═══
                 addLog("🔍 [1/3] التحقق من الهوية...")
                 val verifyResp = RetrofitClient.api.verifyElmProfile(
                     headers = buildHeaders("2"),
@@ -289,7 +303,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(verifyResp)
                 addLog("✅ التحقق: HTTP ${verifyResp.code()}")
 
-                // ═══ الخطوة 2: إضافة Extension ═══
                 addLog("📎 [2/3] إضافة Extension...")
                 val extensionContent = Base64.encodeToString(
                     """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}""".toByteArray(),
@@ -299,17 +312,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     cartId = cartId,
                     headers = buildHeaders("2"),
                     request = listOf(
-                        CartExtensionRequest(
-                            content = extensionContent,
-                            travelerId = travelerId
-                        )
+                        CartExtensionRequest(content = extensionContent, travelerId = travelerId)
                     )
                 )
                 saveCookiesFromResponse(extResp)
                 addLog("✅ Extension: HTTP ${extResp.code()}")
 
-                // ═══ الخطوة 3: حفظ بيانات المسافر (بترويسات web) ═══
-                addLog("💾 [3/3] حفظ بيانات المسافر (مع ترويسات /web/)...")
+                addLog("💾 [3/3] حفظ بيانات المسافر (ترويسات web)...")
                 val patchResp = RetrofitClient.api.updateTravelerWeb(
                     cartId = cartId,
                     travelerId = travelerId,
@@ -335,18 +344,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("📡 PATCH result: HTTP ${patchResp.code()}")
 
                 when {
-                    patchResp.isSuccessful -> {
-                        addLog("🎉 تم حفظ بيانات المسافر بنجاح!")
-                    }
-                    patchResp.code() in listOf(400, 415, 422) -> {
-                        addLog("⚠️ السيرفر رفض JSON العادي — التشفير إلزامي")
-                    }
-                    patchResp.code() == 403 -> {
-                        addLog("🚫 403 — حتى مع الترويسات المصححة، ممنوع. غالباً التشفير إلزامي")
-                    }
-                    else -> {
-                        addLog("⚠️ رد غير متوقع: HTTP ${patchResp.code()}")
-                    }
+                    patchResp.isSuccessful -> addLog("🎉 تم حفظ بيانات المسافر!")
+                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر رفض JSON عادي")
+                    patchResp.code() == 403 -> addLog("🚫 403 — ممنوع حتى مع الترويسات المصححة")
+                    else -> addLog("⚠️ رد غير متوقع: HTTP ${patchResp.code()}")
                 }
 
             } catch (e: Exception) {
