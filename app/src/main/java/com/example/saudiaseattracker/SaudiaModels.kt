@@ -72,13 +72,15 @@ data class CartExtensionRequest(
     @SerializedName("name") val name: String = "YQENSTATUS"
 )
 
-data class TravelerWebUpdateRequest(
+// 🔥 تم تحديثه بناءً على أخطاء السيرفر (400)
+data class TravelerUpdateRequest(
+    @SerializedName("passengerTypeCode") val passengerTypeCode: String = "ADT",
     @SerializedName("firstName") val firstName: String,
     @SerializedName("lastName") val lastName: String,
-    @SerializedName("documentNumber") val documentNumber: String,
+    @SerializedName("gender") val gender: String = "male",
     @SerializedName("dateOfBirth") val dateOfBirth: String,
     @SerializedName("nationality") val nationality: String = "SA",
-    @SerializedName("gender") val gender: String = "M"
+    @SerializedName("documentNumber") val documentNumber: String
 )
 
 // ═══════════════ RESPONSE MODELS ═══════════════
