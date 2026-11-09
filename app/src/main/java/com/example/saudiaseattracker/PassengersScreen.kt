@@ -42,7 +42,6 @@ fun PassengersScreen(
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
 
-    var customJson by remember { mutableStateOf("""{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-10"}""") }
     var webViewStarted by remember { mutableStateOf(false) }
     var capturedBody by remember { mutableStateOf<String?>(null) }
 
@@ -155,21 +154,6 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        Text("🧪 اختبار JSON خام (بدون تشفير):", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        OutlinedTextField(
-            value = customJson,
-            onValueChange = { customJson = it },
-            modifier = Modifier.fillMaxWidth().height(120.dp),
-            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-        )
-
-        Button(
-            onClick = { viewModel.sendRawPassengerPayload(customJson) },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !cartId.isNullOrEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-        ) { Text("📤 إرسال PATCH /travelers") }
-
         if (confirmResponse.isNotEmpty()) {
             Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
@@ -185,8 +169,6 @@ fun PassengersScreen(
                 }
             }
         }
-
-        HorizontalDivider()
 
         // ═══ عرض الـ captured body ═══
         if (capturedBody != null) {
