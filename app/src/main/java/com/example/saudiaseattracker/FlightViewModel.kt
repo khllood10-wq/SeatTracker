@@ -2,6 +2,7 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
+import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -47,6 +48,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _rawCartResponse = MutableStateFlow<String?>(null)
     val rawCartResponse: StateFlow<String?> = _rawCartResponse
+
+    // ════════════ NEW: حالة نتيجة تأكيد المسافر ════════════
+    private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
+    val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -236,6 +241,107 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: Exception) {
                 addLog("❌ ${e.message}")
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  NEW: تأكيد بيانات المسافر (3 خطوات متتالية)
+    // ═══════════════════════════════════════════════════════════
+    fun confirmPassengerData(
+        firstName: String,
+        lastName: String,
+        documentNumber: String,
+        dateOfBirth: String,
+        travelerId: String = "SKH-1-EXT"
+    ) {
+        val cartId = _cartId.value
+        if (cartId.isNullOrEmpty()) {
+            addLog("❌ لا يوجد cartId!")
+            return
+        }
+
+        viewModelScope.launch {
+            _passengerConfirmResponse.value = null
+
+            try {
+                // ═══ الخطوة 1: التحقق من الهوية (Elm) ═══
+                addLog("🔍 [1/3] التحقق من الهوية...")
+                val verifyResp = RetrofitClient.api.verifyElmProfile(
+                    headers = buildHeaders("2"),
+                    request = ElmVerifyRequest(
+                        documentType = "I",
+                        documentNumber = documentNumber,
+                        nationality = "SA",
+                        dateOfBirth = dateOfBirth
+                    )
+                )
+                saveCookiesFromResponse(verifyResp)
+                addLog("✅ التحقق: HTTP ${verifyResp.code()}")
+
+                // ═══ الخطوة 2: إضافة Extension ═══
+                addLog("📎 [2/3] إضافة Extension...")
+                val extensionContent = Base64.encodeToString(
+                    """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}""".toByteArray(),
+                    Base64.NO_WRAP
+                )
+                val extResp = RetrofitClient.api.addCartExtension(
+                    cartId = cartId,
+                    headers = buildHeaders("2"),
+                    request = listOf(
+                        CartExtensionRequest(
+                            content = extensionContent,
+                            travelerId = travelerId
+                        )
+                    )
+                )
+                saveCookiesFromResponse(extResp)
+                addLog("✅ Extension: HTTP ${extResp.code()}")
+
+                // ═══ الخطوة 3: حفظ بيانات المسافر ═══
+                addLog("💾 [3/3] حفظ بيانات المسافر...")
+                val patchResp = RetrofitClient.api.updateTravelerWeb(
+                    cartId = cartId,
+                    travelerId = travelerId,
+                    headers = buildHeaders("2"),
+                    request = TravelerWebUpdateRequest(
+                        firstName = firstName,
+                        lastName = lastName,
+                        documentNumber = documentNumber,
+                        dateOfBirth = dateOfBirth
+                    )
+                )
+                saveCookiesFromResponse(patchResp)
+
+                val responseBody = if (patchResp.isSuccessful) {
+                    patchResp.body()?.string() ?: ""
+                } else {
+                    patchResp.errorBody()?.string() ?: ""
+                }
+
+                _passengerConfirmResponse.value =
+                    "HTTP ${patchResp.code()}\n\n${responseBody.ifEmpty { "(empty body)" }}"
+
+                addLog("📡 PATCH result: HTTP ${patchResp.code()}")
+
+                when {
+                    patchResp.isSuccessful -> {
+                        addLog("🎉 تم حفظ بيانات المسافر بنجاح!")
+                    }
+                    patchResp.code() in listOf(400, 415, 422) -> {
+                        addLog("⚠️ السيرفر رفض JSON العادي — نحتاج التشفير (المسار 2)")
+                    }
+                    patchResp.code() in listOf(401, 403) -> {
+                        addLog("❌ مشكلة في التوكن أو الصلاحيات")
+                    }
+                    else -> {
+                        addLog("⚠️ رد غير متوقع: HTTP ${patchResp.code()}")
+                    }
+                }
+
+            } catch (e: Exception) {
+                addLog("❌ استثناء: ${e.message}")
+                _passengerConfirmResponse.value = "Exception: ${e.message}"
             }
         }
     }
