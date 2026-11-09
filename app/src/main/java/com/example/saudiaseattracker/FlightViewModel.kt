@@ -293,47 +293,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun executeFullPassengerSequence() {
+    // ═══════════════════════════════════════════════════════════
+    //  🔐 إرسال PATCH مع تشفير حقيقي (بعد التقاط المفتاح)
+    // ═══════════════════════════════════════════════════════════
+    fun sendEncryptedPassengerPayload() {
         val cartId = _cartId.value
         if (cartId.isNullOrEmpty()) {
             addLog("❌ لا يوجد cartId!")
             return
         }
 
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val rsaPem = prefs.getString("rsa_public_key", null)
+        if (rsaPem.isNullOrEmpty()) {
+            addLog("❌ لا يوجد مفتاح محفوظ — شغّل KeyCaptureScreen أولاً")
+            return
+        }
+
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             try {
-                // 1. Elm Verification
-                addLog("🔍 [1/3] التحقق من الهوية (Elm)...")
-                val verifyResp = RetrofitClient.api.verifyElmProfile(
-                    headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = ElmVerifyRequest(
-                        documentType = "I",
-                        documentNumber = "1071580342",
-                        nationality = "SA",
-                        dateOfBirth = "1991-05-10"
-                    )
-                )
-                saveCookiesFromResponse(verifyResp)
-                addLog("✅ التحقق: HTTP ${verifyResp.code()}")
+                addLog("🔐 [1/2] تشفير البيانات...")
 
-                // 2. Extension
-                addLog("📎 [2/3] إضافة Extension...")
-                val extensionContent = Base64.encodeToString(
-                    """{"status":"VERIFIED","healthCheckStatus":"NO_RESPONSE"}""".toByteArray(),
-                    Base64.NO_WRAP
-                )
-                val extResp = RetrofitClient.api.addCartExtension(
-                    cartId = cartId,
-                    headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = listOf(CartExtensionRequest(content = extensionContent, travelerId = "SKH-1-EXT"))
-                )
-                saveCookiesFromResponse(extResp)
-                addLog("✅ Extension: HTTP ${extResp.code()}")
-
-                // 3. Plain Text PATCH (بدون web)
-                addLog("💾 [3/3] حفظ بيانات المسافر (بدون تشفير)...")
-                val jsonPayload = """
+                val plainJson = """
                     {
                       "passengerTypeCode": "ADT",
                       "gender": "male",
@@ -351,61 +333,28 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                       ]
                     }
                 """.trimIndent()
-                
-                val body = jsonPayload.toRequestBody("application/json".toMediaType())
-                
-                val patchResp = RetrofitClient.api.updateTravelerRaw(
-                    cartId = cartId,
-                    travelerId = "SKH-1-EXT",
-                    headers = buildHeaders("2", isWebEndpoint = false, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = body
-                )
-                saveCookiesFromResponse(patchResp)
-                val responseBody = if (patchResp.isSuccessful) {
-                    patchResp.body()?.string() ?: ""
-                } else {
-                    patchResp.errorBody()?.string() ?: ""
-                }
-                
-                _passengerConfirmResponse.value = "HTTP ${patchResp.code()}\n\n${responseBody.ifEmpty { "(empty body)" }}"
-                addLog("📡 PATCH result: HTTP ${patchResp.code()}")
-                
-                if (patchResp.isSuccessful) {
-                     addLog("🎉 الطلب رجع 200! راجع الـ Response.")
-                }
 
-            } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
-                _passengerConfirmResponse.value = "Exception: ${e.message}"
-            }
-        }
-    }
+                val (keyB64, bodyHex) = HybridEncryptor.encrypt(plainJson, rsaPem)
+                addLog("✅ تشفير ناجح (key=${keyB64.length}, body=${bodyHex.length})")
 
-    // ═══════════════════════════════════════════════════════════
-    //  🧪 دالة إرسال JSON عادي (بدون تشفير) للتجربة
-    // ═══════════════════════════════════════════════════════════
-    fun sendRawPassengerPayload(rawJson: String) {
-        val cartId = _cartId.value
-        if (cartId.isNullOrEmpty()) {
-            addLog("❌ لا يوجد cartId!")
-            return
-        }
+                addLog("📤 [2/2] إرسال PATCH مشفر...")
+                val encryptedJson = """{"key":"$keyB64","body":"$bodyHex"}"""
+                val requestBody = encryptedJson.toRequestBody("application/json".toMediaType())
 
-        viewModelScope.launch {
-            _passengerConfirmResponse.value = null
-            try {
-                addLog("🧪 إرسال Body خام: ${rawJson.take(80)}...")
-                val body = rawJson.toRequestBody("application/json".toMediaType())
                 val resp = RetrofitClient.api.updateTravelerRaw(
                     cartId = cartId,
                     travelerId = "SKH-1-EXT",
-                    headers = buildHeaders("2", isWebEndpoint = false, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = body
+                    headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    request = requestBody
                 )
                 saveCookiesFromResponse(resp)
                 val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
-                _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody}"
-                addLog("📡 Test result: HTTP ${resp.code()}")
+                _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody.ifEmpty { "(empty)" }}"
+                addLog("📡 نتيجة التشفير: HTTP ${resp.code()}")
+
+                if (resp.code() == 200) addLog("🎉 نجح! الاسم محفوظ في السلة رسمياً")
+                else addLog("⚠️ فشل. إن كانت 403 فقد يكون نوع RSA-OAEP مختلفاً")
+
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
                 _passengerConfirmResponse.value = "Exception: ${e.message}"
