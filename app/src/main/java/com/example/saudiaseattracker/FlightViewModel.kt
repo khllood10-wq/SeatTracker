@@ -48,7 +48,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
-    // ═══ التعديل هنا: لا نمسح القيم القديمة بقيم فاضية ═══
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val editor = prefs.edit()
@@ -58,6 +57,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         if (userAgent.isNotEmpty()) editor.putString("user_agent", userAgent)
         editor.apply()
         addLog("✅ التوكن محفوظ (auth=${auth.take(20)}..., xd=${xDToken.take(10)}...)")
+    }
+
+    fun saveDirectCookies(cookies: String) {
+        if (cookies.isEmpty()) return
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("dynamic_cookies", cookies).apply()
+        addLog("🍪 كوكيز: ${cookies.length} حرف")
     }
 
     private fun getSavedAuthToken(): String? =
@@ -294,6 +300,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // ⚠️ النسخة الجديدة: تستخدم WebViewManager.encryptedFetch
+    // ═══════════════════════════════════════════════════════════
     fun confirmPassengerData(
         firstName: String,
         lastName: String,
@@ -310,27 +319,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             _passengerConfirmResponse.value = null
             try {
                 addLog("💾 [WebView] حفظ بيانات المسافر (تشفير تلقائي)...")
-                val payload = """
-                    {
-                      "passengerTypeCode": "ADT",
-                      "gender": "male",
-                      "dateOfBirth": "$dateOfBirth",
-                      "title": "Mr",
-                      "givenName": "$firstName",
-                      "surname": "$lastName",
-                      "documents": [
-                        {
-                          "type": "NATIONAL_ID",
-                          "number": "$documentNumber",
-                          "countryOfIssuance": "SA"
-                        }
-                      ]
-                    }
-                """.trimIndent()
+                val url = "https://dapi.saudia.com/shopping/carts/$cartId/travelers/web/$travelerId?guestOfficeId=JEDSV08MA&lang=ar-SA"
+                val bodyJson = """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dateOfBirth","title":"Mr","givenName":"$firstName","surname":"$lastName","documents":[{"type":"NATIONAL_ID","number":"$documentNumber","countryOfIssuance":"SA"}]}"""
 
-                val result = WebViewManager.submitEncryptedPassenger(cartId, travelerId, payload)
+                val result = WebViewManager.encryptedFetch(url, "PATCH", bodyJson)
                 _passengerConfirmResponse.value = "WebView Result:\n\n$result"
-                addLog("📡 WebView PATCH result: ${result.take(80)}...")
+                addLog("📡 WebView PATCH: ${result.take(100)}")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
                 _passengerConfirmResponse.value = "Exception: ${e.message}"
