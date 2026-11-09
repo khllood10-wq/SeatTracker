@@ -35,9 +35,23 @@ fun PassengersScreen(
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
 
-    // 📝 حقل نصي للـ JSON الخام (نبدأ بالبيانات اللي نجحت)
+    // 📝 محرر JSON
     var customJson by remember {
         mutableStateOf("""{"passengerTypeCode":"ADT","gender":"male"}""")
+    }
+
+    // 🎯 قائمة اختبارات جاهزة (اضغط زر → يتحط الـ JSON في المربع)
+    val testCases = remember {
+        listOf(
+            "✅ 1. (أساس - نجح)" to """{"passengerTypeCode":"ADT","gender":"male"}""",
+            "🧪 2. + title" to """{"passengerTypeCode":"ADT","gender":"male","title":"MR"}""",
+            "🧪 3. + givenName + surname" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST"}""",
+            "🧪 4. + firstName + lastName (بديل)" to """{"passengerTypeCode":"ADT","gender":"male","firstName":"TEST","lastName":"TEST"}""",
+            "🧪 5. + nationality" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST","nationality":"SA"}""",
+            "🧪 6. + documents[]" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST","documents":[{"type":"NATIONAL_ID","number":"123456789"}]}""",
+            "🧪 7. + documentNumber (بديل)" to """{"passengerTypeCode":"ADT","gender":"male","givenName":"TEST","surname":"TEST","documentNumber":"123456789"}""",
+            "🎯 8. المجموعة الكاملة" to """{"passengerTypeCode":"ADT","gender":"male","title":"MR","givenName":"TEST","surname":"TEST","dateOfBirth":"1991-05-10","nationality":"SA","documents":[{"type":"NATIONAL_ID","number":"123456789","countryOfIssuance":"SA"}]}"""
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -76,24 +90,41 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // ═══════════ 🧪 لوحة الاختبار ═══════════
-        Text("🧪 أداة اختبار الحقول", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("عدل الـ JSON اللي تحت واضغط إرسال", fontSize = 12.sp)
+        // ═══════════ الأزرار الجاهزة ═══════════
+        Text("اختر السيناريو:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
 
+        testCases.forEach { (label, json) ->
+            Button(
+                onClick = { customJson = json },
+                modifier = Modifier.fillMaxWidth(),
+                colors = if (label.startsWith("✅")) {
+                    ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                } else {
+                    ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                }
+            ) {
+                Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
+            }
+        }
+
+        HorizontalDivider()
+
+        // ═══════════ محرر JSON ═══════════
+        Text("JSON المُرسل:", style = MaterialTheme.typography.titleSmall)
         OutlinedTextField(
             value = customJson,
             onValueChange = { customJson = it },
-            modifier = Modifier.fillMaxWidth().height(150.dp),
-            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            modifier = Modifier.fillMaxWidth().height(180.dp),
+            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
         )
 
         Button(
             onClick = { viewModel.sendRawPassengerPayload(customJson) },
             modifier = Modifier.fillMaxWidth(),
             enabled = !cartId.isNullOrEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
         ) {
-            Text("📤 إرسال الـ JSON ده للسيرفر")
+            Text("📤 إرسال", fontWeight = FontWeight.Bold)
         }
 
         // ═══════════ عرض الرد ═══════════
@@ -116,6 +147,7 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
+        // ═══════════ استجابة السلة ═══════════
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
