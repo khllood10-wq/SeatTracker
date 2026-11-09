@@ -110,9 +110,6 @@ fun PassengersScreen(
                                 super.onPageFinished(view, url)
                                 viewModel.addLog("📄 WebView page loaded: $url")
                                 
-                                // 1. حقن كود اعتراض الطلب
-                                // 2. محاولة تعبئة البيانات تلقائياً
-                                // 3. الضغط على زر المتابعة
                                 view?.evaluateJavascript("""
                                     (function() {
                                         if (window.__captureInstalled) return;
@@ -161,7 +158,7 @@ fun PassengersScreen(
                                         // الانتظار 3 ثواني حتى يتم تحميل الفورم بالكامل ثم التعبئة
                                         setTimeout(function() {
                                             try {
-                                                // تعبئة البيانات (قد تحتاج لتعديل الحقول إذا كانت أسماء الحقول مختلفة)
+                                                // تعبئة البيانات
                                                 setVal('input[formcontrolname="firstName"]', 'Mohammed');
                                                 setVal('input[formcontrolname="lastName"]', 'Alotudi');
                                                 setVal('input[formcontrolname="dateOfBirth"]', '1991-05-10');
@@ -169,16 +166,23 @@ fun PassengersScreen(
                                                 
                                                 AndroidBridge.onCaptured('__FILLED__', 'fields filled');
                                                 
-                                                // الانتظار 1.5 ثانية بعد التعبئة والضغط على زر المتابعة
+                                                // الضغط على زر المتابعة بطريقة أقوى
                                                 setTimeout(function() {
-                                                    var btns = document.querySelectorAll('button');
-                                                    for (var i = 0; i < btns.length; i++) {
-                                                        var t = (btns[i].innerText || '').trim();
-                                                        if (t.indexOf('متابعة') > -1 || t.indexOf('Continue') > -1 || t.indexOf('التالي') > -1) {
-                                                            btns[i].click();
-                                                            AndroidBridge.onCaptured('__CLICKED__', t);
+                                                    var clicked = false;
+                                                    var elements = document.querySelectorAll('button, [role="button"], .mdc-button');
+                                                    for (var i = 0; i < elements.length; i++) {
+                                                        var text = (elements[i].innerText || elements[i].textContent || '').trim();
+                                                        if (text.indexOf('متابعة') > -1 || text.indexOf('Continue') > -1 || text.indexOf('التالي') > -1) {
+                                                            elements[i].click();
+                                                            clicked = true;
+                                                            AndroidBridge.onCaptured('__CLICKED__', text);
                                                             break;
                                                         }
+                                                    }
+                                                    if (!clicked) {
+                                                         AndroidBridge.onCaptured('__NO_BUTTON__', 'Button not found. Trying to click first submit button.');
+                                                         var submitBtn = document.querySelector('button[type="submit"]');
+                                                         if(submitBtn) { submitBtn.click(); AndroidBridge.onCaptured('__CLICKED_SUBMIT__', 'submit clicked'); }
                                                     }
                                                 }, 1500);
                                             } catch(e) {
