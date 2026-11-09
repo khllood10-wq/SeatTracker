@@ -77,8 +77,9 @@ interface SaudiaApi {
         @Body request: List<CartExtensionRequest>
     ): Response<ResponseBody>
 
-    @PATCH("shopping/carts/{cartId}/travelers/web/{travelerId}")
-    suspend fun updateTravelerWeb(
+    // 🔥 التغيير هنا: حذفنا /web/ من المسار
+    @PATCH("shopping/carts/{cartId}/travelers/{travelerId}")
+    suspend fun updateTraveler(
         @Path("cartId") cartId: String,
         @Path("travelerId") travelerId: String,
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
