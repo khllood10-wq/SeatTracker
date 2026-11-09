@@ -13,6 +13,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
@@ -334,8 +336,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(extResp)
                 addLog("✅ Extension: HTTP ${extResp.code()}")
 
-                // 🔥 التعديل: givenName + surname + documents[]
-                addLog("💾 [3/3] حفظ بيانات المسافر (PATCH /travelers/)...")
+                addLog("💾 [3/3] حفظ بيانات المسافر (PATCH)...")
                 val patchResp = RetrofitClient.api.updateTraveler(
                     cartId = cartId,
                     travelerId = travelerId,
@@ -367,11 +368,43 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 when {
                     patchResp.isSuccessful -> addLog("🎉 نجح! تم حفظ بيانات المسافر!")
-                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر لسه عايز تعديل في الحقول")
+                    patchResp.code() in listOf(400, 415, 422) -> addLog("⚠️ السيرفر طلب تعديل في الحقول")
                     patchResp.code() == 404 -> addLog("🚫 404 — مسار غلط")
                     patchResp.code() == 403 -> addLog("🚫 403 — ممنوع")
                     else -> addLog("⚠️ HTTP ${patchResp.code()}")
                 }
+            } catch (e: Exception) {
+                addLog("❌ استثناء: ${e.message}")
+                _passengerConfirmResponse.value = "Exception: ${e.message}"
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🧪 الدالة اللي كانت ناقصة (تستخدم في PassengersScreen)
+    // ═══════════════════════════════════════════════════════════
+    fun sendRawPassengerPayload(rawJson: String) {
+        val cartId = _cartId.value
+        if (cartId.isNullOrEmpty()) {
+            addLog("❌ لا يوجد cartId!")
+            return
+        }
+
+        viewModelScope.launch {
+            _passengerConfirmResponse.value = null
+            try {
+                addLog("🧪 [اختبار] إرسال Body خام: ${rawJson.take(80)}...")
+                val body = rawJson.toRequestBody("application/json".toMediaType())
+                val resp = RetrofitClient.api.updateTravelerRaw(
+                    cartId = cartId,
+                    travelerId = "SKH-1-EXT",
+                    headers = buildHeaders("2", isWebEndpoint = false, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    request = body
+                )
+                saveCookiesFromResponse(resp)
+                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
+                _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody}"
+                addLog("📡 Test result: HTTP ${resp.code()}")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
                 _passengerConfirmResponse.value = "Exception: ${e.message}"
