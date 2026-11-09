@@ -306,7 +306,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             addLog("❌ لا يوجد cartId!")
             return
         }
-
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             try {
@@ -380,16 +379,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🧪 الدالة اللي كانت ناقصة (تستخدم في PassengersScreen)
-    // ═══════════════════════════════════════════════════════════
     fun sendRawPassengerPayload(rawJson: String) {
         val cartId = _cartId.value
-        if (cartId.isNullOrEmpty()) {
-            addLog("❌ لا يوجد cartId!")
-            return
-        }
-
+        if (cartId.isNullOrEmpty()) { addLog("❌ لا يوجد cartId!"); return }
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             try {
@@ -405,6 +397,31 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
                 _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody}"
                 addLog("📡 Test result: HTTP ${resp.code()}")
+            } catch (e: Exception) {
+                addLog("❌ استثناء: ${e.message}")
+                _passengerConfirmResponse.value = "Exception: ${e.message}"
+            }
+        }
+    }
+
+    // ═══ 🧪 اختبار إنشاء الطلب ═══
+    fun testCreateOrder(payloadJson: String) {
+        val cartId = _cartId.value
+        if (cartId.isNullOrEmpty()) { addLog("❌ لا يوجد cartId!"); return }
+        viewModelScope.launch {
+            _passengerConfirmResponse.value = null
+            try {
+                addLog("🧪 POST /purchase/orders")
+                val body = payloadJson.toRequestBody("application/json".toMediaType())
+                val resp = RetrofitClient.api.createOrderTest(
+                    cartId = cartId,
+                    headers = buildHeaders("4", referer = "https://www.saudia.com/ar-SA/payment"),
+                    request = body
+                )
+                saveCookiesFromResponse(resp)
+                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
+                _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody.take(2000)}"
+                addLog("📡 Order: HTTP ${resp.code()}")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
                 _passengerConfirmResponse.value = "Exception: ${e.message}"
