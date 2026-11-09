@@ -44,7 +44,7 @@ object WebViewManager {
                 }
             }
             addJavascriptInterface(Bridge, "AndroidBridge")
-            loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails")
+            loadUrl("https://www.saudia.com/ar-SA/booking")
         }
     }
 
@@ -66,16 +66,18 @@ object WebViewManager {
         pendingFetches.clear()
     }
 
-    suspend fun encryptedFetch(url: String, method: String, bodyJson: String): String {
-        val wv = webView ?: return "ERROR: WebView not initialized"
+    suspend fun encryptedFetch(url: String, method: String, bodyJson: String?): String {
+        val wv = webView ?: return "ERR|WebView not initialized"
         val id = UUID.randomUUID().toString()
         val deferred = CompletableDeferred<String>()
         pendingFetches[id] = deferred
 
+        val hasBody = bodyJson != null && bodyJson != "null"
+        val sendLine = if (hasBody) "xhr.send($bodyJson);" else "xhr.send();"
+
         val js = """
             (function(){
                 try {
-                    var bodyObj = $bodyJson;
                     var xhr = new XMLHttpRequest();
                     xhr.open('$method', '$url', true);
                     xhr.setRequestHeader('Content-Type', 'application/json');
@@ -85,7 +87,7 @@ object WebViewManager {
                             AndroidBridge.onFetchResult('$id', xhr.status + '|' + xhr.responseText);
                         }
                     };
-                    xhr.send(JSON.stringify(bodyObj));
+                    $sendLine
                 } catch(e) {
                     AndroidBridge.onFetchResult('$id', 'ERR|' + e.message);
                 }
@@ -94,6 +96,15 @@ object WebViewManager {
 
         wv.post { wv.evaluateJavascript(js, null) }
         return deferred.await()
+    }
+
+    suspend fun verify(): Boolean {
+        val result = encryptedFetch(
+            "https://dapi.saudia.com/customer/has-refresh-token?lang=ar-SA",
+            "GET",
+            null
+        )
+        return result.startsWith("200|") || result.startsWith("201|")
     }
 
     private object Bridge {
