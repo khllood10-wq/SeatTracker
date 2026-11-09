@@ -32,7 +32,14 @@ fun PassengersScreen(
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
+    val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
+
+    // حقول إدخال المسافر
+    var firstName by remember { mutableStateOf("TEST") }
+    var lastName by remember { mutableStateOf("TEST") }
+    var documentNumber by remember { mutableStateOf("123456789") }
+    var dateOfBirth by remember { mutableStateOf("1991-05-10") }
 
     LaunchedEffect(Unit) {
         viewModel.createCartAndProceedToPassenger()
@@ -76,6 +83,74 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
+        // ═══════════ فورم بيانات المسافر ═══════════
+        Text("بيانات المسافر:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+
+        OutlinedTextField(
+            value = firstName,
+            onValueChange = { firstName = it },
+            label = { Text("الاسم الأول") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = lastName,
+            onValueChange = { lastName = it },
+            label = { Text("اللقب") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = documentNumber,
+            onValueChange = { documentNumber = it },
+            label = { Text("رقم الهوية") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = dateOfBirth,
+            onValueChange = { dateOfBirth = it },
+            label = { Text("تاريخ الميلاد (YYYY-MM-DD)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        Button(
+            onClick = {
+                viewModel.confirmPassengerData(
+                    firstName = firstName,
+                    lastName = lastName,
+                    documentNumber = documentNumber,
+                    dateOfBirth = dateOfBirth
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !cartId.isNullOrEmpty()
+        ) {
+            Text("تأكيد بيانات المسافر")
+        }
+
+        // ═══════════ عرض نتيجة PATCH ═══════════
+        if (confirmResponse.isNotEmpty()) {
+            Text("نتيجة تأكيد المسافر:", style = MaterialTheme.typography.titleSmall)
+            SelectionContainer {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(
+                        text = confirmResponse,
+                        modifier = Modifier.padding(12.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider()
+
+        // ═══════════ عرض استجابة السلة (JSON) ═══════════
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
