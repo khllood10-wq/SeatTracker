@@ -155,10 +155,24 @@ fun PassengersScreen(
                                             return true;
                                         }
 
-                                        // الانتظار 3 ثواني حتى يتم تحميل الفورم بالكامل ثم التعبئة
+                                        // دالة للبحث عن زر وضغطه
+                                        function clickBtn(keywords) {
+                                            var elements = document.querySelectorAll('button, [role="button"], a');
+                                            for (var i = 0; i < elements.length; i++) {
+                                                var text = (elements[i].innerText || elements[i].textContent || '').trim();
+                                                for (var k = 0; k < keywords.length; k++) {
+                                                    if (text.indexOf(keywords[k]) > -1) {
+                                                        elements[i].click();
+                                                        return text;
+                                                    }
+                                                }
+                                            }
+                                            return null;
+                                        }
+
+                                        // 1. التعبئة بعد 3 ثواني
                                         setTimeout(function() {
                                             try {
-                                                // تعبئة البيانات
                                                 setVal('input[formcontrolname="firstName"]', 'Mohammed');
                                                 setVal('input[formcontrolname="lastName"]', 'Alotudi');
                                                 setVal('input[formcontrolname="dateOfBirth"]', '1991-05-10');
@@ -166,25 +180,19 @@ fun PassengersScreen(
                                                 
                                                 AndroidBridge.onCaptured('__FILLED__', 'fields filled');
                                                 
-                                                // الضغط على زر المتابعة بطريقة أقوى
+                                                // 2. الضغط على زر "تأكيد" بعد 2 ثانية
                                                 setTimeout(function() {
-                                                    var clicked = false;
-                                                    var elements = document.querySelectorAll('button, [role="button"], .mdc-button');
-                                                    for (var i = 0; i < elements.length; i++) {
-                                                        var text = (elements[i].innerText || elements[i].textContent || '').trim();
-                                                        if (text.indexOf('متابعة') > -1 || text.indexOf('Continue') > -1 || text.indexOf('التالي') > -1) {
-                                                            elements[i].click();
-                                                            clicked = true;
-                                                            AndroidBridge.onCaptured('__CLICKED__', text);
-                                                            break;
-                                                        }
-                                                    }
-                                                    if (!clicked) {
-                                                         AndroidBridge.onCaptured('__NO_BUTTON__', 'Button not found. Trying to click first submit button.');
-                                                         var submitBtn = document.querySelector('button[type="submit"]');
-                                                         if(submitBtn) { submitBtn.click(); AndroidBridge.onCaptured('__CLICKED_SUBMIT__', 'submit clicked'); }
-                                                    }
-                                                }, 1500);
+                                                    var clickedConfirm = clickBtn(['تأكيد', 'Confirm', 'حفظ']);
+                                                    AndroidBridge.onCaptured('__CONFIRM_CLICKED__', clickedConfirm || 'not found');
+                                                    
+                                                    // 3. الانتظار 3 ثواني بعد التأكيد، ثم الضغط على زر "متابعة"
+                                                    setTimeout(function() {
+                                                        var clickedNext = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار']);
+                                                        AndroidBridge.onCaptured('__NEXT_CLICKED__', clickedNext || 'not found');
+                                                    }, 3000);
+                                                    
+                                                }, 2000);
+                                                
                                             } catch(e) {
                                                 AndroidBridge.onCaptured('__ERROR__', String(e));
                                             }
