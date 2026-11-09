@@ -77,7 +77,7 @@ interface SaudiaApi {
         @Body request: List<CartExtensionRequest>
     ): Response<ResponseBody>
 
-    // 🔥 التغيير هنا: حذفنا /web/ من المسار
+    // 🔥 المسار الجديد (بدون /web/) اللي فتح لنا الباب
     @PATCH("shopping/carts/{cartId}/travelers/{travelerId}")
     suspend fun updateTraveler(
         @Path("cartId") cartId: String,
