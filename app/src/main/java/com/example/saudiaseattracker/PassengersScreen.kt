@@ -1,26 +1,28 @@
 package com.example.saudiaseattracker
 
-import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.webkit.WebView
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 
-@SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PassengersScreen(
@@ -29,7 +31,25 @@ fun PassengersScreen(
 ) {
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
+    val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
+    val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val context = LocalContext.current
+
+    // 📝 مربع النص لتعديل الـ JSON يدوياً
+    var customJson by remember {
+        mutableStateOf(
+            """{
+  "passengerTypeCode": "ADT",
+  "gender": "male",
+  "title": "MR",
+  "givenName": "Khaled",
+  "surname": "Otudi",
+  "dateOfBirth": "1991-05-10",
+  "nationality": "SA",
+  "documents": [{"type": "NATIONAL_ID", "number": "1071580342", "countryOfIssuance": "SA"}]
+}""".trimIndent()
+        )
+    }
 
     LaunchedEffect(Unit) {
         if (viewModel.cartId.value.isNullOrEmpty()) {
@@ -37,62 +57,113 @@ fun PassengersScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        
-        // شريط أدوات صغير أعلى الشاشة للتحكم (تحديث ونسخ)
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("الـ API Response", style = MaterialTheme.typography.titleMedium)
-            Row {
-                IconButton(onClick = { 
-                    viewModel.createCartAndProceedToPassenger() 
-                }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "تحديث")
-                }
-                IconButton(onClick = {
-                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
-                    Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
-                }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "نسخ")
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("صفحة المسافرين (API مباشر)", style = MaterialTheme.typography.headlineMedium)
+
+        foundFlight?.let { f ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("ملخص الحجز:", fontWeight = FontWeight.Bold)
+                    Text("الرحلة: ${f.flightNumber} | المسار: ${f.origin} → ${f.destination}")
                 }
             }
         }
 
-        // ═══ عرض الـ WebView ═══
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.loadWithOverviewMode = true
-                    settings.useWideViewPort = true
-                }
-            },
-            update = { webView ->
-                // بمجرد وصول الـ response، نعرضه داخل الـ WebView
-                if (rawCartResponse.isNotEmpty()) {
-                    val html = """
-                        <html>
-                        <head>
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <style>
-                            body { font-family: monospace; font-size: 11px; padding: 12px; white-space: pre-wrap; word-wrap: break-word; color: #333; background-color: #f9f9f9; }
-                        </style>
-                        </head>
-                        <body>
-                        $rawCartResponse
-                        </body>
-                        </html>
-                    """.trimIndent()
-                    webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
-                } else {
-                    webView.loadDataWithBaseURL(null, "<html><body><h3>جاري جلب البيانات...</h3></body></html>", "text/html", "UTF-8", null)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (cartId.isNullOrEmpty()) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text(" جاري إنشاء السلة...")
+            } else {
+                Text("✅ cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            }
+        }
+
+        HorizontalDivider()
+
+        // ═══ 1. زر التسلسل التلقائي ═══
+        Button(
+            onClick = { viewModel.executeFullPassengerSequence() },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !cartId.isNullOrEmpty(),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+        ) {
+            Text("🚀 تنفيذ التسلسل التلقائي الكامل", fontWeight = FontWeight.Bold)
+        }
+
+        // ═══ 2. محرر JSON اليدوي ═══
+        Text("تعديل الـ JSON يدوياً:", style = MaterialTheme.typography.titleSmall)
+        OutlinedTextField(
+            value = customJson,
+            onValueChange = { customJson = it },
+            modifier = Modifier.fillMaxWidth().height(180.dp),
+            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+        )
+
+        Button(
+            onClick = { viewModel.sendRawPassengerPayload(customJson) },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !cartId.isNullOrEmpty(),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+        ) {
+            Text("📤 إرسال (PATCH) - بدون تشفير", fontWeight = FontWeight.Bold)
+        }
+
+        HorizontalDivider()
+
+        // ═══ 3. عرض الرد ═══
+        if (confirmResponse.isNotEmpty()) {
+            Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
+            SelectionContainer {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(
+                        text = confirmResponse,
+                        modifier = Modifier.padding(12.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp
+                    )
                 }
             }
-        )
+        }
+
+        HorizontalDivider()
+
+        // ═══ 4. عرض استجابة السلة ═══
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("استجابة السلة (JSON):", style = MaterialTheme.typography.titleSmall)
+            Button(onClick = {
+                val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cb.setPrimaryClip(ClipData.newPlainText("CartJSON", rawCartResponse))
+                Toast.makeText(context, "تم النسخ!", Toast.LENGTH_SHORT).show()
+            }) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null)
+                Text(" نسخ")
+            }
+        }
+
+        SelectionContainer {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+            ) {
+                Text(
+                    text = rawCartResponse.ifEmpty { "بانتظار الاستجابة..." },
+                    modifier = Modifier.padding(12.dp),
+                    fontFamily = FontFamily.Monospace, fontSize = 10.sp
+                )
+            }
+        }
     }
 }
