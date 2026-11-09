@@ -1,5 +1,6 @@
 package com.example.saudiaseattracker
 
+import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.Retrofit
@@ -85,6 +86,17 @@ interface SaudiaApi {
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: Any
+    ): Response<ResponseBody>
+
+    // ═══ 🧪 الدالة اللي كانت ناقصة ═══
+    @PATCH("shopping/carts/{cartId}/travelers/{travelerId}")
+    suspend fun updateTravelerRaw(
+        @Path("cartId") cartId: String,
+        @Path("travelerId") travelerId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: RequestBody
     ): Response<ResponseBody>
 }
 
