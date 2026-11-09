@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,15 +38,20 @@ fun PassengersScreen(
     viewModel: FlightViewModel
 ) {
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
-    val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
     var capturedBody by remember { mutableStateOf<String?>(null) }
     val logs = viewModel.searchLogs.collectAsStateWithLifecycle().value
+    
+    // نحتفظ بالـ webView كمرجع عشان نقدر نحدثه
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     LaunchedEffect(Unit) {
-        viewModel.createCartAndProceedToPassenger()
+        // ننشئ السلة فقط إذا كانت غير موجودة (لتجنب إنشاء سلة جديدة وتغيير الـ cartId)
+        if (viewModel.cartId.value.isNullOrEmpty()) {
+            viewModel.createCartAndProceedToPassenger()
+        }
     }
 
     Column(
@@ -57,11 +63,20 @@ fun PassengersScreen(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(modifier = Modifier.padding(8.dp)) {
-                Text("حالة الحجز التلقائي", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("حالة الحجز التلقائي", style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = { webViewRef?.reload() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "تحديث الصفحة")
+                    }
+                }
                 Text("cartId: ${cartId ?: "جاري الإنشاء..."}", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                 
-                // عرض آخر 3 أحداث فقط لتوفير المساحة
-                logs.take(3).forEach { log ->
+                // عرض آخر 4 أحداث
+                logs.take(4).forEach { log ->
                     Text(log, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                 }
 
@@ -72,7 +87,7 @@ fun PassengersScreen(
                             cb.setPrimaryClip(ClipData.newPlainText("Captured", capturedBody))
                             Toast.makeText(context, "تم نسخ الـ Body المشفر!", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
                     ) {
                         Text("نسخ الطلب المشفر (Captured Body)")
@@ -81,7 +96,7 @@ fun PassengersScreen(
             }
         }
 
-        // ═══ 2. الجزء السفلي: الـ WebView (ظاهر ليعمل بكامل قوته) ═══
+        // ═══ 2. الجزء السفلي: الـ WebView (ظاهر) ═══
         if (cartId.isNullOrEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -92,6 +107,7 @@ fun PassengersScreen(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 factory = { ctx ->
                     WebView(ctx).apply {
+                        webViewRef = this
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.loadWithOverviewMode = true
@@ -119,7 +135,7 @@ fun PassengersScreen(
                                 super.onPageFinished(view, url)
                                 viewModel.addLog("📄 WebView loaded: $url")
                                 
-                                // ننتظر 3 ثواني قبل بدء الحقن لضمان تحميل Angular
+                                // ننتظر 4 ثواني لضمان اكتمال تحميل Angular Data
                                 view?.postDelayed({
                                     view.evaluateJavascript("""
                                         (function() {
@@ -152,7 +168,7 @@ fun PassengersScreen(
                                                 return oo.apply(this, arguments);
                                             };
 
-                                            AndroidBridge.onLog("✅ JS Ready. Searching for form...");
+                                            AndroidBridge.onLog("✅ JS Ready. Waiting for fields...");
 
                                             function setInput(name, val) {
                                                 var el = document.querySelector('input[formcontrolname="' + name + '"]');
@@ -226,7 +242,7 @@ fun PassengersScreen(
                                                 } else if (step === 2) {
                                                     if(timer > 4) { 
                                                         var c = clickBtn(['تأكيد', 'Confirm', 'حفظ', 'موافق']);
-                                                        AndroidBridge.onLog("👉 Clicked Confirm: " + c);
+                                                        AndroidBridge.onLog("👉 Clicked Confirm: " + (c || "not found"));
                                                         step = 3; timer = 0;
                                                     }
                                                 } else if (step === 3) {
@@ -237,7 +253,7 @@ fun PassengersScreen(
                                                         selectCombo('countryCode', '966');
                                                         
                                                         var n = clickBtn(['متابعة', 'Continue', 'التالي', 'استمرار', 'الدفع']);
-                                                        AndroidBridge.onLog("👉 Clicked Next: " + n);
+                                                        AndroidBridge.onLog("👉 Clicked Next: " + (n || "not found"));
                                                         step = 4; timer = 0;
                                                     }
                                                 }
@@ -246,11 +262,18 @@ fun PassengersScreen(
                                             }, 500);
                                         })();
                                     """.trimIndent(), null)
-                                }, 3000) // الانتظار 3 ثواني قبل الحقن
+                                }, 4000)
                             }
                         }
 
+                        // هنا نمرر الـ cartId الصحيح
                         loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
+                    }
+                },
+                update = { view ->
+                    // إذا تغير الـ cartId في التطبيق بعد تحميل الصفحة، نقوم بتحديث الرابط
+                    if (view.url?.contains(cartId) == false) {
+                        view.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                     }
                 }
             )
