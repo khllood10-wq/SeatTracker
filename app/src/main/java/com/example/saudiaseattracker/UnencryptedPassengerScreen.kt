@@ -27,21 +27,19 @@ data class TestResult(
     val body: String
 ) {
     val color: Color get() = when {
-        code == 200 -> Color(0xFF00C853)
-        code == 404 -> Color(0xFF9E9E9E)
+        code == 200 && (body.contains("names") || body.contains("firstName")) -> Color(0xFF00C853)
+        code == 200 -> Color(0xFFFFAB00)  // نجح لكن بدون اسم
         code in 400..499 -> Color(0xFFFF6D00)
         else -> Color(0xFFD32F2F)
     }
+    val hasName: Boolean get() = body.contains("names") || body.contains("firstName") || body.contains("KHALED")
+    val hasDoc: Boolean get() = body.contains("travellerDoc") || body.contains("nationalId") || body.contains("documentType")
     val verdict: String get() = when {
-        code == 200 -> "🎉 نجح! السيرفر قبـل البيانات كاملة"
-        code == 404 -> "⚠️ السلة انتهت"
-        body.contains("dateOfBirth") -> "🟠 تاريخ الميلاد — تحقق من الصيغة"
-        body.contains("firstName") -> "🟠 firstName مطلوب"
-        body.contains("lastName") -> "🟠 lastName مطلوب"
-        body.contains("nationality") -> "🟠 nationality مطلوب"
-        body.contains("travellerDoc") -> "🟠 travellerDoc مطلوب"
-        body.contains("Unexpected") -> "❌ حقل مرفوض"
-        else -> "⚠️ راجع التفاصيل"
+        code == 200 && hasName && hasDoc -> "🎉🎉 نجح! الاسم + الهوية محفوظان"
+        code == 200 && hasName -> "🎉 نجح! الاسم محفوظ (بلا هوية)"
+        code == 200 -> "✅ نجح لكن بدون اسم/هوية"
+        code in 400..499 -> "❌ ${body.substringAfter("message\":\"").substringBefore("\"")}"
+        else -> "⚠️ خطأ"
     }
 }
 
@@ -61,21 +59,14 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
         viewModel.viewModelScope.launch {
             val travelerId = "SKH-1-EXT"
             val uuid = "$cartId$travelerId"
-
-            // ⭐ التصحيح: dateOfBirth بصيغة YYYY-MM-DD فقط
             val dob = "1991-05-10"
 
+            // U1 نجح مسبقاً — نجرب الآن U3-U7 (تحتوي على الاسم والهوية)
             val tests = listOf(
-                "U1: 3 حقول + date صحيح" to
-                    """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob"}""",
-
-                "U2: U1 (array)" to
-                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob"}]""",
-
                 "U3: names array" to
                     """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob","names":[{"firstName":"Khaled","lastName":"Otudi","title":"Mr","nameType":"universal"}]}]""",
 
-                "U4: flat names" to
+                "U4: flat firstName/lastName" to
                     """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob","firstName":"Khaled","lastName":"Otudi","title":"Mr"}]""",
 
                 "U5: + nationality" to
@@ -103,13 +94,10 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
                     )
                     val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(فارغ)"
                     results = results + TestResult(name, resp.code(), respBody)
-
-                    // إذا نجح أحد الاختبارات، توقف
-                    if (resp.code() == 200) break
                 } catch (e: Exception) {
                     results = results + TestResult(name, -1, e.message ?: "exception")
                 }
-                delay(1800)
+                delay(1500)
             }
             currentTest = ""
             running = false
@@ -120,10 +108,11 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
         modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("🔓 اختبار بدون تشفير (v2)", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("🔓 اختبار الاسم + الهوية", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(
-            "dateOfBirth بصيغة YYYY-MM-DD — نتوقف عند أول 200",
-            style = MaterialTheme.typography.bodySmall
+            "U1 نجح! الآن نجرب U3–U7 لإيجاد الشكل الذي يقبل الاسم والهوية",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary
         )
 
         if (cartId.isNullOrEmpty()) {
@@ -134,7 +123,7 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(10.dp)) {
                     Text("cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                    Text("التاريخ المرسل: 1991-05-10", fontSize = 11.sp)
+                    Text("البيانات: Khaled Otudi / 1071580342 / 1991-05-10 / SA / National ID", fontSize = 10.sp)
                 }
             }
 
@@ -149,7 +138,7 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
                     Spacer(Modifier.width(10.dp))
                     Text("جاري: $currentTest", fontSize = 11.sp)
                 } else {
-                    Text("▶ تشغيل (يتوقف عند أول نجاح)", fontWeight = FontWeight.Bold)
+                    Text("▶ اختبار U3 → U7", fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -157,12 +146,39 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
                 Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(2.dp, r.color)) {
                     Column(Modifier.padding(10.dp)) {
                         Text(r.name, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Text("HTTP ${r.code}", color = r.color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Text("HTTP ${r.code}", color = r.color, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            if (r.code == 200) {
+                                Spacer(Modifier.width(10.dp))
+                                if (r.hasName) Text("👤 اسم ✓", fontSize = 11.sp, color = Color(0xFF00C853), fontWeight = FontWeight.Bold)
+                                if (r.hasDoc) Text("📄 هوية ✓", fontSize = 11.sp, color = Color(0xFF00C853), fontWeight = FontWeight.Bold)
+                            }
+                        }
                         Text(r.verdict, color = r.color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(4.dp))
                         SelectionContainer {
-                            Text(r.body.take(350), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                            Text(r.body.take(500), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                         }
+                    }
+                }
+            }
+
+            if (results.any { it.code == 200 && it.hasName }) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    border = BorderStroke(3.dp, Color(0xFF00C853))
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("🎉 وجدنا الشكل الصحيح!", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(
+                            "الشكل: ${results.first { it.code == 200 && it.hasName }.name}",
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            "أرسل هذه الرسالة كاملة إلى المساعد لإكمال الحل النهائي.",
+                            fontSize = 11.sp
+                        )
                     }
                 }
             }
