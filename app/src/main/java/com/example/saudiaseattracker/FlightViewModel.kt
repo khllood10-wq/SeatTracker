@@ -12,8 +12,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
@@ -37,24 +35,34 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _uiState = MutableStateFlow(SearchState.IDLE)
     val uiState: StateFlow<SearchState> = _uiState
-    
+
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
-    
+
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
-    
+
     private val _cartId = MutableStateFlow<String?>(null)
     val cartId: StateFlow<String?> = _cartId
-    
+
     private val _rawCartResponse = MutableStateFlow<String?>(null)
     val rawCartResponse: StateFlow<String?> = _rawCartResponse
-    
+
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
+    // ──────────────────────────────────────────────────────────
+    // addLog — معرّفة مبكراً لتجنب أي التباس
+    // ──────────────────────────────────────────────────────────
+    fun addLog(message: String) {
+        val curr = _searchLogs.value.toMutableList()
+        curr.add(0, message)
+        _searchLogs.value = curr
+    }
+
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val prefs = getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("auth_token", auth)
             .putString("xd_token", xDToken)
@@ -65,16 +73,30 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun getSavedAuthToken(): String? =
-        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
+        getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+            .getString("auth_token", null)
+
     private fun getSavedXDToken(): String? =
-        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
+        getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+            .getString("xd_token", null)
+
     private fun getSavedSessionId(): String? =
-        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
+        getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+            .getString("session_id", null)
+
+    private fun getSavedDynamicCookies(): String? =
+        getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+            .getString("dynamic_cookies", null)
 
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isEmpty()) return
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val prefs = getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val current = prefs.getString("dynamic_cookies", "") ?: ""
         val cookieMap = mutableMapOf<String, String>()
         if (current.isNotEmpty()) {
@@ -91,9 +113,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val updated = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
         prefs.edit().putString("dynamic_cookies", updated).apply()
     }
-
-    private fun getSavedDynamicCookies(): String? =
-        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
     private fun buildHeaders(
         apiVersion: String,
@@ -131,7 +150,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         if (includeXVToken) {
-            headers["x-v-token"] = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
+            headers["x-v-token"] =
+                "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
         }
         val cookies = getSavedDynamicCookies()
         if (!cookies.isNullOrEmpty()) headers["Cookie"] = cookies
@@ -285,7 +305,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🛂 [5/5] فحص GACA...")
                 RetrofitClient.api.getGacaMandate(
-                    headers = buildHeaders("1", includeXVToken = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    headers = buildHeaders(
+                        "1",
+                        includeXVToken = true,
+                        referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
+                    ),
                     request = GacaMandateRequest()
                 ).let {
                     saveCookiesFromResponse(it)
@@ -299,67 +323,4 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
-
-    /**
-     * ⭐ إرسال {key, body} الملتقط من WebView بـ **نفس** الكوكيز/Headers/UA التي كان يستخدمها WebView.
-     */
-    suspend fun sendCapturedPayload(key: String, body: String, cartId: String): Boolean {
-        return try {
-            addLog("📤 إرسال PATCH...")
-            val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-            val capturedCookies = prefs.getString("dynamic_cookies", null)
-            val capturedUA = prefs.getString("captured_user_agent", null)
-            val capturedHeadersJson = prefs.getString("captured_headers", null)
-
-            // نبني headers من الافتراضي، ثم نُطابق ما استخدمه WebView
-            val headers = mutableMapOf<String, String>()
-            headers.putAll(buildHeadersPublic("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"))
-
-            if (!capturedCookies.isNullOrEmpty()) {
-                headers["Cookie"] = capturedCookies
-                addLog("🍪 استخدمنا ${capturedCookies.length}ch كوكيز من WebView")
-            }
-            if (!capturedUA.isNullOrEmpty()) {
-                headers["User-Agent"] = capturedUA
-                addLog("🖥️ UA = ${capturedUA.take(50)}...")
-            }
-
-            // Headers الملتقطة من fetch (نفس ما استخدمه المتصفح بالضبط)
-            if (!capturedHeadersJson.isNullOrEmpty()) {
-                try {
-                    val json = JsonParser.parseString(capturedHeadersJson).asJsonObject
-                    var applied = 0
-                    json.entrySet().forEach { (k, v) ->
-                        val lk = k.lowercase()
-                        if (v.isJsonPrimitive && lk !in listOf(
-                                "content-length", "host", "connection",
-                                "transfer-encoding", "accept-encoding"
-                            )) {
-                            try {
-                                headers[k] = v.asString
-                                applied++
-                            } catch (_: Exception) {}
-                        }
-                    }
-                    addLog("📋 استخدمنا $applied header من WebView")
-                } catch (e: Exception) {
-                    addLog("⚠️ فشل تحليل headers: ${e.message}")
-                }
-            }
-
-            val payload = """{"key":"$key","body":"$body"}"""
-            val requestBody = payload.toRequestBody("application/json".toMediaType())
-            val resp = RetrofitClient.api.updateTravelerRaw(
-                cartId = cartId,
-                travelerId = "SKH-1-EXT",
-                headers = headers,
-                request = requestBody
-            )
-            saveCookiesFromResponse(resp)
-            val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(empty)"
-            addLog("📡 HTTP ${resp.code()}")
-            _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n$respBody"
-            resp.code() == 200
-        } catch (e: Exception) {
-            addLog("❌ ${e.message}")
-            _passengerConfirmResponse
+}
