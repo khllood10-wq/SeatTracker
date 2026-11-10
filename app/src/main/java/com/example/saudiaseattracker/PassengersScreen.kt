@@ -32,15 +32,8 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val logs = viewModel.searchLogs.collectAsStateWithLifecycle().value
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-
-    var hasKey by remember { mutableStateOf(false) }
 
     LaunchedEffect(cartId) {
-        hasKey = !prefs.getString("rsa_public_key", null).isNullOrEmpty()
-        if (!cartId.isNullOrEmpty() && !hasKey) {
-            prefs.edit().putString("cart_id_for_capture", cartId).apply()
-        }
         if (viewModel.cartId.value.isNullOrEmpty()) {
             viewModel.createCartAndProceedToPassenger()
         }
@@ -75,27 +68,25 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
 
         HorizontalDivider()
 
-        // ── الزر الرئيسي: التأكيد التلقائي ──
         if (!cartId.isNullOrEmpty()) {
             Button(
-                onClick = { navController.navigate(Screen.AutoConfirm.route) },
+                onClick = { navController.navigate(Screen.Replay.route) },
                 modifier = Modifier.fillMaxWidth().height(64.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
             ) {
                 Text(
-                    "🤖 تأكيد تلقائي (يستخدم كود الموقع)",
+                    "🧪 اختبار Replay (بدون WebView)",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
+                    fontSize = 16.sp
                 )
             }
             Text(
-                "يفتح صفحة المسافرين الحقيقية، يملأ البيانات تلقائياً، يضغط 'تأكيد' — الموقع يتولى التشفير",
+                "يرسل {key, body} الملتقط مباشرة إلى الـ API لمعرفة إن كان السيرفر يقبله",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
 
-        // ── سجل الأحداث ──
         if (logs.isNotEmpty()) {
             Text("سجل الأحداث:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
@@ -135,7 +126,6 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
 
         HorizontalDivider()
 
-        // ── استجابة السلة ──
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
