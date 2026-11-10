@@ -68,22 +68,35 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
         HorizontalDivider()
 
         if (!cartId.isNullOrEmpty()) {
-            // زر التأكيد التلقائي
+            // الزر الأول: اختبار بدون تشفير (الأمل الجديد)
             Button(
-                onClick = { navController.navigate(Screen.AutoConfirm.route) },
+                onClick = { navController.navigate(Screen.UnencryptedPassenger.route) },
                 modifier = Modifier.fillMaxWidth().height(64.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {
-                Text("🤖 تأكيد تلقائي (WebView)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("🔓 إرسال بدون تشفير (7 أشكال)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+            Text(
+                "يرسل البيانات (الاسم، الهوية، الميلاد، الجنسية، نوع المستند) بدون تشفير إلى /travelers/{id} — نجرب 7 أشكال",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+
+            // الزر الثاني: تأكيد تلقائي (WebView)
+            OutlinedButton(
+                onClick = { navController.navigate(Screen.AutoConfirm.route) },
+                modifier = Modifier.fillMaxWidth().height(52.dp)
+            ) {
+                Text("🤖 تأكيد تلقائي (WebView)", fontWeight = FontWeight.Bold)
             }
 
-            // زر اختبار Replay
+            // الزر الثالث: Replay
             OutlinedButton(
                 onClick = { navController.navigate(Screen.Replay.route) },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.tertiary)
             ) {
-                Text("🧪 اختبار Replay (بدون WebView)", fontWeight = FontWeight.Bold)
+                Text("🧪 اختبار Replay", fontWeight = FontWeight.Bold)
             }
         }
 
