@@ -107,7 +107,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "saa-session-id" to sessionId,
             "x-api-version" to apiVersion,
             "platform" to "Web",
-            "version" to "27.0",
+            "version" to "27.2",
             "Accept" to "application/json",
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
@@ -293,7 +293,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🧪 اختبار 3 متغيرات RSA + headers بدون x-v-token
+    //  🎯 إرسال البيانات الصحيحة (المستخرجة من HAR)
     // ═══════════════════════════════════════════════════════════
     fun sendEncryptedPassengerPayload() {
         val cartId = _cartId.value
@@ -309,60 +309,49 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        addLog("🔑 المفتاح المحفوظ (${rsaPem.length} حرف): ${rsaPem.take(60)}...")
-
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
-            addLog("═══════════════════════════════════════")
-            addLog("🧪 اختبار 3 متغيرات (بدون x-v-token + bodyid)")
+            addLog("🎯 إرسال البيانات الصحيحة (firstName/lastName array)")
 
-            val plainJson = """{"passengerTypeCode":"ADT"}"""
+            val plainJson = """[{"tid":null,"id":"SKH-1-EXT","title":"Mr","passengerTypeCode":"ADT","firstName":"Khaled","lastName":"Otudi","dateOfBirth":"1991-05-09T21:00:00.000Z","nationality":"SA","rememberMe":true,"uuid":"${cartId}SKH-1-EXT","travellerDoc":{"docType":"National ID","passportNumber":"","expiryDate":"","issuingCountry":"","nationalId":"1071580342","gccId":"","residentId":"","number":"1071580342","id":null}}]"""
 
-            val rsaModes = listOf(
-                HybridEncryptor.RsaMode.PKCS1,
-                HybridEncryptor.RsaMode.OAEP_SHA256_MGF1_SHA256,
-                HybridEncryptor.RsaMode.OAEP_SHA256_MGF1_SHA1,
-            )
+            addLog("📏 JSON: ${plainJson.length} حرف")
 
-            for (mode in rsaModes) {
-                try {
-                    addLog("─── ${mode.name} ───")
-                    val (keyB64, bodyHex) = HybridEncryptor.encrypt(plainJson, rsaPem, mode)
-                    addLog("key=${keyB64.length}ch, body=${bodyHex.length}ch")
+            try {
+                val (keyB64, bodyHex) = HybridEncryptor.encrypt(
+                    plainJson, rsaPem, HybridEncryptor.RsaMode.PKCS1
+                )
+                addLog("🔑 key=${keyB64.length}ch, body=${bodyHex.length}ch")
 
-                    val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
-                    val requestBody = payload.toRequestBody("application/json".toMediaType())
+                val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
+                val requestBody = payload.toRequestBody("application/json".toMediaType())
 
-                    // استخدام headers بدون x-v-token
-                    val headers = buildHeaders(
-                        "2",
-                        isWebEndpoint = false,
-                        referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
-                    )
+                val resp = RetrofitClient.api.updateTravelerRaw(
+                    cartId = cartId,
+                    travelerId = "SKH-1-EXT",
+                    headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    request = requestBody
+                )
+                saveCookiesFromResponse(resp)
+                val code = resp.code()
+                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
 
-                    val resp = RetrofitClient.api.updateTravelerRaw(
-                        cartId = cartId,
-                        travelerId = "SKH-1-EXT",
-                        headers = headers,
-                        request = requestBody
-                    )
-                    saveCookiesFromResponse(resp)
-                    val code = resp.code()
-                    val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
+                addLog("═══════════════════════════════")
+                addLog("📡 النتيجة: HTTP $code")
+                val displayBody = if (respBody.isEmpty()) "(empty)" else respBody
+                _passengerConfirmResponse.value = "HTTP $code\n\n$displayBody"
 
-                    addLog("📡 ${mode.name} → HTTP $code")
-                    val displayBody = if (respBody.isEmpty()) "(empty)" else respBody.take(200)
-                    _passengerConfirmResponse.value = "${mode.name} → HTTP $code\n\n$displayBody"
-
-                    if (code == 200) {
-                        addLog("🎉🎉🎉 نجح! المتغير: ${mode.name}")
-                        return@launch
-                    }
-                } catch (e: Exception) {
-                    addLog("❌ ${mode.name}: ${e.message}")
+                if (code == 200) {
+                    addLog("🎉🎉🎉 نجح! البيانات حُفظت رسمياً")
+                } else if (code == 400) {
+                    addLog("⚠️ 400 — جرب OAEP256 أو AES128")
+                } else {
+                    addLog("❌ فشل: $code")
                 }
+            } catch (e: Exception) {
+                addLog("❌ استثناء: ${e.message}")
+                _passengerConfirmResponse.value = "Exception: ${e.message}"
             }
-            addLog("⚠️ كل المتغيرات فشلت")
         }
     }
 
