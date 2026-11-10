@@ -8,5 +8,6 @@ sealed class Screen(val route: String, val title: String) {
     object AutoConfirm         : Screen("auto_confirm", "تأكيد تلقائي")
     object Replay              : Screen("replay", "اختبار Replay")
     object UnencryptedPassenger: Screen("unencrypted", "بدون تشفير")
+    object Order               : Screen("order", "إتمام الحجز")
     object Payment             : Screen("payment", "الدفع")
 }
