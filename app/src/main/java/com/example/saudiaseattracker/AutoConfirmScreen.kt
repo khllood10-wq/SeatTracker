@@ -12,7 +12,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,30 +39,28 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     val authToken = prefs.getString("auth_token", "") ?: ""
     val cookies = prefs.getString("dynamic_cookies", "") ?: ""
 
-    var status by remember { mutableStateOf("⏳ تحميل الصفحة...") }
+    var status by remember { mutableStateOf("⏳ جاري تحميل الصفحة (WebView معزول)...") }
     var progress by remember { mutableStateOf(0) }
-    var apiSuccess by remember { mutableStateOf(false) }
+    var patchSent by remember { mutableStateOf(false) }
+    var patchBodySize by remember { mutableStateOf(0) }
     var apiResultCode by remember { mutableStateOf(0) }
     var apiResultBody by remember { mutableStateOf("") }
-    var patchUrl by remember { mutableStateOf("") }
-    var patchBodySize by remember { mutableStateOf(0) }
-    var patchSent by remember { mutableStateOf(false) }
+    var apiSuccess by remember { mutableStateOf(false) }
 
     val bridge = remember {
         object {
             @JavascriptInterface
-            fun onPatchRequest(url: String, bodySize: Int) {
+            fun onPatchRequest(bodyLength: Int) {
                 Handler(Looper.getMainLooper()).post {
-                    patchUrl = url
-                    patchBodySize = bodySize
-                    status = "📤 PATCH يُرسل من WebView... body=$bodySize"
+                    patchBodySize = bodyLength
+                    status = "📤 تم إرسال PATCH من WebView (حجم body = $bodyLength حرف)..."
                 }
             }
 
             @JavascriptInterface
             fun onPatchResponse(statusCode: Int, responseBody: String) {
                 Handler(Looper.getMainLooper()).post {
-                    // حفظ كوكيز WebView
+                    // حفظ الكوكيز الجديدة للجلسة
                     val cm = CookieManager.getInstance()
                     val sauCookies = cm.getCookie("https://www.saudia.com") ?: ""
                     val dapiCookies = cm.getCookie("https://dapi.saudia.com") ?: ""
@@ -76,16 +76,15 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     apiResultCode = statusCode
                     apiResultBody = responseBody
                     patchSent = true
+                    apiSuccess = (statusCode == 200)
 
                     if (statusCode == 200) {
-                        apiSuccess = true
-                        status = "🎉 نجح! (body كان $patchBodySize حرفاً)"
+                        status = "🎉 نجح! السيرفر قبل البيانات."
                     } else {
-                        status = "❌ فشل: HTTP $statusCode (body كان $patchBodySize حرفاً)"
+                        status = "❌ فشل: HTTP $statusCode"
                     }
                 }
             }
-
             @JavascriptInterface
             fun onLog(msg: String) {
                 android.util.Log.d("AutoConfirm", msg)
@@ -100,132 +99,168 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         return
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // ── تعليمات واضحة ──
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Card(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-        ) {
-            Column(Modifier.padding(12.dp)) {
-                Text("📝 املأ الفورم يدوياً", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text(
-                    "1. انزل في الصفحة أسفل\n" +
-                    "2. املأ: الاسم الأول، اسم العائلة، تاريخ الميلاد، رقم الهوية\n" +
-                    "3. اضغط زر \"تأكيد بيانات المسافر\"\n" +
-                    "4. راقب الرسالة أعلى الشاشة",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontSize = 11.sp
-                )
-            }
-        }
-
-        // ── حالة ──
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(Modifier.padding(10.dp)) {
-                Text(status, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                if (progress in 1..99) {
+            Column(Modifier.padding(12.dp)) {
+                Text("🤖 تأكيد تلقائي (WebView معزول)", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text(status, style = MaterialTheme.typography.bodySmall)
+                if (progress in 1..99 && !patchSent) {
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                 }
-                if (patchUrl.isNotEmpty()) {
-                    Text("URL: ${patchUrl.take(80)}...", fontSize = 9.sp, fontFamily = FontFamily.Monospace)
-                }
                 if (patchBodySize > 0) {
-                    Text("حجم body المُرسل: $patchBodySize حرف", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("حجم البيانات المشفرة: $patchBodySize حرف", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
+                Text("cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
             }
         }
 
-        // ── WebView (مرئي دائماً) ──
-        AndroidView(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.databaseEnabled = true
-                    settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
-                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-                    addJavascriptInterface(bridge, "SaudiaBridge")
+        // ── WebView معزول (بارتفاع محدد لمنع أي تداخل) ──
+        Box(modifier = Modifier.fillMaxWidth().height(500.dp).padding(horizontal = 8.dp)) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        // عزل تام وتنظيف
+                        clearCache(true)
+                        clearHistory()
+                        clearFormData()
+                        clearSslPreferences()
 
-                    val cm = CookieManager.getInstance()
-                    cm.setAcceptCookie(true)
-                    cm.setAcceptThirdPartyCookies(this, true)
-                    if (cookies.isNotEmpty()) {
-                        listOf("https://www.saudia.com", "https://dapi.saudia.com").forEach {
-                            cm.setCookie(it, cookies)
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
+                                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                        
+                        addJavascriptInterface(bridge, "SaudiaBridge")
+
+                        val cm = CookieManager.getInstance()
+                        cm.setAcceptCookie(true)
+                        cm.setAcceptThirdPartyCookies(this, true)
+                        if (cookies.isNotEmpty()) {
+                            listOf("https://www.saudia.com", "https://dapi.saudia.com").forEach {
+                                cm.setCookie(it, cookies)
+                            }
+                            cm.flush()
                         }
-                        cm.flush()
-                    }
 
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress }
-                    }
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress }
+                        }
 
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                            super.onPageStarted(view, url, favicon)
-                            view?.evaluateJavascript("""
-                                try {
-                                    localStorage.setItem('saa-session-id', '$sessionId');
-                                    localStorage.setItem('x-d-token', '$xDToken');
-                                    localStorage.setItem('authorization', 'Bearer $authToken');
-                                } catch(e){}
-                                (function() {
-                                    if (window.__saudiaHooked) return;
-                                    window.__saudiaHooked = true;
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                super.onPageStarted(view, url, favicon)
+                                view?.evaluateJavascript("""
+                                    try {
+                                        localStorage.setItem('saa-session-id', '$sessionId');
+                                        localStorage.setItem('x-d-token', '$xDToken');
+                                        localStorage.setItem('authorization', 'Bearer $authToken');
+                                    } catch(e){}
                                     
-                                    var origFetch = window.fetch;
-                                    window.fetch = function(input, init) {
-                                        var url = typeof input === 'string' ? input : (input && input.url);
-                                        var method = ((init && init.method) || 'GET').toUpperCase();
-                                        if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
-                                            var bodySize = (init && init.body) ? init.body.length : 0;
-                                            SaudiaBridge.onPatchRequest(url, bodySize);
-                                            var promise = origFetch.apply(this, arguments);
-                                            promise.then(function(response) {
-                                                response.clone().text().then(function(text) {
-                                                    SaudiaBridge.onPatchResponse(response.status, text);
+                                    (function() {
+                                        if (window.__saudiaHooked) return;
+                                        window.__saudiaHooked = true;
+                                        var origFetch = window.fetch;
+                                        window.fetch = function(input, init) {
+                                            var url = typeof input === 'string' ? input : (input && input.url);
+                                            var method = ((init && init.method) || 'GET').toUpperCase();
+                                            if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
+                                                var bodySize = (init && init.body) ? init.body.length : 0;
+                                                SaudiaBridge.onPatchRequest(bodySize);
+                                                var promise = origFetch.apply(this, arguments);
+                                                promise.then(function(response) {
+                                                    response.clone().text().then(function(text) {
+                                                        SaudiaBridge.onPatchResponse(response.status, text);
+                                                    });
                                                 });
-                                            });
-                                            return promise;
-                                        }
-                                        return origFetch.apply(this, arguments);
-                                    };
-                                })();
-                            """.trimIndent(), null)
-                        }
+                                                return promise;
+                                            }
+                                            return origFetch.apply(this, arguments);
+                                        };
+                                    })();
+                                """.trimIndent(), null)
+                            }
 
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            super.onPageFinished(view, url)
-                            if (url == null) return
-                            if (url.contains("passengerDetails") && !patchSent) {
-                                status = "✅ الصفحة جاهزة — املأ الفورم يدوياً"
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                if (url == null || patchSent) return
+                                if (url.contains("passengerDetails")) {
+                                    status = "📝 الفورم جاهز. تعبئة تلقائية..."
+                                    // ملء الفورم
+                                    view?.postDelayed({
+                                        view.evaluateJavascript("""
+                                            (function() {
+                                                function setVal(name, val) {
+                                                    var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
+                                                    if (!el) return false;
+                                                    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                    setter.call(el, val);
+                                                    el.dispatchEvent(new Event('input', {bubbles:true}));
+                                                    el.dispatchEvent(new Event('change', {bubbles:true}));
+                                                    el.dispatchEvent(new Event('blur', {bubbles:true}));
+                                                    return true;
+                                                }
+                                                var attempts = 0;
+                                                var iv = setInterval(function() {
+                                                    attempts++;
+                                                    var fnOk = setVal('firstName', 'Khaled');
+                                                    var lnOk = setVal('lastName', 'Otudi');
+                                                    setVal('dateOfBirth', '1990-05-10');
+                                                    setVal('nationalId', '1071580342');
+                                                    setVal('documentNumber', '1071580342');
+                                                    
+                                                    if (fnOk && lnOk) {
+                                                        clearInterval(iv);
+                                                        setTimeout(function() {
+                                                            var btns = document.querySelectorAll('button');
+                                                            for (var i = 0; i < btns.length; i++) {
+                                                                var t = (btns[i].innerText || '').trim();
+                                                                if (t.indexOf('تأكيد بيانات') > -1 || t.indexOf('تأكيد المسافر') > -1) {
+                                                                    btns[i].click();
+                                                                    return;
+                                                                }
+                                                            }
+                                                            for (var j = 0; j < btns.length; j++) {
+                                                                var t2 = (btns[j].innerText || '').trim();
+                                                                if (t2.indexOf('تأكيد') > -1 && t2.indexOf('انتقال') === -1 && t2.indexOf('دفع') === -1) {
+                                                                    btns[j].click();
+                                                                    return;
+                                                                }
+                                                            }
+                                                        }, 1500);
+                                                    }
+                                                    if (attempts > 30) clearInterval(iv);
+                                                }, 500);
+                                            })();
+                                        """.trimIndent(), null)
+                                    }, 5000)
+                                }
                             }
                         }
+
+                        loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                     }
-
-                    loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                 }
-            }
-        )
+            )
+        }
 
-        // ── نتيجة ──
+        // ── نتيجة الطلب ──
         if (patchSent) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
-                border = BorderStroke(2.dp,
-                    if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                border = BorderStroke(2.dp, if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
             ) {
                 Column(Modifier.padding(10.dp)) {
-                    Text("HTTP $apiResultCode", fontWeight = FontWeight.Bold, fontSize = 16.sp,
-                        color = if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                    Text("HTTP $apiResultCode", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                     Spacer(Modifier.height(4.dp))
                     SelectionContainer {
-                        Text(apiResultBody.take(500), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                        Text(apiResultBody.take(400), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
                     }
                 }
             }
@@ -245,11 +280,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         }
 
-        if (patchSent && !apiSuccess) {
+        if (!patchSent) {
             OutlinedButton(
                 onClick = { navController.popBackStack() },
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
-            ) { Text("← رجوع للبدء من جديد") }
+            ) { Text("إلغاء والرجوع") }
         }
     }
 }
