@@ -45,6 +45,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var success by remember { mutableStateOf(false) }
     var cartIdUsed by remember { mutableStateOf(retrofitCartId) }
+    var cartCreated by remember { mutableStateOf(false) }
 
     fun addLog(msg: String) {
         logs = (logs + msg).takeLast(50)
@@ -57,7 +58,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             val sau = cm.getCookie("https://www.saudia.com") ?: "(empty)"
             val dapi = cm.getCookie("https://dapi.saudia.com") ?: "(empty)"
             addLog("🍪 [$label] www(${sau.length}) dapi(${dapi.length})")
-            // حفظ للـ prefs
             val merged = "$sau; $dapi"
             prefs.edit().putString("dynamic_cookies", merged).apply()
         } catch (e: Exception) {
@@ -65,85 +65,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         }
     }
 
-    val bridge = remember {
-        object {
-            @JavascriptInterface
-            fun onPageReady(pageName: String) {
-                Handler(Looper.getMainLooper()).post {
-                    addLog("📄 Page ready: $pageName")
-                    dumpCookies("After load $pageName")
-
-                    when (pageName) {
-                        "home" -> {
-                            status = "🛒 جاري إنشاء السلة..."
-                            createCartViaWebView()
-                        }
-                        "passengers" -> {
-                            status = "🔍 الصفحة وصلت. جاري فحص الفورم..."
-                            // انتظر 8 ثوانٍ للـ Angular
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                checkForm()
-                            }, 8000)
-                        }
-                    }
-                }
-            }
-
-            @JavascriptInterface
-            fun onCartCreated(cartId: String) {
-                Handler(Looper.getMainLooper()).post {
-                    cartIdUsed = cartId
-                    viewModel.updateCartId(cartId)
-                    addLog("✅ Cart created: $cartId")
-                    dumpCookies("After cart creation")
-
-                    // انتظر ثانيتين لاستقرار الكوكيز ثم انتقل
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        status = "➡️ الانتقال لصفحة المسافرين..."
-                        webViewRef?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
-                    }, 2000)
-                }
-            }
-
-            @JavascriptInterface
-            fun onFormCheckResult(hasForm: Boolean, details: String) {
-                Handler(Looper.getMainLooper()).post {
-                    addLog("🔍 Form check: hasForm=$hasForm | $details")
-                    if (hasForm) {
-                        status = "📝 تم العثور على الفورم. جاري الملء..."
-                        fillForm()
-                    } else {
-                        status = "❌ الفورم غير موجود — الصفحة بيضاء. راجع سجل الكوكيز."
-                        dumpCookies("NO FORM after 8s")
-                    }
-                }
-            }
-
-            @JavascriptInterface
-            fun onFilled(logMsg: String) {
-                Handler(Looper.getMainLooper()).post {
-                    addLog("📝 $logMsg")
-                    status = "👆 جاري الضغط على تأكيد..."
-                    clickConfirm()
-                }
-            }
-
-            @JavascriptInterface
-            fun onPatch(code: Int) {
-                Handler(Looper.getMainLooper()).post {
-                    addLog("📡 PATCH → HTTP $code")
-                    if (code == 200) {
-                        success = true
-                        status = "🎉 تم تأكيد المسافر (HTTP 200)!"
-                    } else {
-                        status = "❌ PATCH فشل: HTTP $code"
-                    }
-                }
-            }
-        }
-    }
-
     fun createCartViaWebView() {
+        if (cartCreated) return
+        cartCreated = true
         webViewRef?.evaluateJavascript("""
             (function() {
                 var xhr = new XMLHttpRequest();
@@ -183,6 +107,8 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                             foundFields.push(n);
                         }
                     });
+                } else {
+                    foundFields.push('total_inputs=' + document.querySelectorAll('input').length);
                 }
                 SaudiaBridge.onFormCheckResult(hasForm, 'found: ' + foundFields.join(','));
             })();
@@ -192,7 +118,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     fun fillForm() {
         webViewRef?.evaluateJavascript("""
             (function() {
-                // دالة لملء حقول الإدخال النصية
                 function setVal(name, val) {
                     var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
                     if (!el) return false;
@@ -203,8 +128,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     el.dispatchEvent(new Event('blur', {bubbles:true}));
                     return true;
                 }
-
-                // دالة لملء القوائم المنسدلة (Select / Dropdown)
                 function setSelect(name, val) {
                     var el = document.querySelector('select[formcontrolname="'+name+'"]') || document.querySelector('select[name="'+name+'"]');
                     if (el) {
@@ -212,7 +135,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         el.dispatchEvent(new Event('change', {bubbles:true}));
                         return true;
                     }
-                    // محاولة البحث عن Input (بعض قوائم Angular تستخدم input للبحث)
                     var inp = document.querySelector('input[formcontrolname="'+name+'"]');
                     if (inp) {
                         inp.value = val;
@@ -222,20 +144,16 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     }
                     return false;
                 }
-
                 var log = [];
                 log.push('FN:' + setVal('firstName', 'Khaled'));
                 log.push('LN:' + setVal('lastName', 'Otudi'));
                 log.push('DOB:' + setVal('dateOfBirth', '1990-05-10'));
                 log.push('NID:' + setVal('nationalId', '1071580342'));
                 log.push('DN:' + setVal('documentNumber', '1071580342'));
-                
-                // ملء القوائم الإجبارية
                 log.push('TITLE:' + setSelect('title', 'Mr'));
                 log.push('NAT:' + setSelect('nationality', 'SA'));
                 log.push('DOCTYPE:' + setSelect('docType', 'National ID'));
-                log.push('DOCTYPE2:' + setSelect('documentType', 'National ID'));
-
+                addLog("filled");
                 SaudiaBridge.onFilled(log.join(' | '));
             })();
         """.trimIndent(), null)
@@ -256,6 +174,83 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         """.trimIndent(), null)
     }
 
+    // bridge بعد تعريف كل الدوال
+    val bridge = remember {
+        object {
+            @JavascriptInterface
+            fun onPageReady(pageName: String) {
+                Handler(Looper.getMainLooper()).post {
+                    addLog("📄 Page ready: $pageName")
+                    dumpCookies("After load $pageName")
+                    when (pageName) {
+                        "home" -> {
+                            status = "🛒 جاري إنشاء السلة..."
+                            createCartViaWebView()
+                        }
+                        "passengers" -> {
+                            status = "🔍 جاري فحص الفورم بعد 8 ثوانٍ..."
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                checkForm()
+                            }, 8000)
+                        }
+                    }
+                }
+            }
+
+            @JavascriptInterface
+            fun onCartCreated(cartId: String) {
+                Handler(Looper.getMainLooper()).post {
+                    cartIdUsed = cartId
+                    viewModel.updateCartId(cartId)
+                    addLog("✅ Cart created: $cartId")
+                    dumpCookies("After cart creation")
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        status = "➡️ الانتقال لصفحة المسافرين..."
+                        webViewRef?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
+                    }, 2000)
+                }
+            }
+
+            @JavascriptInterface
+            fun onFormCheckResult(hasForm: Boolean, details: String) {
+                Handler(Looper.getMainLooper()).post {
+                    addLog("🔍 Form check: hasForm=$hasForm | $details")
+                    if (hasForm) {
+                        status = "📝 تم العثور على الفورم. جاري الملء..."
+                        fillForm()
+                    } else {
+                        status = "❌ الفورم غير موجود — راجع سجل الكوكيز"
+                        dumpCookies("NO FORM after 8s")
+                    }
+                }
+            }
+
+            @JavascriptInterface
+            fun onFilled(logMsg: String) {
+                Handler(Looper.getMainLooper()).post {
+                    addLog("📝 $logMsg")
+                    status = "👆 جاري الضغط على تأكيد..."
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        clickConfirm()
+                    }, 1500)
+                }
+            }
+
+            @JavascriptInterface
+            fun onPatch(code: Int) {
+                Handler(Looper.getMainLooper()).post {
+                    addLog("📡 PATCH → HTTP $code")
+                    if (code == 200) {
+                        success = true
+                        status = "🎉 تم تأكيد المسافر (HTTP 200)!"
+                    } else {
+                        status = "❌ PATCH فشل: HTTP $code"
+                    }
+                }
+            }
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().padding(8.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -274,7 +269,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         }
 
-        // WebView مرئي (لنرى ما يحدث)
         Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -297,7 +291,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
-                                // Hook للـ PATCH
                                 view?.evaluateJavascript("""
                                     (function() {
                                         if (window.__hooked) return;
@@ -334,7 +327,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             )
         }
 
-        // سجل التشخيص
         if (logs.isNotEmpty()) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
