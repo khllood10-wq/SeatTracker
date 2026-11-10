@@ -39,27 +39,14 @@ fun AppNavigation() {
             startDestination = Screen.Login.route,
             modifier = Modifier.padding(padding)
         ) {
-            composable(Screen.Login.route) {
-                LoginScreen(navController = navController, viewModel = viewModel)
-            }
-            composable(Screen.Search.route) {
-                SearchScreen(navController = navController, viewModel = viewModel)
-            }
-            composable(Screen.Passengers.route) {
-                PassengersScreen(navController = navController, viewModel = viewModel)
-            }
-            composable(Screen.AutoConfirm.route) {
-                AutoConfirmScreen(navController = navController, viewModel = viewModel)
-            }
-            composable(Screen.Replay.route) {
-                ReplayScreen(navController = navController, viewModel = viewModel)
-            }
-            composable(Screen.Payment.route) {
-                PaymentScreen(navController = navController, viewModel = viewModel)
-            }
-            composable(Screen.KeyCapture.route) {
-                KeyCaptureScreen(navController = navController)
-            }
+            composable(Screen.Login.route) { LoginScreen(navController, viewModel) }
+            composable(Screen.Search.route) { SearchScreen(navController, viewModel) }
+            composable(Screen.Passengers.route) { PassengersScreen(navController, viewModel) }
+            composable(Screen.AutoConfirm.route) { AutoConfirmScreen(navController, viewModel) }
+            composable(Screen.Replay.route) { ReplayScreen(navController, viewModel) }
+            composable(Screen.UnencryptedPassenger.route) { UnencryptedPassengerScreen(navController, viewModel) }
+            composable(Screen.Payment.route) { PaymentScreen(navController, viewModel) }
+            composable(Screen.KeyCapture.route) { KeyCaptureScreen(navController) }
         }
     }
 }
