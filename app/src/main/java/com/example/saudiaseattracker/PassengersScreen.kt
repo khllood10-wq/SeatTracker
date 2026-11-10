@@ -25,20 +25,17 @@ import androidx.navigation.NavController
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PassengersScreen(
-    navController: NavController,
-    viewModel: FlightViewModel
-) {
+fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
+    val logs = viewModel.searchLogs.collectAsStateWithLifecycle().value
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
 
     var hasKey by remember { mutableStateOf(false) }
 
-    // فحص وجود المفتاح
     LaunchedEffect(cartId) {
         hasKey = !prefs.getString("rsa_public_key", null).isNullOrEmpty()
         if (!cartId.isNullOrEmpty() && !hasKey) {
@@ -78,9 +75,8 @@ fun PassengersScreen(
 
         HorizontalDivider()
 
-        // 1. زر التقاط المفتاح (إن لم يوجد)
         if (!cartId.isNullOrEmpty() && !hasKey) {
-            Text("لا يوجد مفتاح تشفير محفوظ. يجب التقاطه مرة واحدة.", style = MaterialTheme.typography.titleSmall)
+            Text("لا يوجد مفتاح تشفير محفوظ.", style = MaterialTheme.typography.titleSmall)
             Button(
                 onClick = {
                     prefs.edit().putString("cart_id_for_capture", cartId).apply()
@@ -88,25 +84,52 @@ fun PassengersScreen(
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-            ) {
-                Text("🔐 التقاط المفتاح (مرة واحدة)", fontWeight = FontWeight.Bold)
-            }
+            ) { Text("🔐 التقاط المفتاح (مرة واحدة)", fontWeight = FontWeight.Bold) }
         }
 
-        // 2. زر الإرسال المشفر (إن وُجد المفتاح)
-        if (hasKey) {
-            Text("✅ المفتاح محفوظ — جاهز للتشفير من Kotlin", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        if (hasKey && !cartId.isNullOrEmpty()) {
+            Text("✅ المفتاح محفوظ", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+
+            // ⭐ زر التشخيص الجديد
+            Button(
+                onClick = { viewModel.runCryptoDiagnostic() },
+                modifier = Modifier.fillMaxWidth().height(64.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("🔬 تشغيل مصفوفة التشخيص (T0–T6)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+
             Button(
                 onClick = { viewModel.sendEncryptedPassengerPayload() },
-                modifier = Modifier.fillMaxWidth().height(60.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-            ) {
-                Text("🔐 إرسال PATCH مشفر من Kotlin", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            ) { Text("🔐 إرسال PATCH مشفر (الشكل الأصلي)", fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+        }
+
+        // سجل التشخيص الحي
+        if (logs.isNotEmpty()) {
+            Text("سجل التشخيص:", style = MaterialTheme.typography.titleSmall)
+            SelectionContainer {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        logs.take(30).forEach { line ->
+                            Text(
+                                text = line,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
 
         if (confirmResponse.isNotEmpty()) {
-            Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
+            Text("النتائج الخام:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -115,7 +138,7 @@ fun PassengersScreen(
                     Text(
                         text = confirmResponse,
                         modifier = Modifier.padding(12.dp),
-                        fontFamily = FontFamily.Monospace, fontSize = 10.sp
+                        fontFamily = FontFamily.Monospace, fontSize = 9.sp
                     )
                 }
             }
