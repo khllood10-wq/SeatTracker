@@ -37,7 +37,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     val sessionId = prefs.getString("session_id", "") ?: ""
     val xDToken = prefs.getString("xd_token", "") ?: ""
     val authToken = prefs.getString("auth_token", "") ?: ""
-    val savedCookies = prefs.getString("dynamic_cookies", "") ?: ""
     val retrofitCartId = viewModel.cartId.collectAsStateWithLifecycle().value ?: ""
     val airBoundId = foundFlight?.airBoundId ?: ""
 
@@ -46,10 +45,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var success by remember { mutableStateOf(false) }
     var cartIdUsed by remember { mutableStateOf(retrofitCartId) }
-    var step by remember { mutableStateOf(0) }
 
     fun addLog(msg: String) {
-        logs = (logs + msg).takeLast(40)
+        logs = (logs + msg).takeLast(50)
         android.util.Log.d("AutoConfirm", msg)
     }
 
@@ -58,9 +56,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             val cm = CookieManager.getInstance()
             val sau = cm.getCookie("https://www.saudia.com") ?: "(empty)"
             val dapi = cm.getCookie("https://dapi.saudia.com") ?: "(empty)"
-            addLog("🍪 [$label]")
-            addLog("  www.saudia.com (${sau.length}ch): ${sau.take(250)}")
-            addLog("  dapi.saudia.com (${dapi.length}ch): ${dapi.take(250)}")
+            addLog("🍪 [$label] www(${sau.length}) dapi(${dapi.length})")
             // حفظ للـ prefs
             val merged = "$sau; $dapi"
             prefs.edit().putString("dynamic_cookies", merged).apply()
@@ -79,15 +75,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                     when (pageName) {
                         "home" -> {
-                            // بعد تحميل الرئيسية، أنشئ سلة جديدة
-                            step = 1
                             status = "🛒 جاري إنشاء السلة..."
                             createCartViaWebView()
                         }
                         "passengers" -> {
-                            // بعد تحميل صفحة المسافرين، تحقق من الفورم
-                            step = 3
-                            status = "🔍 جاري فحص الفورم..."
+                            status = "🔍 الصفحة وصلت. جاري فحص الفورم..."
                             // انتظر 8 ثوانٍ للـ Angular
                             Handler(Looper.getMainLooper()).postDelayed({
                                 checkForm()
@@ -108,7 +100,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     // انتظر ثانيتين لاستقرار الكوكيز ثم انتقل
                     Handler(Looper.getMainLooper()).postDelayed({
                         status = "➡️ الانتقال لصفحة المسافرين..."
-                        step = 2
                         webViewRef?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                     }, 2000)
                 }
@@ -129,9 +120,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
 
             @JavascriptInterface
-            fun onFilled() {
+            fun onFilled(logMsg: String) {
                 Handler(Looper.getMainLooper()).post {
-                    addLog("📝 Form filled. Clicking 'تأكيد'...")
+                    addLog("📝 $logMsg")
                     status = "👆 جاري الضغط على تأكيد..."
                     clickConfirm()
                 }
@@ -185,17 +176,15 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             (function() {
                 var fn = document.querySelector('[formcontrolname="firstName"]') || document.querySelector('[name="firstName"]');
                 var hasForm = fn !== null;
-                var fields = [];
+                var foundFields = [];
                 if (hasForm) {
-                    ['firstName','lastName','dateOfBirth','nationalId','documentNumber'].forEach(function(n) {
-                        if (document.querySelector('[formcontrolname="'+n+'"]') || document.querySelector('[name="'+n+'"]')) fields.push(n);
+                    ['title','firstName','lastName','dateOfBirth','nationality','nationalId','documentNumber','docType','documentType'].forEach(function(n) {
+                        if (document.querySelector('[formcontrolname="'+n+'"]') || document.querySelector('[name="'+n+'"]')) {
+                            foundFields.push(n);
+                        }
                     });
-                } else {
-                    // عدّاد الحقول الموجودة
-                    var allInputs = document.querySelectorAll('input');
-                    fields.push('total_inputs=' + allInputs.length);
                 }
-                SaudiaBridge.onFormCheckResult(hasForm, fields.join(','));
+                SaudiaBridge.onFormCheckResult(hasForm, 'found: ' + foundFields.join(','));
             })();
         """.trimIndent(), null)
     }
@@ -203,6 +192,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     fun fillForm() {
         webViewRef?.evaluateJavascript("""
             (function() {
+                // دالة لملء حقول الإدخال النصية
                 function setVal(name, val) {
                     var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
                     if (!el) return false;
@@ -213,12 +203,40 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     el.dispatchEvent(new Event('blur', {bubbles:true}));
                     return true;
                 }
-                setVal('firstName', 'Khaled');
-                setVal('lastName', 'Otudi');
-                setVal('dateOfBirth', '1990-05-10');
-                setVal('nationalId', '1071580342');
-                setVal('documentNumber', '1071580342');
-                SaudiaBridge.onFilled();
+
+                // دالة لملء القوائم المنسدلة (Select / Dropdown)
+                function setSelect(name, val) {
+                    var el = document.querySelector('select[formcontrolname="'+name+'"]') || document.querySelector('select[name="'+name+'"]');
+                    if (el) {
+                        el.value = val;
+                        el.dispatchEvent(new Event('change', {bubbles:true}));
+                        return true;
+                    }
+                    // محاولة البحث عن Input (بعض قوائم Angular تستخدم input للبحث)
+                    var inp = document.querySelector('input[formcontrolname="'+name+'"]');
+                    if (inp) {
+                        inp.value = val;
+                        inp.dispatchEvent(new Event('input', {bubbles:true}));
+                        inp.dispatchEvent(new Event('change', {bubbles:true}));
+                        return true;
+                    }
+                    return false;
+                }
+
+                var log = [];
+                log.push('FN:' + setVal('firstName', 'Khaled'));
+                log.push('LN:' + setVal('lastName', 'Otudi'));
+                log.push('DOB:' + setVal('dateOfBirth', '1990-05-10'));
+                log.push('NID:' + setVal('nationalId', '1071580342'));
+                log.push('DN:' + setVal('documentNumber', '1071580342'));
+                
+                // ملء القوائم الإجبارية
+                log.push('TITLE:' + setSelect('title', 'Mr'));
+                log.push('NAT:' + setSelect('nationality', 'SA'));
+                log.push('DOCTYPE:' + setSelect('docType', 'National ID'));
+                log.push('DOCTYPE2:' + setSelect('documentType', 'National ID'));
+
+                SaudiaBridge.onFilled(log.join(' | '));
             })();
         """.trimIndent(), null)
     }
@@ -247,13 +265,12 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(10.dp)) {
-                Text("🔬 تشخيص الكوكيز + التأكيد", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("🔬 تشخيص + ملء إجباري", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Spacer(Modifier.height(4.dp))
                 Text(status, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     color = if (success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(4.dp))
                 Text("cartId: $cartIdUsed", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-                Text("step: $step/4", fontSize = 10.sp)
             }
         }
 
@@ -274,7 +291,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         val cm = CookieManager.getInstance()
                         cm.setAcceptCookie(true)
                         cm.setAcceptThirdPartyCookies(this, true)
-                        // لا نحقن كوكيز قديمة — نترك WebView يبدأ جلسته الخاصة
 
                         webChromeClient = object : WebChromeClient() {}
 
@@ -349,13 +365,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             ) {
                 Text("➡️ الانتقال لصفحة الدفع", fontWeight = FontWeight.Bold)
             }
-        }
-
-        if (logs.any { it.contains("NO FORM") }) {
-            OutlinedButton(
-                onClick = { navController.popBackStack() },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("← رجوع (لنعرف المشكلة)") }
         }
     }
 }
