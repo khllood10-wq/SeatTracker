@@ -294,7 +294,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔐 تجربة 6 متغيرات تشفير مختلفة تلقائياً
+    //  🔐 تجربة 8 متغيرات تشفير (HEX/BASE64/ASCII + CBC/GCM)
     // ═══════════════════════════════════════════════════════════
     fun sendEncryptedPassengerPayload() {
         val cartId = _cartId.value
@@ -313,11 +313,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             addLog("═══════════════════════════════════════")
-            addLog("🔐 بدء تجربة ${HybridEncryptor.Variant.values().size} متغيرات تشفير...")
+            addLog("🔐 بدء تجربة ${HybridEncryptor.Variant.values().size} متغيرات...")
 
             val plainJson = """
                 {"passengerTypeCode":"ADT","gender":"male","title":"MR","givenName":"Khaled","surname":"Otudi","dateOfBirth":"1991-05-10","nationality":"SA","documents":[{"type":"NATIONAL_ID","number":"1071580342","countryOfIssuance":"SA"}]}
             """.trimIndent()
+
+            var bestResponse = ""
 
             for (variant in HybridEncryptor.Variant.values()) {
                 try {
@@ -339,22 +341,23 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
 
                     addLog("📡 ${variant.label} → HTTP $code")
-                    _passengerConfirmResponse.value = "${variant.label} → HTTP $code\n\n${respBody.ifEmpty { "(empty)" }}"
+                    bestResponse = "${variant.label} → HTTP $code\n\n${respBody.ifEmpty { "(empty)" }}"
+                    _passengerConfirmResponse.value = bestResponse
 
                     if (code == 200) {
-                        addLog("🎉🎉 نجح! المتغير الصحيح: ${variant.label}")
+                        addLog("🎉🎉 نجح! المتغير: ${variant.label}")
                         return@launch
                     }
 
                     if (code == 401 || code == 403) {
-                        addLog("❌ مشكلة توكن — توقف")
+                        addLog("❌ توكن — توقف")
                         return@launch
                     }
                 } catch (e: Exception) {
                     addLog("❌ ${variant.label} استثناء: ${e.message}")
                 }
             }
-            addLog("⚠️ كل المتغيرات فشلت — راجع النتيجة")
+            addLog("⚠️ كل المتغيرات فشلت")
         }
     }
 
