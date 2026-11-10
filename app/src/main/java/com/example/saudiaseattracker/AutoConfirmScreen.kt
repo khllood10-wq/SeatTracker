@@ -51,7 +51,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     fun addLog(msg: String) {
-        logs = (logs + msg).takeLast(15)
+        logs = (logs + msg).takeLast(20)
     }
 
     val bridge = remember {
@@ -60,8 +60,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             fun onCartCreated(newCartId: String) {
                 Handler(Looper.getMainLooper()).post {
                     viewModel.updateCartId(newCartId)
-                    status = "✅ تم إنشاء السلة: $newCartId"
-                    addLog("✅ السلة: $newCartId")
+                    status = "✅ السلة: $newCartId. جاري التشفير المباشر..."
+                    addLog("🛒 Cart created: $newCartId")
+                    
+                    // سحر التشفير: نطلب من الجافاسكريبت تنفيذ التشفير وإرسال الـ PATCH
+                    webViewRef?.evaluateJavascript(getEncryptionJS(newCartId, authToken, xDToken, sessionId), null)
                 }
             }
 
@@ -69,20 +72,14 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             fun onPatchRequest(bodyLength: Int) {
                 Handler(Looper.getMainLooper()).post {
                     patchBodySize = bodyLength
-                    status = "📤 تم إرسال PATCH (حجم = $bodyLength حرف)..."
-                    addLog("📤 PATCH: $bodyLength حرف")
+                    status = "📤 تم تشفير البيانات (حجم = $bodyLength حرف). جاري الإرسال..."
+                    addLog("📤 PATCH prepared: $bodyLength chars")
                 }
             }
 
             @JavascriptInterface
             fun onPatchResponse(statusCode: Int, responseBody: String) {
                 Handler(Looper.getMainLooper()).post {
-                    val cm = CookieManager.getInstance()
-                    val sauCookies = cm.getCookie("https://www.saudia.com") ?: ""
-                    val dapiCookies = cm.getCookie("https://dapi.saudia.com") ?: ""
-                    val merged = listOf(sauCookies, dapiCookies).filter { it.isNotBlank() }.joinToString("; ")
-                    prefs.edit().putString("dynamic_cookies", merged).apply()
-
                     apiResultCode = statusCode
                     apiResultBody = responseBody
                     patchSent = true
@@ -90,7 +87,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                     if (statusCode == 200) {
                         status = "🎉 نجح! السيرفر قبل البيانات."
-                        addLog("🎉 HTTP 200")
+                        addLog("🎉 HTTP 200 OK")
                     } else {
                         status = "❌ فشل: HTTP $statusCode"
                         addLog("❌ HTTP $statusCode")
@@ -107,7 +104,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         }
     }
 
-    // دالة تُستدعى من الزر أو تلقائياً
     fun startCartCreation() {
         status = "🛒 جاري إنشاء السلة عبر WebView..."
         addLog("🛒 بدء إنشاء السلة للرحلة: $airBoundId")
@@ -118,7 +114,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                 var xDToken = '$xDToken';
                 var sessionId = '$sessionId';
                 
-                SaudiaBridge.onLog('Starting XHR...');
+                SaudiaBridge.onLog('Starting XHR for Cart...');
                 var xhr = new XMLHttpRequest();
                 xhr.open("POST", "https://dapi.saudia.com/shopping/carts?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
                 xhr.setRequestHeader("Content-Type", "application/json");
@@ -139,7 +135,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                                 var cartId = data.id || (data.data && data.data.id);
                                 if (cartId) {
                                     SaudiaBridge.onCartCreated(cartId);
-                                    window.location.href = "https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=" + cartId;
                                 } else {
                                     SaudiaBridge.onLog('Cart ID missing in response');
                                 }
@@ -147,7 +142,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                                 SaudiaBridge.onLog('Parse error: ' + e.message);
                             }
                         } else {
-                            SaudiaBridge.onLog('XHR Failed: ' + xhr.status + ' ' + xhr.responseText);
+                            SaudiaBridge.onLog('XHR Failed: ' + xhr.status);
                         }
                     }
                 };
@@ -162,11 +157,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(12.dp)) {
-                Text("🤖 تأكيد تلقائي (WebView موحّد)", fontWeight = FontWeight.Bold)
+                Text("🤖 تشفير مباشر (بدون UI)", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 
-                if (progress in 1..99 && !patchSent) {
+                if (progress in 1..99 && !patchSent && !status.contains("✅")) {
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                 }
@@ -177,12 +172,12 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = { startCartCreation() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("🛒 إعادة محاولة إنشاء السلة يدوياً")
+                    Text("🛒 بدء العملية (إنشاء سلة + تشفير + إرسال)")
                 }
             }
         }
 
-        Box(modifier = Modifier.fillMaxWidth().height(400.dp).padding(horizontal = 8.dp)) {
+        Box(modifier = Modifier.fillMaxWidth().height(250.dp).padding(horizontal = 8.dp)) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
@@ -191,11 +186,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         clearCache(true)
                         clearHistory()
                         clearFormData()
-                        clearSslPreferences()
 
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
                                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                         
@@ -210,93 +203,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         }
 
                         webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                super.onPageStarted(view, url, favicon)
-                                view?.evaluateJavascript("""
-                                    try {
-                                        localStorage.setItem('saa-session-id', '$sessionId');
-                                        localStorage.setItem('x-d-token', '$xDToken');
-                                        localStorage.setItem('authorization', 'Bearer $authToken');
-                                    } catch(e){}
-                                    
-                                    (function() {
-                                        if (window.__saudiaHooked) return;
-                                        window.__saudiaHooked = true;
-                                        var origFetch = window.fetch;
-                                        window.fetch = function(input, init) {
-                                            var url = typeof input === 'string' ? input : (input && input.url);
-                                            var method = ((init && init.method) || 'GET').toUpperCase();
-                                            if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
-                                                var bodySize = (init && init.body) ? init.body.length : 0;
-                                                SaudiaBridge.onPatchRequest(bodySize);
-                                                var promise = origFetch.apply(this, arguments);
-                                                promise.then(function(response) {
-                                                    response.clone().text().then(function(text) {
-                                                        SaudiaBridge.onPatchResponse(response.status, text);
-                                                    });
-                                                });
-                                                return promise;
-                                            }
-                                            return origFetch.apply(this, arguments);
-                                        };
-                                    })();
-                                """.trimIndent(), null)
-                            }
-
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                if (url == null) return
-
-                                // ملء الفورم
-                                if (url.contains("passengerDetails") && !patchSent) {
-                                    status = "📝 الفورم جاهز. تعبئة تلقائية..."
-                                    view?.postDelayed({
-                                        view.evaluateJavascript("""
-                                            (function() {
-                                                function setVal(name, val) {
-                                                    var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
-                                                    if (!el) return false;
-                                                    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                                                    setter.call(el, val);
-                                                    el.dispatchEvent(new Event('input', {bubbles:true}));
-                                                    el.dispatchEvent(new Event('change', {bubbles:true}));
-                                                    el.dispatchEvent(new Event('blur', {bubbles:true}));
-                                                    return true;
-                                                }
-                                                var attempts = 0;
-                                                var iv = setInterval(function() {
-                                                    attempts++;
-                                                    var fnOk = setVal('firstName', 'Khaled');
-                                                    var lnOk = setVal('lastName', 'Otudi');
-                                                    setVal('dateOfBirth', '1990-05-10');
-                                                    setVal('nationalId', '1071580342');
-                                                    setVal('documentNumber', '1071580342');
-                                                    
-                                                    if (fnOk && lnOk) {
-                                                        clearInterval(iv);
-                                                        setTimeout(function() {
-                                                            var btns = document.querySelectorAll('button');
-                                                            for (var i = 0; i < btns.length; i++) {
-                                                                var t = (btns[i].innerText || '').trim();
-                                                                if (t.indexOf('تأكيد بيانات') > -1 || t.indexOf('تأكيد المسافر') > -1) {
-                                                                    btns[i].click();
-                                                                    return;
-                                                                }
-                                                            }
-                                                            for (var j = 0; j < btns.length; j++) {
-                                                                var t2 = (btns[j].innerText || '').trim();
-                                                                if (t2.indexOf('تأكيد') > -1 && t2.indexOf('انتقال') === -1 && t2.indexOf('دفع') === -1) {
-                                                                    btns[j].click();
-                                                                    return;
-                                                                }
-                                                            }
-                                                        }, 1500);
-                                                    }
-                                                    if (attempts > 30) clearInterval(iv);
-                                                }, 500);
-                                            })();
-                                        """.trimIndent(), null)
-                                    }, 5000)
+                                if (url != null && url.contains("saudia.com/ar-SA")) {
+                                    status = "✅ الصفحة الرئيسية جاهزة. اضغط الزر لبدء العملية."
+                                    addLog("Page loaded. Ready.")
                                 }
                             }
                         }
@@ -307,7 +218,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             )
         }
 
-        // ── لوحة السجل ──
         if (logs.isNotEmpty()) {
             Card(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
                 Column(Modifier.padding(8.dp)) {
@@ -355,4 +265,82 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             ) { Text("إلغاء والرجوع") }
         }
     }
+}
+
+// 🪄 دالة JavaScript التي تقوم بكل السحر (استخراج المفتاح + التشفير + الإرسال)
+fun getEncryptionJS(cartId: String, authToken: String, xDToken: String, sessionId: String): String {
+    return """
+        (function() {
+            var cartId = '$cartId';
+            var authToken = '$authToken';
+            var xDToken = '$xDToken';
+            var sessionId = '$sessionId';
+            
+            async function run() {
+                try {
+                    SaudiaBridge.onLog('Fetching JS bundle to find RSA key...');
+                    let res = await fetch('https://www.saudia.com/dist/SaudiaWebApp/prod/browser/chunk-QUL4NBYT.js');
+                    let txt = await res.text();
+                    let keyMatch = txt.match(/MII[A-Za-z0-9+/]{200,}/g);
+                    if (!keyMatch) throw new Error("Key not found in bundle");
+                    let rsaPem = "-----BEGIN PUBLIC KEY-----\n" + keyMatch[0] + "\n-----END PUBLIC KEY-----";
+                    
+                    SaudiaBridge.onLog('Building payload...');
+                    let plaintext = JSON.stringify([{
+                        tid: null, id: "SKH-1-EXT", title: "Mr", passengerTypeCode: "ADT",
+                        firstName: "Khaled", lastName: "Otudi", dateOfBirth: "1991-05-09T21:00:00.000Z",
+                        nationality: "SA", rememberMe: true, uuid: cartId + "SKH-1-EXT",
+                        travellerDoc: {
+                            docType: "National ID", passportNumber: "", expiryDate: "",
+                            issuingCountry: "", nationalId: "1071580342", gccId: "",
+                            residentId: "", number: "1071580342", id: null
+                        }
+                    }]);
+
+                    SaudiaBridge.onLog('Encrypting...');
+                    let aesKey = await crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["encrypt"]);
+                    let iv = crypto.getRandomValues(new Uint8Array(16));
+                    let encBodyBuffer = await crypto.subtle.encrypt({ name: "AES-CBC", iv: iv }, aesKey, new TextEncoder().encode(plaintext));
+                    
+                    let bodyBytes = new Uint8Array(iv.length + encBodyBuffer.byteLength);
+                    bodyBytes.set(iv, 0);
+                    bodyBytes.set(new Uint8Array(encBodyBuffer), iv.length);
+                    let bodyHex = Array.from(bodyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+                    let rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
+                    let pemContents = rsaPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, '').replace(/\s/g, '');
+                    let binaryDerString = atob(pemContents);
+                    let binaryDer = new Uint8Array(binaryDerString.length);
+                    for (let i = 0; i < binaryDerString.length; i++) binaryDer[i] = binaryDerString.charCodeAt(i);
+                    let publicKey = await crypto.subtle.importKey("spki", binaryDer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+                    let encKeyBuffer = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawAesKey);
+                    let keyBase64 = btoa(String.fromCharCode.apply(null, new Uint8Array(encKeyBuffer)));
+
+                    let payload = JSON.stringify({ key: keyBase64, body: bodyHex });
+                    SaudiaBridge.onPatchRequest(payload.length);
+                    
+                    var xhr = new XMLHttpRequest();
+                    xhr.open("PATCH", "https://dapi.saudia.com/shopping/carts/" + cartId + "/travelers/web/SKH-1-EXT?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
+                    xhr.setRequestHeader("Content-Type", "application/json");
+                    xhr.setRequestHeader("Authorization", authToken);
+                    xhr.setRequestHeader("x-d-token", xDToken);
+                    xhr.setRequestHeader("saa-session-id", sessionId);
+                    xhr.setRequestHeader("x-api-version", "2");
+                    xhr.setRequestHeader("platform", "Web");
+                    xhr.setRequestHeader("version", "27.2");
+                    xhr.setRequestHeader("channel", "MOBILE_WEB");
+                    
+                    xhr.onreadystatechange = function() {
+                        if (xhr.readyState === 4) {
+                            SaudiaBridge.onPatchResponse(xhr.status, xhr.responseText);
+                        }
+                    };
+                    xhr.send(payload);
+                } catch(e) {
+                    SaudiaBridge.onLog('Encryption Error: ' + e.message);
+                }
+            }
+            run();
+        })();
+    """.trimIndent()
 }
