@@ -32,35 +32,48 @@ import androidx.navigation.NavController
 @Composable
 fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) {
     val context = LocalContext.current
-    val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
+    val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
     val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
     val sessionId = prefs.getString("session_id", "") ?: ""
     val xDToken = prefs.getString("xd_token", "") ?: ""
     val authToken = prefs.getString("auth_token", "") ?: ""
-    val cookies = prefs.getString("dynamic_cookies", "") ?: ""
 
-    var status by remember { mutableStateOf("⏳ جاري تحميل الصفحة (WebView معزول)...") }
+    val airBoundId = foundFlight?.airBoundId ?: ""
+
+    var status by remember { mutableStateOf("⏳ تحميل الصفحة الرئيسية...") }
     var progress by remember { mutableStateOf(0) }
     var patchSent by remember { mutableStateOf(false) }
     var patchBodySize by remember { mutableStateOf(0) }
     var apiResultCode by remember { mutableStateOf(0) }
     var apiResultBody by remember { mutableStateOf("") }
     var apiSuccess by remember { mutableStateOf(false) }
+    var cartId by remember { mutableStateOf<String?>(null) }
+    var cartCreated by remember { mutableStateOf(false) }
 
     val bridge = remember {
         object {
             @JavascriptInterface
+            fun onCartCreated(newCartId: String) {
+                Handler(Looper.getMainLooper()).post {
+                    cartId = newCartId
+                    viewModel.updateCartId(newCartId) // تحديث الـ ViewModel
+                    cartCreated = true
+                    status = "✅ تم إنشاء السلة: $newCartId"
+                }
+            }
+
+            @JavascriptInterface
             fun onPatchRequest(bodyLength: Int) {
                 Handler(Looper.getMainLooper()).post {
                     patchBodySize = bodyLength
-                    status = "📤 تم إرسال PATCH من WebView (حجم body = $bodyLength حرف)..."
+                    status = "📤 تم إرسال PATCH (حجم = $bodyLength حرف)..."
                 }
             }
 
             @JavascriptInterface
             fun onPatchResponse(statusCode: Int, responseBody: String) {
                 Handler(Looper.getMainLooper()).post {
-                    // حفظ الكوكيز الجديدة للجلسة
+                    // حفظ الكوكيز الجديدة
                     val cm = CookieManager.getInstance()
                     val sauCookies = cm.getCookie("https://www.saudia.com") ?: ""
                     val dapiCookies = cm.getCookie("https://dapi.saudia.com") ?: ""
@@ -92,9 +105,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         }
     }
 
-    if (cartId.isNullOrEmpty()) {
+    if (airBoundId.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("❌ لا يوجد cartId")
+            Text("❌ لا يوجد airBoundId")
         }
         return
     }
@@ -105,27 +118,27 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(12.dp)) {
-                Text("🤖 تأكيد تلقائي (WebView معزول)", fontWeight = FontWeight.Bold)
+                Text("🤖 تأكيد تلقائي (WebView موحّد)", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(status, style = MaterialTheme.typography.bodySmall)
                 if (progress in 1..99 && !patchSent) {
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                 }
+                if (cartId != null) {
+                    Text("cartId الجديد: $cartId", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                }
                 if (patchBodySize > 0) {
                     Text("حجم البيانات المشفرة: $patchBodySize حرف", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
-                Text("cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
             }
         }
 
-        // ── WebView معزول (بارتفاع محدد لمنع أي تداخل) ──
         Box(modifier = Modifier.fillMaxWidth().height(500.dp).padding(horizontal = 8.dp)) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        // عزل تام وتنظيف
                         clearCache(true)
                         clearHistory()
                         clearFormData()
@@ -142,12 +155,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         val cm = CookieManager.getInstance()
                         cm.setAcceptCookie(true)
                         cm.setAcceptThirdPartyCookies(this, true)
-                        if (cookies.isNotEmpty()) {
-                            listOf("https://www.saudia.com", "https://dapi.saudia.com").forEach {
-                                cm.setCookie(it, cookies)
-                            }
-                            cm.flush()
-                        }
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress }
@@ -189,10 +196,54 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                if (url == null || patchSent) return
-                                if (url.contains("passengerDetails")) {
+                                if (url == null) return
+
+                                // 1. إنشاء السلة
+                                if (url.contains("saudia.com/ar-SA") && !url.contains("booking") && !cartCreated) {
+                                    status = "🛒 جاري إنشاء السلة عبر WebView..."
+                                    view?.evaluateJavascript("""
+                                        (function() {
+                                            var airBoundId = '$airBoundId';
+                                            var authToken = '$authToken';
+                                            var xDToken = '$xDToken';
+                                            var sessionId = '$sessionId';
+                                            
+                                            fetch('https://dapi.saudia.com/shopping/carts?guestOfficeId=JEDSV08MA&lang=ar-SA', {
+                                                method: 'POST',
+                                                credentials: 'include',
+                                                headers: {
+                                                    'Authorization': authToken,
+                                                    'x-d-token': xDToken,
+                                                    'saa-session-id': sessionId,
+                                                    'x-api-version': '2',
+                                                    'Content-Type': 'application/json',
+                                                    'Origin': 'https://www.saudia.com',
+                                                    'Referer': 'https://www.saudia.com/'
+                                                },
+                                                body: JSON.stringify({ airBoundIds: [airBoundId] })
+                                            })
+                                            .then(function(res) { return res.json(); })
+                                            .then(function(data) {
+                                                var cartId = data.id || (data.data && data.data.id);
+                                                if (cartId) {
+                                                    SaudiaBridge.onCartCreated(cartId);
+                                                    setTimeout(function(){
+                                                        window.location.href = 'https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=' + cartId;
+                                                    }, 500);
+                                                } else {
+                                                    SaudiaBridge.onLog('Cart creation failed: ' + JSON.stringify(data));
+                                                }
+                                            })
+                                            .catch(function(err) {
+                                                SaudiaBridge.onLog('Fetch error: ' + err);
+                                            });
+                                        })();
+                                    """.trimIndent(), null)
+                                }
+
+                                // 2. ملء الفورم
+                                if (url.contains("passengerDetails") && !patchSent && !view.isBlank) {
                                     status = "📝 الفورم جاهز. تعبئة تلقائية..."
-                                    // ملء الفورم
                                     view?.postDelayed({
                                         view.evaluateJavascript("""
                                             (function() {
@@ -244,13 +295,13 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                             }
                         }
 
-                        loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
+                        // يبدأ من الصفحة الرئيسية لضمان جلسة نظيفة
+                        loadUrl("https://www.saudia.com/ar-SA")
                     }
                 }
             )
         }
 
-        // ── نتيجة الطلب ──
         if (patchSent) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
