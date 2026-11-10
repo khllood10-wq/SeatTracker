@@ -315,7 +315,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             addLog("═══════════════════════════════════════")
             addLog("🧪 اختبار تشخيصي: أبسط جسد + تشفير واحد")
 
-            // ←←← جسد بسيط جداً: فقط الحقل الذي يطلبه السيرفر
             val plainJson = """{"passengerTypeCode":"ADT"}"""
             addLog("📝 JSON: $plainJson")
             addLog("📏 حجم JSON: ${plainJson.toByteArray().size} byte")
@@ -343,7 +342,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("═══════════════════════════════════════")
                 addLog("📡 النتيجة: HTTP $code")
-                _passengerConfirmResponse.value = "HTTP $code\n\n$respBody.ifEmpty { "(empty)" }"
+                val displayBody = if (respBody.isEmpty()) "(empty)" else respBody
+                _passengerConfirmResponse.value = "HTTP $code\n\n$displayBody"
 
                 if (code == 200) {
                     addLog("🎉 التشفير يعمل! المشكلة كانت في الحقول الأخرى")
