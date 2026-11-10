@@ -149,7 +149,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         settings.databaseEnabled = true
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
                                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-                        
+
                         addJavascriptInterface(bridge, "SaudiaBridge")
 
                         val cm = CookieManager.getInstance()
@@ -241,8 +241,8 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                                     """.trimIndent(), null)
                                 }
 
-                                // 2. ملء الفورم
-                                if (url.contains("passengerDetails") && !patchSent && !view.isBlank) {
+                                // 2. ملء الفورم (تم تصحيح السطر هنا)
+                                if (url.contains("passengerDetails") && !patchSent && view != null) {
                                     status = "📝 الفورم جاهز. تعبئة تلقائية..."
                                     view?.postDelayed({
                                         view.evaluateJavascript("""
