@@ -51,13 +51,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _passengerConfirmResponse = MutableStateFlow<String?>(null)
     val passengerConfirmResponse: StateFlow<String?> = _passengerConfirmResponse
 
-    // ──────────────────────────────────────────────────────────
-    // addLog — معرّفة مبكراً لتجنب أي التباس
-    // ──────────────────────────────────────────────────────────
     fun addLog(message: String) {
         val curr = _searchLogs.value.toMutableList()
         curr.add(0, message)
         _searchLogs.value = curr
+    }
+
+    // ⭐ الدالة الجديدة التي يطلبها الـ WebView لتحديث السلة
+    fun updateCartId(newId: String) {
+        _cartId.value = newId
+        addLog("🔄 تم تحديث cartId إلى: $newId")
     }
 
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
