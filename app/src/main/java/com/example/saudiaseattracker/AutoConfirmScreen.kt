@@ -1,12 +1,12 @@
 package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
-import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
@@ -18,15 +18,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.navigation.NavController
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavController
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
 fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) {
     val context = LocalContext.current
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
-    val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
     val sessionId = prefs.getString("session_id", "") ?: ""
     val xDToken = prefs.getString("xd_token", "") ?: ""
     val authToken = prefs.getString("auth_token", "") ?: ""
@@ -34,7 +35,8 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
     var status by remember { mutableStateOf("⏳ جاري التجهيز (الرجاء الانتظار)...") }
     var isDone by remember { mutableStateOf(false) }
-    var webView: WebView? = null
+    var isStarted by remember { mutableStateOf(false) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     val bridge = remember {
         object {
@@ -44,7 +46,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     viewModel.updateCartId(cartId)
                     status = "✅ تم إنشاء السلة. جاري الانتقال لصفحة المسافرين..."
                     // الانتقال لصفحة المسافرين في نفس المتصفح
-                    webView?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
+                    webViewRef?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                 }
             }
 
@@ -71,7 +73,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
     fun startProcess() {
         status = "🛒 جاري إنشاء السلة عبر المتصفح..."
-        webView?.evaluateJavascript("""
+        webViewRef?.evaluateJavascript("""
             (function() {
                 var xhr = new XMLHttpRequest();
                 xhr.open("POST", "https://dapi.saudia.com/shopping/carts?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
@@ -125,11 +127,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         }
 
         // الـ WebView مخفي (1 بكسل) ليقوم بالعمل في الخلفية
-        androidx.compose.ui.viewinterop.AndroidView(
+        AndroidView(
             modifier = Modifier.size(1.dp),
             factory = { ctx ->
                 WebView(ctx).apply {
-                    webView = this
+                    webViewRef = this
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
@@ -169,10 +171,16 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                             super.onPageFinished(view, url)
                             if (url == null) return
                             
-                            // بعد تحميل صفحة المسافرين، نقوم بملء الفورم والضغط
+                            // إذا كانت الصفحة الرئيسية، ابدأ إنشاء السلة
+                            if (url.contains("saudia.com/ar-SA") && !url.contains("booking") && !isStarted) {
+                                isStarted = true
+                                startProcess()
+                            }
+                            
+                            // إذا كانت صفحة المسافرين، املأ الفورم واضغط تأكيد
                             if (url.contains("passengerDetails") && !isDone) {
-                                SaudiaBridge.onFillForm()
-                                view?.postDelayed({
+                                bridge.onFillForm() // ⬅️ تم تصحيح هذا السطر
+                                view.postDelayed({
                                     view.evaluateJavascript("""
                                         (function() {
                                             function setVal(name, val) {
@@ -219,11 +227,5 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                 }
             }
         )
-    }
-
-    // بدء العملية فوراً عند فتح الشاشة
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(2000) // انتظار تحميل الصفحة الرئيسية
-        startProcess()
     }
 }
