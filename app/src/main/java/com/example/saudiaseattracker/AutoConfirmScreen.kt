@@ -1,7 +1,6 @@
 package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
@@ -10,106 +9,76 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
 fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) {
     val context = LocalContext.current
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
-    val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
     val sessionId = prefs.getString("session_id", "") ?: ""
     val xDToken = prefs.getString("xd_token", "") ?: ""
     val authToken = prefs.getString("auth_token", "") ?: ""
-
     val airBoundId = foundFlight?.airBoundId ?: ""
 
-    var status by remember { mutableStateOf("⏳ تحميل الصفحة...") }
-    var logs by remember { mutableStateOf<List<String>>(emptyList()) }
-    var progress by remember { mutableStateOf(0) }
-    var patchSent by remember { mutableStateOf(false) }
-    var apiResultCode by remember { mutableStateOf(0) }
-    var apiResultBody by remember { mutableStateOf("") }
-    var apiSuccess by remember { mutableStateOf(false) }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    var cartCreatedId by remember { mutableStateOf<String?>(null) }
-
-    fun addLog(msg: String) {
-        logs = (logs + msg).takeLast(15)
-    }
+    var status by remember { mutableStateOf("⏳ جاري التجهيز (الرجاء الانتظار)...") }
+    var isDone by remember { mutableStateOf(false) }
+    var webView: WebView? = null
 
     val bridge = remember {
         object {
             @JavascriptInterface
-            fun onCartCreated(newCartId: String) {
+            fun onCartCreated(cartId: String) {
                 Handler(Looper.getMainLooper()).post {
-                    cartCreatedId = newCartId
-                    viewModel.updateCartId(newCartId)
-                    status = "✅ السلة جاهزة. جاري الانتقال لصفحة المسافرين..."
-                    addLog("🛒 Cart: $newCartId. Redirecting...")
-                    webViewRef?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$newCartId")
+                    viewModel.updateCartId(cartId)
+                    status = "✅ تم إنشاء السلة. جاري الانتقال لصفحة المسافرين..."
+                    // الانتقال لصفحة المسافرين في نفس المتصفح
+                    webView?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$cartId")
                 }
             }
 
             @JavascriptInterface
-            fun onPatchResponse(statusCode: Int, responseBody: String) {
+            fun onFillForm() {
                 Handler(Looper.getMainLooper()).post {
-                    apiResultCode = statusCode
-                    apiResultBody = responseBody
-                    patchSent = true
-                    apiSuccess = (statusCode == 200)
+                    status = "📝 جاري ملء بيانات المسافر والضغط على تأكيد..."
+                }
+            }
 
+            @JavascriptInterface
+            fun onSuccess(statusCode: Int) {
+                Handler(Looper.getMainLooper()).post {
                     if (statusCode == 200) {
-                        status = "🎉 نجح! تم حفظ بيانات المسافر."
-                        addLog("🎉 PATCH HTTP 200 OK")
+                        status = "🎉 تم تأكيد المسافر بنجاح (HTTP 200)!"
+                        isDone = true
                     } else {
-                        status = "❌ فشل الـ PATCH: HTTP $statusCode"
-                        addLog("❌ PATCH HTTP $statusCode")
+                        status = "❌ فشل: HTTP $statusCode"
                     }
-                }
-            }
-
-            @JavascriptInterface
-            fun onLog(msg: String) {
-                Handler(Looper.getMainLooper()).post {
-                    addLog(msg)
                 }
             }
         }
     }
 
     fun startProcess() {
-        status = "🛒 جاري إنشاء السلة..."
-        addLog("🛒 Creating cart...")
-        webViewRef?.evaluateJavascript("""
+        status = "🛒 جاري إنشاء السلة عبر المتصفح..."
+        webView?.evaluateJavascript("""
             (function() {
-                var airBoundId = '$airBoundId';
-                var authToken = '$authToken';
-                var xDToken = '$xDToken';
-                var sessionId = '$sessionId';
-                
                 var xhr = new XMLHttpRequest();
                 xhr.open("POST", "https://dapi.saudia.com/shopping/carts?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
                 xhr.setRequestHeader("Content-Type", "application/json");
-                xhr.setRequestHeader("Authorization", authToken);
-                xhr.setRequestHeader("x-d-token", xDToken);
-                xhr.setRequestHeader("saa-session-id", sessionId);
+                xhr.setRequestHeader("Authorization", "$authToken");
+                xhr.setRequestHeader("x-d-token", "$xDToken");
+                xhr.setRequestHeader("saa-session-id", "$sessionId");
                 xhr.setRequestHeader("x-api-version", "2");
                 xhr.setRequestHeader("platform", "Web");
                 xhr.setRequestHeader("version", "27.2");
@@ -124,179 +93,137 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         } catch(e) {}
                     }
                 };
-                xhr.send(JSON.stringify({ airBoundIds: [airBoundId] }));
+                xhr.send(JSON.stringify({ airBoundIds: ["$airBoundId"] }));
             })();
         """.trimIndent(), null)
     }
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(Modifier.padding(12.dp)) {
-                Text("🤖 التأكيد التلقائي (WebView)", fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                if (progress in 1..99 && !patchSent) {
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
-                }
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { startProcess() },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !patchSent
-                ) {
-                    Text("🛒 بدء العملية")
-                }
-            }
-        }
-
-        Box(modifier = Modifier.fillMaxWidth().height(400.dp).padding(horizontal = 8.dp)) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        webViewRef = this
-                        clearCache(true)
-                        clearHistory()
-                        clearFormData()
-
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
-                                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-                        
-                        addJavascriptInterface(bridge, "SaudiaBridge")
-
-                        val cm = CookieManager.getInstance()
-                        cm.setAcceptCookie(true)
-                        cm.setAcceptThirdPartyCookies(this, true)
-
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress }
-                        }
-
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                super.onPageFinished(view, url)
-                                // إصلاح الخطأ: التأكد من أن view ليس null
-                                if (url == null || view == null) return
-
-                                if (url.contains("passengerDetails") && !patchSent) {
-                                    status = "📝 الصفحة تحملت. تعبئة الفورم..."
-                                    
-                                    view.evaluateJavascript("""
-                                        (function() {
-                                            if (window.__patchHooked) return;
-                                            window.__patchHooked = true;
-                                            var origFetch = window.fetch;
-                                            window.fetch = function(input, init) {
-                                                var url = typeof input === 'string' ? input : (input && input.url);
-                                                var method = ((init && init.method) || 'GET').toUpperCase();
-                                                if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
-                                                    var promise = origFetch.apply(this, arguments);
-                                                    promise.then(function(response) {
-                                                        response.clone().text().then(function(text) {
-                                                            SaudiaBridge.onPatchResponse(response.status, text);
-                                                        });
-                                                    });
-                                                    return promise;
-                                                }
-                                                return origFetch.apply(this, arguments);
-                                            };
-                                        })();
-                                    """.trimIndent(), null)
-
-                                    view.postDelayed({
-                                        view.evaluateJavascript("""
-                                            (function() {
-                                                function setVal(name, val) {
-                                                    var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
-                                                    if (!el) return false;
-                                                    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                                                    setter.call(el, val);
-                                                    el.dispatchEvent(new Event('input', {bubbles:true}));
-                                                    el.dispatchEvent(new Event('change', {bubbles:true}));
-                                                    el.dispatchEvent(new Event('blur', {bubbles:true}));
-                                                    return true;
-                                                }
-                                                var attempts = 0;
-                                                var iv = setInterval(function() {
-                                                    attempts++;
-                                                    var fnOk = setVal('firstName', 'Khaled');
-                                                    var lnOk = setVal('lastName', 'Otudi');
-                                                    setVal('dateOfBirth', '1990-05-10');
-                                                    setVal('nationalId', '1071580342');
-                                                    setVal('documentNumber', '1071580342');
-                                                    
-                                                    if (fnOk && lnOk) {
-                                                        clearInterval(iv);
-                                                        setTimeout(function() {
-                                                            var btns = document.querySelectorAll('button');
-                                                            for (var i = 0; i < btns.length; i++) {
-                                                                var t = (btns[i].innerText || '').trim();
-                                                                if (t.indexOf('تأكيد بيانات') > -1 || t.indexOf('تأكيد المسافر') > -1) {
-                                                                    btns[i].click();
-                                                                    return;
-                                                                }
-                                                            }
-                                                        }, 1000);
-                                                    }
-                                                    if (attempts > 20) clearInterval(iv);
-                                                }, 500);
-                                            })();
-                                        """.trimIndent(), null)
-                                    }, 2000)
-                                }
-                            }
-                        }
-
-                        loadUrl("https://www.saudia.com/ar-SA")
-                    }
-                }
-            )
-        }
-
-        if (logs.isNotEmpty()) {
-            Card(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                Column(Modifier.padding(8.dp)) {
-                    Text("سجل العمليات:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    logs.forEach { line ->
-                        Text(line, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                    }
-                }
-            }
-        }
-
-        if (patchSent) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                border = BorderStroke(2.dp, if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-            ) {
-                Column(Modifier.padding(10.dp)) {
-                    Text("HTTP $apiResultCode", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.height(4.dp))
-                    SelectionContainer {
-                        Text(apiResultBody.take(400), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-                    }
-                }
-            }
-        }
-
-        if (apiSuccess) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        if (!isDone) {
+            CircularProgressIndicator(modifier = Modifier.size(64.dp), color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(24.dp))
+            Text(status, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(16.dp))
+            Text("لا تغلق التطبيق. هذه العملية تتم في الخلفية.", style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text(status, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(32.dp))
             Button(
                 onClick = {
                     navController.navigate(Screen.Payment.route) {
-                        popUpTo(Screen.Passengers.route) { inclusive = false }
+                        popUpTo(Screen.Passengers.route) { inclusive = true }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().padding(8.dp).height(60.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                modifier = Modifier.fillMaxWidth().height(60.dp)
             ) {
-                Text("➡️ الانتقال لصفحة الدفع", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("➡️ الانتقال لصفحة الدفع", fontSize = 18.sp)
             }
         }
+
+        // الـ WebView مخفي (1 بكسل) ليقوم بالعمل في الخلفية
+        androidx.compose.ui.viewinterop.AndroidView(
+            modifier = Modifier.size(1.dp),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    webView = this
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
+                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                    addJavascriptInterface(bridge, "SaudiaBridge")
+
+                    val cm = CookieManager.getInstance()
+                    cm.setAcceptCookie(true)
+                    cm.setAcceptThirdPartyCookies(this, true)
+
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                            super.onPageStarted(view, url, favicon)
+                            // حقن السكريبت لاعتراض الـ PATCH
+                            view?.evaluateJavascript("""
+                                (function() {
+                                    if (window.__hooked) return;
+                                    window.__hooked = true;
+                                    var origFetch = window.fetch;
+                                    window.fetch = function(input, init) {
+                                        var url = typeof input === 'string' ? input : (input && input.url);
+                                        var method = ((init && init.method) || 'GET').toUpperCase();
+                                        if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
+                                            var promise = origFetch.apply(this, arguments);
+                                            promise.then(function(response) {
+                                                SaudiaBridge.onSuccess(response.status);
+                                            });
+                                            return promise;
+                                        }
+                                        return origFetch.apply(this, arguments);
+                                    };
+                                })();
+                            """.trimIndent(), null)
+                        }
+
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            if (url == null) return
+                            
+                            // بعد تحميل صفحة المسافرين، نقوم بملء الفورم والضغط
+                            if (url.contains("passengerDetails") && !isDone) {
+                                SaudiaBridge.onFillForm()
+                                view?.postDelayed({
+                                    view.evaluateJavascript("""
+                                        (function() {
+                                            function setVal(name, val) {
+                                                var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
+                                                if (!el) return false;
+                                                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                setter.call(el, val);
+                                                el.dispatchEvent(new Event('input', {bubbles:true}));
+                                                el.dispatchEvent(new Event('change', {bubbles:true}));
+                                                el.dispatchEvent(new Event('blur', {bubbles:true}));
+                                                return true;
+                                            }
+                                            var attempts = 0;
+                                            var iv = setInterval(function() {
+                                                attempts++;
+                                                var fnOk = setVal('firstName', 'Khaled');
+                                                var lnOk = setVal('lastName', 'Otudi');
+                                                setVal('dateOfBirth', '1990-05-10');
+                                                setVal('nationalId', '1071580342');
+                                                setVal('documentNumber', '1071580342');
+                                                
+                                                if (fnOk && lnOk) {
+                                                    clearInterval(iv);
+                                                    setTimeout(function() {
+                                                        var btns = document.querySelectorAll('button');
+                                                        for (var i = 0; i < btns.length; i++) {
+                                                            var t = (btns[i].innerText || '').trim();
+                                                            if (t.indexOf('تأكيد بيانات') > -1 || t.indexOf('تأكيد المسافر') > -1) {
+                                                                btns[i].click();
+                                                                return;
+                                                            }
+                                                        }
+                                                    }, 1500);
+                                                }
+                                                if (attempts > 20) clearInterval(iv);
+                                            }, 500);
+                                        })();
+                                    """.trimIndent(), null)
+                                }, 3000)
+                            }
+                        }
+                    }
+                    loadUrl("https://www.saudia.com/ar-SA")
+                }
+            }
+        )
+    }
+
+    // بدء العملية فوراً عند فتح الشاشة
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(2000) // انتظار تحميل الصفحة الرئيسية
+        startProcess()
     }
 }
