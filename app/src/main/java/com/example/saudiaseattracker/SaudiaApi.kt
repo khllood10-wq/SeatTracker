@@ -14,7 +14,6 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface SaudiaApi {
-
     @POST("airsearch/search/air-bounds")
     suspend fun searchAirBounds(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -82,6 +81,15 @@ interface SaudiaApi {
     suspend fun updateTravelerRaw(
         @Path("cartId") cartId: String,
         @Path("travelerId") travelerId: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA", // ⬅️ أضفنا هذه لدعم JEDSV08AA
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: RequestBody
+    ): Response<ResponseBody>
+
+    @POST("shopping/carts/{cartId}/contacts")
+    suspend fun saveContacts(
+        @Path("cartId") cartId: String,
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
