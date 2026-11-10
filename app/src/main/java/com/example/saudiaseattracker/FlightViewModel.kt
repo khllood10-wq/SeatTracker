@@ -294,7 +294,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔐 إرسال PATCH مع تشفير حقيقي (بعد التقاط المفتاح)
+    //  🔐 تجربة 6 متغيرات تشفير مختلفة تلقائياً
     // ═══════════════════════════════════════════════════════════
     fun sendEncryptedPassengerPayload() {
         val cartId = _cartId.value
@@ -306,59 +306,55 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val rsaPem = prefs.getString("rsa_public_key", null)
         if (rsaPem.isNullOrEmpty()) {
-            addLog("❌ لا يوجد مفتاح محفوظ — شغّل KeyCaptureScreen أولاً")
+            addLog("❌ لا يوجد مفتاح محفوظ")
             return
         }
 
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
-            try {
-                addLog("🔐 [1/2] تشفير البيانات...")
+            addLog("═══════════════════════════════════════")
+            addLog("🔐 بدء تجربة ${HybridEncryptor.Variant.values().size} متغيرات تشفير...")
 
-                val plainJson = """
-                    {
-                      "passengerTypeCode": "ADT",
-                      "gender": "male",
-                      "title": "MR",
-                      "givenName": "Khaled",
-                      "surname": "Otudi",
-                      "dateOfBirth": "1991-05-10",
-                      "nationality": "SA",
-                      "documents": [
-                        {
-                          "type": "NATIONAL_ID",
-                          "number": "1071580342",
-                          "countryOfIssuance": "SA"
-                        }
-                      ]
+            val plainJson = """
+                {"passengerTypeCode":"ADT","gender":"male","title":"MR","givenName":"Khaled","surname":"Otudi","dateOfBirth":"1991-05-10","nationality":"SA","documents":[{"type":"NATIONAL_ID","number":"1071580342","countryOfIssuance":"SA"}]}
+            """.trimIndent()
+
+            for (variant in HybridEncryptor.Variant.values()) {
+                try {
+                    addLog("─── ${variant.label} ───")
+                    val (keyB64, bodyHex) = HybridEncryptor.encrypt(plainJson, rsaPem, variant)
+                    addLog("key=${keyB64.length}ch, body=${bodyHex.length}ch")
+
+                    val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
+                    val requestBody = payload.toRequestBody("application/json".toMediaType())
+
+                    val resp = RetrofitClient.api.updateTravelerRaw(
+                        cartId = cartId,
+                        travelerId = "SKH-1-EXT",
+                        headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                        request = requestBody
+                    )
+                    saveCookiesFromResponse(resp)
+                    val code = resp.code()
+                    val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
+
+                    addLog("📡 ${variant.label} → HTTP $code")
+                    _passengerConfirmResponse.value = "${variant.label} → HTTP $code\n\n${respBody.ifEmpty { "(empty)" }}"
+
+                    if (code == 200) {
+                        addLog("🎉🎉 نجح! المتغير الصحيح: ${variant.label}")
+                        return@launch
                     }
-                """.trimIndent()
 
-                val (keyB64, bodyHex) = HybridEncryptor.encrypt(plainJson, rsaPem)
-                addLog("✅ تشفير ناجح (key=${keyB64.length}, body=${bodyHex.length})")
-
-                addLog("📤 [2/2] إرسال PATCH مشفر...")
-                val encryptedJson = """{"key":"$keyB64","body":"$bodyHex"}"""
-                val requestBody = encryptedJson.toRequestBody("application/json".toMediaType())
-
-                val resp = RetrofitClient.api.updateTravelerRaw(
-                    cartId = cartId,
-                    travelerId = "SKH-1-EXT",
-                    headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = requestBody
-                )
-                saveCookiesFromResponse(resp)
-                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
-                _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n${respBody.ifEmpty { "(empty)" }}"
-                addLog("📡 نتيجة التشفير: HTTP ${resp.code()}")
-
-                if (resp.code() == 200) addLog("🎉 نجح! الاسم محفوظ في السلة رسمياً")
-                else addLog("⚠️ فشل. إن كانت 403 فقد يكون نوع RSA-OAEP مختلفاً")
-
-            } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
-                _passengerConfirmResponse.value = "Exception: ${e.message}"
+                    if (code == 401 || code == 403) {
+                        addLog("❌ مشكلة توكن — توقف")
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    addLog("❌ ${variant.label} استثناء: ${e.message}")
+                }
             }
+            addLog("⚠️ كل المتغيرات فشلت — راجع النتيجة")
         }
     }
 
