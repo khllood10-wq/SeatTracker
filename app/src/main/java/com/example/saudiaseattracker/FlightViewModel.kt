@@ -90,9 +90,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun getSavedDynamicCookies(): String? =
         getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
+    /**
+     * إصلاح: browserid و channel إلزاميان دائماً (حتى لطلبات /web).
+     * x-v-token يُضاف فقط عند includeXVToken = true (gaca/elm، وليس PATCH).
+     */
     private fun buildHeaders(
         apiVersion: String,
-        isWebEndpoint: Boolean = false,
+        includeXVToken: Boolean = false,
         referer: String = "https://www.saudia.com/"
     ): Map<String, String> {
         val authToken = getSavedAuthToken() ?: ""
@@ -115,6 +119,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
+            "channel" to "MOBILE_WEB",
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
@@ -123,11 +129,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
 
-        if (isWebEndpoint) {
+        if (includeXVToken) {
             headers["x-v-token"] = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
-        } else {
-            headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
-            headers["channel"] = "MOBILE_WEB"
         }
         val cookies = getSavedDynamicCookies()
         if (!cookies.isNullOrEmpty()) headers["Cookie"] = cookies
@@ -277,7 +280,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🛂 [5/5] فحص GACA...")
                 RetrofitClient.api.getGacaMandate(
-                    headers = buildHeaders("1", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    headers = buildHeaders("1", includeXVToken = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
                     request = GacaMandateRequest()
                 ).let {
                     saveCookiesFromResponse(it)
@@ -285,23 +288,121 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 addLog("═".repeat(40))
-                addLog("🎯 جاهز للتأكيد (PATCH).")
+                addLog("🎯 جاهز للتأكيد (PATCH) أو التشخيص.")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
             }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🎯 إرسال البيانات الصحيحة (المستخرجة من HAR)
-    // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+    // 🔬 مصفوفة التشخيص الحاسمة (7 اختبارات في زر واحد)
+    // ═══════════════════════════════════════════════════════════════
+    fun runCryptoDiagnostic() {
+        val cartId = _cartId.value
+        if (cartId.isNullOrEmpty()) {
+            addLog("❌ لا يوجد cartId — أنشئ السلة أولاً")
+            return
+        }
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val rsaPem = prefs.getString("rsa_public_key", null)
+        if (rsaPem.isNullOrEmpty()) {
+            addLog("❌ لا يوجد مفتاح محفوظ")
+            return
+        }
+
+        viewModelScope.launch {
+            _passengerConfirmResponse.value = ""
+            _searchLogs.value = emptyList()
+            addLog("═══════════ 🔬 بدء التشخيص ═══════════")
+            addLog("📏 طول المفتاح: ${rsaPem.length} حرف")
+
+            val testCases = listOf(
+                "T0_GARBAGE      " to Pair("GARBAGE", """{"key":"AAAA","body":"deadbeef"}"""),
+                "T1_EMPTY_ARRAY  " to Pair("PKCS1",   """[]"""),
+                "T2_SINGLE_OBJ   " to Pair("PKCS1",   """{"passengerTypeCode":"ADT"}"""),
+                "T3_DIAG_FIELD   " to Pair("PKCS1",   """{"passengerTypeCode":"ADT","__DIAGNOSTIC_FIELD__":"x"}"""),
+                "T4_WRONG_TYPE   " to Pair("PKCS1",   """{"passengerTypeCode":123}"""),
+                "T5_MIN_ARRAY    " to Pair("PKCS1",   """[{"passengerTypeCode":"ADT"}]"""),
+                "T6_NO_PTC       " to Pair("PKCS1",   """[{"lastName":"Otudi"}]""")
+            )
+
+            val results = mutableListOf<Pair<String, String>>()
+
+            for ((name, cfg) in testCases) {
+                val (mode, plaintext) = cfg
+                try {
+                    val payload: String = if (mode == "GARBAGE") {
+                        plaintext  // already the whole {key,body} payload
+                    } else {
+                        val (keyB64, bodyHex) = HybridEncryptor.encrypt(
+                            plaintext, rsaPem, HybridEncryptor.RsaMode.PKCS1
+                        )
+                        """{"key":"$keyB64","body":"$bodyHex"}"""
+                    }
+                    val requestBody = payload.toRequestBody("application/json".toMediaType())
+
+                    val resp = RetrofitClient.api.updateTravelerRaw(
+                        cartId = cartId,
+                        travelerId = "SKH-1-EXT",
+                        headers = buildHeaders(
+                            "2",
+                            includeXVToken = false,
+                            referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
+                        ),
+                        request = requestBody
+                    )
+                    saveCookiesFromResponse(resp)
+                    val code = resp.code()
+                    val errBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(empty)"
+                    val shortErr = errBody.replace("\n", " ").take(180)
+                    val line = "$name → HTTP $code | $shortErr"
+                    addLog(line)
+                    results.add(name to errBody)
+                    delay(1200) // احترام Imperva
+                } catch (e: Exception) {
+                    addLog("$name → ❌ استثناء: ${e.message}")
+                    results.add(name to "EXCEPTION:${e.message}")
+                }
+            }
+
+            // ═══ التحليل التلقائي ═══
+            addLog("═══════════ 📊 تحليل النتائج ═══════════")
+            val t0Err = results.firstOrNull { it.first.contains("T0") }?.second ?: ""
+            val t1Err = results.firstOrNull { it.first.contains("T1") }?.second ?: ""
+            val t3Err = results.firstOrNull { it.first.contains("T3") }?.second ?: ""
+            val t4Err = results.firstOrNull { it.first.contains("T4") }?.second ?: ""
+
+            if (t3Err.contains("__DIAGNOSTIC_FIELD__")) {
+                addLog("✅✅✅ التشفير يعمل! السيرفر يرى حقلنا المخصص.")
+                addLog("   👉 المشكلة في الشكل/الحقول، ليس التشفير.")
+            } else if (t0Err != t1Err && t1Err.isNotEmpty()) {
+                addLog("✅ السيرفر يفحص {key,body} فعلاً (T0 مختلف عن T1).")
+                addLog("   👉 جرّب AES-GCM أو تأكد من المفتاح.")
+            } else if (t4Err.contains("string") || t4Err.contains("type")) {
+                addLog("✅ التشفير يعمل — رفض نوع passengerTypeCode.")
+                addLog("   👉 أرسل passengerTypeCode كنص.")
+            } else if (t1Err.contains("passengerTypeCode")) {
+                addLog("❌ كل الاختبارات تعطي نفس خطأ passengerTypeCode.")
+                addLog("   👉 المفتاح على الأرجح خطأ (Contentsquare) أو AES mode خطأ.")
+            } else {
+                addLog("⚠️ نتيجة غير متوقعة — راجع التفاصيل أعلاه.")
+            }
+
+            _passengerConfirmResponse.value = results.joinToString("\n\n") { (n, b) ->
+                "$n:\n${b.take(400)}"
+            }
+            addLog("═══════════ انتهى التشخيص ═══════════")
+        }
+    }
+
+    // الإرسال العادي (يبقى كما هو للاستخدام اليدوي)
     fun sendEncryptedPassengerPayload() {
         val cartId = _cartId.value
         if (cartId.isNullOrEmpty()) {
             addLog("❌ لا يوجد cartId!")
             return
         }
-
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val rsaPem = prefs.getString("rsa_public_key", null)
         if (rsaPem.isNullOrEmpty()) {
@@ -311,46 +412,36 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
-            addLog("🎯 إرسال البيانات الصحيحة (firstName/lastName array)")
+            addLog("🎯 إرسال البيانات الصحيحة")
 
             val plainJson = """[{"tid":null,"id":"SKH-1-EXT","title":"Mr","passengerTypeCode":"ADT","firstName":"Khaled","lastName":"Otudi","dateOfBirth":"1991-05-09T21:00:00.000Z","nationality":"SA","rememberMe":true,"uuid":"${cartId}SKH-1-EXT","travellerDoc":{"docType":"National ID","passportNumber":"","expiryDate":"","issuingCountry":"","nationalId":"1071580342","gccId":"","residentId":"","number":"1071580342","id":null}}]"""
-
-            addLog("📏 JSON: ${plainJson.length} حرف")
 
             try {
                 val (keyB64, bodyHex) = HybridEncryptor.encrypt(
                     plainJson, rsaPem, HybridEncryptor.RsaMode.PKCS1
                 )
                 addLog("🔑 key=${keyB64.length}ch, body=${bodyHex.length}ch")
-
                 val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
                 val requestBody = payload.toRequestBody("application/json".toMediaType())
 
                 val resp = RetrofitClient.api.updateTravelerRaw(
                     cartId = cartId,
                     travelerId = "SKH-1-EXT",
-                    headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    headers = buildHeaders(
+                        "2",
+                        includeXVToken = false,
+                        referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
+                    ),
                     request = requestBody
                 )
                 saveCookiesFromResponse(resp)
                 val code = resp.code()
                 val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
-
-                addLog("═══════════════════════════════")
-                addLog("📡 النتيجة: HTTP $code")
-                val displayBody = if (respBody.isEmpty()) "(empty)" else respBody
-                _passengerConfirmResponse.value = "HTTP $code\n\n$displayBody"
-
-                if (code == 200) {
-                    addLog("🎉🎉🎉 نجح! البيانات حُفظت رسمياً")
-                } else if (code == 400) {
-                    addLog("⚠️ 400 — جرب OAEP256 أو AES128")
-                } else {
-                    addLog("❌ فشل: $code")
-                }
+                addLog("📡 HTTP $code")
+                _passengerConfirmResponse.value = "HTTP $code\n\n${if (respBody.isEmpty()) "(empty)" else respBody}"
+                if (code == 200) addLog("🎉 نجح!") else addLog("⚠️ $code")
             } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
-                _passengerConfirmResponse.value = "Exception: ${e.message}"
+                addLog("❌ ${e.message}")
             }
         }
     }
