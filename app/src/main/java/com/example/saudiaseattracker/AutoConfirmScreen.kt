@@ -29,7 +29,6 @@ import androidx.navigation.NavController
 fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) {
     val context = LocalContext.current
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
-    val apiResult = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
     val sessionId = prefs.getString("session_id", "") ?: ""
     val xDToken = prefs.getString("xd_token", "") ?: ""
@@ -38,30 +37,53 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
     var status by remember { mutableStateOf("⏳ تحميل الصفحة...") }
     var progress by remember { mutableStateOf(0) }
-    var capturedKey by remember { mutableStateOf<String?>(null) }
-    var capturedBody by remember { mutableStateOf<String?>(null) }
-    var sending by remember { mutableStateOf(false) }
     var apiSuccess by remember { mutableStateOf(false) }
+    var apiResultCode by remember { mutableStateOf(0) }
+    var apiResultBody by remember { mutableStateOf("") }
+    var patchSent by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     val bridge = remember {
         object {
             @JavascriptInterface
-            fun onPayloadCaptured(key: String, body: String) {
+            fun onPatchResponse(statusCode: Int, responseBody: String) {
                 Handler(Looper.getMainLooper()).post {
-                    capturedKey = key
-                    capturedBody = body
-                    status = "✅ التشفير تم اعتراضه (key=${key.length}، body=${body.length})"
-                    // إخفاء WebView فوراً — لم نعد نحتاجه
-                    webViewRef?.visibility = WebView.INVISIBLE
+                    // حفظ كوكيز WebView (مهمة للدفع)
+                    val cm = CookieManager.getInstance()
+                    val sauCookies = cm.getCookie("https://www.saudia.com") ?: ""
+                    val dapiCookies = cm.getCookie("https://dapi.saudia.com") ?: ""
+                    val merged = listOf(sauCookies, dapiCookies)
+                        .filter { it.isNotBlank() }
+                        .joinToString("; ")
+                        .replace(Regex(";+"), ";")
+                        .trim()
+                        .trimStart(';', ' ')
+
+                    prefs.edit()
+                        .putString("dynamic_cookies", merged)
+                        .apply()
+
+                    apiResultCode = statusCode
+                    apiResultBody = responseBody
+                    patchSent = true
+
+                    if (statusCode == 200) {
+                        apiSuccess = true
+                        status = "🎉 نجح! السيرفر قبـل بيانات المسافر (كو كيز محدّثة لـ ${merged.length}ch)"
+                        webViewRef?.visibility = WebView.INVISIBLE
+                    } else {
+                        status = "❌ فشل: HTTP $statusCode"
+                    }
                 }
             }
+
             @JavascriptInterface
             fun onFormFilled() {
                 Handler(Looper.getMainLooper()).post {
-                    status = "📝 تم ملء الفورم، جاري الضغط على 'تأكيد بيانات المسافر'..."
+                    status = "📝 الفورم مُلئ. جاري الضغط على 'تأكيد بيانات المسافر'..."
                 }
             }
+
             @JavascriptInterface
             fun onLog(msg: String) {
                 android.util.Log.d("AutoConfirm", msg)
@@ -76,30 +98,16 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         return
     }
 
-    // إرسال تلقائي بمجرد التقاط التشفير
-    LaunchedEffect(capturedKey, capturedBody) {
-        if (capturedKey != null && capturedBody != null && !sending && !apiSuccess) {
-            sending = true
-            status = "📤 جاري إرسال PATCH عبر API..."
-            val ok = viewModel.sendCapturedPayload(capturedKey!!, capturedBody!!, cartId)
-            sending = false
-            if (ok) {
-                apiSuccess = true
-                status = "🎉 نجح! السيرفر قبل البيانات"
-            } else {
-                status = "❌ فشل — راجع النتيجة أدناه"
-            }
-        }
-    }
-
     Column(modifier = Modifier.fillMaxSize()) {
-        Card(modifier = Modifier.fillMaxWidth().padding(8.dp),
-             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
             Column(Modifier.padding(12.dp)) {
-                Text("🕵️ التقاط التشفير + إرسال API", fontWeight = FontWeight.Bold)
+                Text("🤖 تأكيد تلقائي — WebView يرسل، نلتقط الرد فقط", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(status, style = MaterialTheme.typography.bodySmall)
-                if (progress in 1..99 && capturedKey == null) {
+                if (progress in 1..99 && !patchSent) {
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                 }
@@ -107,7 +115,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         }
 
-        // WebView (يُصبح غير مرئي بعد التقاط التشفير)
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             factory = { ctx ->
@@ -116,7 +123,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
-                    // UA جوال حقيقي — حل مشكلة Imperva
                     settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
                             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                     addJavascriptInterface(bridge, "SaudiaBridge")
@@ -132,14 +138,14 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     }
 
                     webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress }
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                            progress = newProgress
+                        }
                     }
 
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                             super.onPageStarted(view, url, favicon)
-                            // (1) حقن التوكنات
-                            // (2) Hook fetch لاعتراض PATCH وإيقافه
                             view?.evaluateJavascript("""
                                 try {
                                     localStorage.setItem('saa-session-id', '$sessionId');
@@ -149,22 +155,43 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                                 (function() {
                                     if (window.__saudiaHooked) return;
                                     window.__saudiaHooked = true;
+                                    
+                                    // ⭐ نمرر الطلب ولا نمنعه، فقط نلتقط الـ Response
                                     var origFetch = window.fetch;
                                     window.fetch = function(input, init) {
                                         var url = typeof input === 'string' ? input : (input && input.url);
                                         var method = ((init && init.method) || 'GET').toUpperCase();
                                         if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
-                                            try {
-                                                var p = JSON.parse(init.body);
-                                                if (p && p.key && p.body) {
-                                                    SaudiaBridge.onPayloadCaptured(p.key, p.body);
-                                                    SaudiaBridge.onLog('BLOCKED: payload captured');
-                                                    // إيقاف الطلب نهائياً
-                                                    return new Promise(function() {});
-                                                }
-                                            } catch(e) { SaudiaBridge.onLog('parse: '+e.message); }
+                                            SaudiaBridge.onLog('PATCH letting through: '+url);
+                                            var promise = origFetch.apply(this, arguments);
+                                            promise.then(function(response) {
+                                                response.clone().text().then(function(text) {
+                                                    SaudiaBridge.onPatchResponse(response.status, text);
+                                                });
+                                            }).catch(function(e) {
+                                                SaudiaBridge.onLog('PATCH err: '+e.message);
+                                            });
+                                            return promise;
                                         }
                                         return origFetch.apply(this, arguments);
+                                    };
+
+                                    // دعم XHR أيضاً (احتياط)
+                                    var origOpen = XMLHttpRequest.prototype.open;
+                                    var origSend = XMLHttpRequest.prototype.send;
+                                    XMLHttpRequest.prototype.open = function(m, u) {
+                                        this.__m = (m||'').toUpperCase();
+                                        this.__u = u;
+                                        return origOpen.apply(this, arguments);
+                                    };
+                                    XMLHttpRequest.prototype.send = function() {
+                                        var self = this;
+                                        if (self.__u && self.__u.indexOf('/travelers/web') > -1 && self.__m === 'PATCH') {
+                                            self.addEventListener('load', function() {
+                                                try { SaudiaBridge.onPatchResponse(self.status, self.responseText); } catch(e){}
+                                            });
+                                        }
+                                        return origSend.apply(this, arguments);
                                     };
                                 })();
                             """.trimIndent(), null)
@@ -172,10 +199,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            if (url == null) return
+                            if (url == null || patchSent) return
                             if (url.contains("passengerDetails")) {
-                                status = "📄 الصفحة جاهزة — انتظار 6 ثوانٍ لتحميل الفورم..."
-                                // (3) انتظار ثم ملء الفورم والضغط على "تأكيد بيانات المسافر"
+                                status = "📄 انتظار تحميل الفورم (6 ثوانٍ)..."
                                 view?.postDelayed({ fillAndClickConfirm(view) }, 6000)
                             }
                         }
@@ -186,22 +212,22 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         )
 
-        // نتيجة الـ API
-        if (apiResult.isNotEmpty()) {
-            Card(modifier = Modifier.fillMaxWidth().padding(8.dp),
-                 colors = CardDefaults.cardColors(
-                     containerColor = if (apiSuccess) MaterialTheme.colorScheme.primaryContainer
-                                      else MaterialTheme.colorScheme.errorContainer
-                 )) {
+        if (patchSent) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (apiSuccess) MaterialTheme.colorScheme.primaryContainer
+                                     else MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
                 Text(
-                    "HTTP ${if (apiSuccess) "✅ 200" else "❌"}\n\n${apiResult.take(600)}",
+                    "HTTP ${apiResultCode}\n\n${apiResultBody.take(700)}",
                     modifier = Modifier.padding(12.dp),
                     fontFamily = FontFamily.Monospace, fontSize = 10.sp
                 )
             }
         }
 
-        // زر الانتقال للدفع (يظهر فقط بعد نجاح PATCH)
         if (apiSuccess) {
             Button(
                 onClick = {
@@ -216,7 +242,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         }
 
-        if (capturedKey == null && !sending) {
+        if (!patchSent) {
             OutlinedButton(
                 onClick = {
                     status = "🔄 إعادة المحاولة..."
@@ -228,10 +254,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     }
 }
 
-/**
- * يملأ الفورم ويضغط زر "تأكيد بيانات المسافر" فقط.
- * لا يضغط "الانتقال لصفحة الدفع" — هذا يتم عبر API في Kotlin.
- */
 private fun fillAndClickConfirm(view: WebView) {
     val js = """
         (function() {
@@ -260,14 +282,12 @@ private fun fillAndClickConfirm(view: WebView) {
                         var btns = document.querySelectorAll('button');
                         for (var i = 0; i < btns.length; i++) {
                             var t = (btns[i].innerText || '').trim();
-                            // نضغط فقط "تأكيد بيانات المسافر" — لا "الانتقال لصفحة الدفع"
                             if (t.indexOf('تأكيد بيانات') > -1 || t.indexOf('تأكيد المسافر') > -1) {
                                 SaudiaBridge.onLog('CLICKED: '+t);
                                 btns[i].click();
                                 return;
                             }
                         }
-                        // احتياطي: أي زر فيه "تأكيد" (لكن ليس "الانتقال")
                         for (var j = 0; j < btns.length; j++) {
                             var t2 = (btns[j].innerText || '').trim();
                             if (t2.indexOf('تأكيد') > -1 && t2.indexOf('انتقال') === -1 && t2.indexOf('دفع') === -1) {
@@ -281,7 +301,7 @@ private fun fillAndClickConfirm(view: WebView) {
                 }
                 if (attempts > 30) {
                     clearInterval(iv);
-                    SaudiaBridge.onLog('GAVE UP - fields not found');
+                    SaudiaBridge.onLog('GAVE UP');
                 }
             }, 500);
         })();
