@@ -12,6 +12,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
@@ -136,7 +138,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return headers
     }
 
-    // ⭐ الدالة الجديدة المطلوبة ليعمل زر الاختبار (Replay)
+    // ⭐ دالة عامة يستخدمها AutoConfirmScreen (وكانت تُستخدم في ReplayScreen)
     fun buildHeadersPublic(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         return buildHeaders(apiVersion, includeXVToken = false, referer = referer)
     }
@@ -292,10 +294,39 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 addLog("═".repeat(40))
-                addLog("🎯 جاهز للاختبار.")
+                addLog("🎯 جاهز للتأكيد التلقائي.")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * يرسل {key, body} الملتقط من WebView عبر Retrofit.
+     * WebView يولّد التشفير، والتطبيق يرسل الطلب بنفسه (بدون WebView).
+     * @return true إذا كان HTTP 200
+     */
+    suspend fun sendCapturedPayload(key: String, body: String, cartId: String): Boolean {
+        return try {
+            addLog("📤 إرسال PATCH... key=${key.length}، body=${body.length}")
+            val payload = """{"key":"$key","body":"$body"}"""
+            val requestBody = payload.toRequestBody("application/json".toMediaType())
+            val resp = RetrofitClient.api.updateTravelerRaw(
+                cartId = cartId,
+                travelerId = "SKH-1-EXT",
+                headers = buildHeadersPublic("2",
+                    "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                request = requestBody
+            )
+            saveCookiesFromResponse(resp)
+            val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(empty)"
+            addLog("📡 HTTP ${resp.code()}")
+            _passengerConfirmResponse.value = "HTTP ${resp.code()}\n\n$respBody"
+            resp.code() == 200
+        } catch (e: Exception) {
+            addLog("❌ ${e.message}")
+            _passengerConfirmResponse.value = "❌ ${e.message}"
+            false
         }
     }
 
