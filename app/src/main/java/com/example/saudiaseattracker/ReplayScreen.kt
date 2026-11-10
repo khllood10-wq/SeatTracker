@@ -20,11 +20,12 @@ import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
-// ── القيم الملتقطة من المتصفح (طلب ناجح سابقاً) ──
-private const val CAPTURED_CART_ID     = "1K51LG7NXP7LDV4K"
-private const val CAPTURED_TRAVELER_ID = "SKH-1-EXT"
-private const val CAPTURED_KEY = "HF7dpAZBrU2QoqRt6P3IPasqy8+mX+KwbVspc01DTtoWPw+jhu3jxhG6mEmLcfoDgAYBuzIfevD6/zG4iV07XYmUWhz3dyQkxkmPwvgRP4MI1M3gBUJWyB5S+xt7KzqyVk8MO8rkmCsVNGsjW84GsUOBu1wa/IaK32Y1HgA0QX0gPV2MRohEka5AM52l4A9irJHQuR5mB2kgXSOZl93AxikEb6yeorqoHnXV4ZEZYwCsh11Caopjk2H5bjK5n0fxxgM2xlAFFWtCZPNnHNXU3FJxAN0AXvvfz4gGOu1PmytUNx4G+SVLiHnSg7FI3fmPvxC2Qk/hOQLd+mcIV1n2hfW3pV1r5w2ycIjFCW1ocR0SKOd50skI4ZDqUWO/Z2RJJtRSOC3suMkMBogmMCFVZQhSThPdMgq6VOOjO8KxTiH5H1slu0hciocBlu+OqkBWIOObXD6R7JwmdvsXI0WRQyhMoJ/JGUi15iyE5JMmarnclg5N5g45LxyAfbHavaNc1Vu1RcKH8oLJM2JGgq5N8h6rdKmOY43bvy9G46Runzzo4C7vkUcfB/o+EqTxs5+fEGIoZ713cet56vBWSKrlASlzwn7coIzo59r+XKhvxBBthYi9NeRiE6i2+qqvC9kia2IEOCA0KfSMV0vrDdl/rIoPAftLkwkJT17Homv3Jkg="
-private const val CAPTURED_BODY = "520c484019c567c00fb1d5a85b53f255c2aa52b1c346f94b4639a884d29f9b9ee038e8af7e11ca2922a2f53109a338a253863c6c2ebc6d7574cceb4541dc66a573c541caedbf39a994d2e8d417db0b91deabe0c531246c4f9c827479e1dc992efc2f68a170942068ecd9c5c015d67cf29cde6be5d51cce156a3c874a87175a965a78f68858730cdef9d5a59745bb44343298f9fc94f8267e59a226f9c6812f24f11f2829e262a68d99f64cab1d6a411207154f4648c9ad93930d1c465feff0ae4401671e1064b02e69fcb5756765e47feebba22995efef8367c4f42f1208e0c1a1f2ecae87d34834ece38869b8fa7c6d6bdf9a0e4287ba26b002084085b7be1453b9bc39456526167cfbadf400ec6dbc53808d3abf560a47f2f8f11cff84ebd4e6d4a8b291777311739a8ed36dcbe1733a1eb78deaf3377582bf1deb6056bd2fe9f63c3a1b1d2093b8d0eb04549961687045b2c2b976639dabf1d85542beaf65d71b7a54a22fe5e983ec881081a637e72efa52895e5aec6c280eae96dd0eaa668b23a0688fdbbb438c548a9d1ad9eef0379bc88eb90e5572bc8b3c54f56825bc434d106269ad81eea002938cd9652d4b66f1f007da8fd68d7c9ab99b4071c6fcfd925da06d85f842b24b24a88fa4054ac224704d3fa9649da9a42070a38c3e84a40cca291536a849b6ece5230f075748"
+// ⭐ القيم الجديدة من السجل الأخير
+private const val CAPTURED_CART_ID       = "1VPQ4KM07H2KZRXV"
+private const val CAPTURED_TRAVELER_ID   = "SKH-1-EXT"
+private const val CAPTURED_GUEST_OFFICE  = "JEDSV08AA"  // ← مهم: A وليس M
+private const val CAPTURED_KEY = "oYn5LZBjBV+atLf5pBQnaOKhFQHnQe66fHu4Bs+HcIyY1noMy7bRr3rVuK0w+vzVldkE0Nd8q7vbijEBPEXbQ8w5fOhi3UkRGEzCEp8uLW2cwbmcjfUVmhMMoSI0ertHqhGB4fRYlVD69u2wgF/UmYHlBbglpjppSNlFDbIOP++cNu3hSSOY8m3y9wLu0tTiv0bJAObwIcGuwKJR1A7Qa1JQCk3xNjLdwRFRb7XRvtTGyD4JC3TV7YJzlz5Q0UXKVg8E3Kxf/DqTNGmDH9rbkINnMx9hcT8ObFUnjcMIEp9UjCJabg1CPlv8AtEpYDAPPQH7qmAUnCoFvPmDrRAg3WHRDrg99tM0xLJxEXmZuqgKVD9jgIFTQquW8j0NKX+wBbhdNHQ583RnMBSkiM08aAbfBBdQVd3s/oKnMlbXVBGqOVh1ZUzD1Y0eWZYw4kW/hiA4b0JZ3t1hg3eWvguax/1DeOcOS8Wp33RxNQb39jzyI4G1gP7gPRQz23lTSQnliBZz7lmubsUwoN0GCyJTTUn71BSUbYPOQEyMdUEuwySOSuzhj1y8niS9I36W9diGU3GvEYiiQ/2mmz8/0D2ltMgqZsn6DcA9nuEPxzhMf9mTnY2AjTgw0HzKOz3aDLdJcHADAnkIJpJQOJjc8vEbrHTmzIlYIdwSgPbOxyamgAs="
+private const val CAPTURED_BODY = "d879afecfa689e4f7bec17f140e18ae17de94c188c1e7bd4b11a2f75fae7f2942768f4907347947f6b0bf45387072d6d0dbf36405a449c87a85a7a5b9282aacd8ee630c639b41d8c63e1b7945c6c58f1cfbefd63f03f94d29c6962965a4a7d2a8aefe64230091a527a1cd33f7dd74af57820a914c5aaa506173b848278ab6dd575acdf56dd6e7f434838d641f6fb0418ec8fcf98b24857817372ebc5f9ea48abb0cb7379c4ae1e448f31dec8d986aafb5fb4468cb7e8f00768166ad0a67463bdcfeb1465efa9dc9e1d0902766bcb6c4c91e740313db9bdcd534c56913ae1e57574ed55101c4fc712d7fa07adc9d0d7d0ae9a7970f614597d1083a6633fed2d829eaffa246224042077253fc6fa4af3d0640750437475a9636ae4ff53673173be48575c19d5713e640f7f9e6eb2faba1ba3cd597de9d0cb3da977accef888d290f979691eb07efbac1cfdee1a957a85f4e3675ec2e710526f6488a22677347a9535746595470c43a6e1b06400c1d57baff8b7d00b0fa7111f37dfbb5fc0d73803ee857fac3cb39be129ea950ef1a38cadd96f60268cc2dd5aea1231879ad14edad4b50ada72bfc6ed410fb11285be7c5b32c7742a8440e33c27afdd86b8dc019ef2ba92ed299244e5efe869bf1817b438821686cfa83b3c2fe738c6dcc760bac0afc68832fa7219c5fbf5016e82739683"
 
 data class ReplayResult(
     val testName: String,
@@ -35,22 +36,24 @@ data class ReplayResult(
     val color: Color get() = when {
         httpCode == 200 -> Color(0xFF00C853)
         httpCode == 404 -> Color(0xFF9E9E9E)
+        httpCode == 403 -> Color(0xFFD50000)
         httpCode in 400..499 -> Color(0xFFFF6D00)
         else -> Color(0xFF1976D2)
     }
     val verdict: String get() = when {
-        httpCode == 200 -> "🎉 نجح — السيرفر قبل الطلب!"
-        httpCode == 404 -> "⚠️ السلة القديمة محذوفة (غير حاسم)"
-        body.contains("passengerTypeCode") -> "❌ السيرفر لم يفك التشفير"
-        body.contains("uuid") || body.contains("cartId") -> "✅ السيرفر فكّ التشفير! (uuid لا يطابق)"
-        else -> "🟠 ردّ مختلف — راجع التفاصيل"
+        httpCode == 200 -> "🎉 نجح — السيرفر قبـل الطلب! Imperva ليست العائق"
+        httpCode == 403 -> "🔴 Imperva يحظر Retrofit — WebView إجباري"
+        httpCode == 404 -> "⚠️ السلة انتهت صلاحيتها (غير حاسم)"
+        body.contains("passengerTypeCode") -> "❌ السيرفر لم يفك التشفير (Imperva يحجب)"
+        body.contains("uuid") || body.contains("cartId") -> "🟠 التشفير فُكّ لكن uuid لا يطابق"
+        body.contains("extension") || body.contains("missing") -> "🟠 السلة ناقصة — تحتاج خطوات إضافية"
+        else -> "⚠️ رد آخر — راجع التفاصيل"
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReplayScreen(navController: NavController, viewModel: FlightViewModel) {
-    val currentCartId = viewModel.cartId.collectAsStateWithLifecycle().value.orEmpty()
     var results by remember { mutableStateOf<List<ReplayResult>>(emptyList()) }
     var running by remember { mutableStateOf(false) }
 
@@ -58,38 +61,35 @@ fun ReplayScreen(navController: NavController, viewModel: FlightViewModel) {
         if (running) return
         running = true
         results = emptyList()
+
         viewModel.viewModelScope.launch {
             val payload = """{"key":"$CAPTURED_KEY","body":"$CAPTURED_BODY"}"""
 
-            if (currentCartId.isNotEmpty()) {
-                try {
-                    val resp = RetrofitClient.api.updateTravelerRaw(
-                        cartId = currentCartId,
-                        travelerId = CAPTURED_TRAVELER_ID,
-                        headers = viewModel.buildHeadersPublic("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                        request = payload.toRequestBody("application/json".toMediaType())
-                    )
-                    val body = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(empty)"
-                    results = results + ReplayResult("T1 (cartId الحالي)", currentCartId, resp.code(), body)
-                    kotlinx.coroutines.delay(1500)
-                } catch (e: Exception) {
-                    results = results + ReplayResult("T1 (cartId الحالي)", currentCartId, -1, e.message ?: "")
-                }
-            }
-
             try {
-                val resp2 = RetrofitClient.api.updateTravelerRaw(
+                val resp = RetrofitClient.api.updateTravelerRaw(
                     cartId = CAPTURED_CART_ID,
                     travelerId = CAPTURED_TRAVELER_ID,
-                    headers = viewModel.buildHeadersPublic("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    guestOfficeId = CAPTURED_GUEST_OFFICE,  // ← A وليس M
+                    headers = viewModel.buildHeadersPublic("2",
+                        "https://www.saudia.com/ar-SA/booking/passengerDetails"),
                     request = payload.toRequestBody("application/json".toMediaType())
                 )
-                val body2 = resp2.body()?.string() ?: resp2.errorBody()?.string() ?: "(empty)"
-                results = results + ReplayResult("T2 (cartId الملتقط)", CAPTURED_CART_ID, resp2.code(), body2)
+                val body = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(empty)"
+                results = results + ReplayResult(
+                    "T-A (guestOfficeId=JEDSV08AA)",
+                    CAPTURED_CART_ID,
+                    resp.code(),
+                    body
+                )
             } catch (e: Exception) {
-                results = results + ReplayResult("T2 (cartId الملتقط)", CAPTURED_CART_ID, -1, e.message ?: "")
+                results = results + ReplayResult(
+                    "T-A (exception)",
+                    CAPTURED_CART_ID,
+                    -1,
+                    e.message ?: ""
+                )
             }
-            
+
             running = false
         }
     }
@@ -99,45 +99,55 @@ fun ReplayScreen(navController: NavController, viewModel: FlightViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("🧪 اختبار Replay", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("إرسال {key, body} الملتقط مباشرة بدون تشفير جديد", style = MaterialTheme.typography.bodySmall)
-        
-        if (currentCartId.isNotEmpty()) {
-            Text("cartId الحالي: $currentCartId", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+        Text(
+            "إرسال {key, body} الحقيقيين إلى cartId الحقيقي بـ guestOfficeId=JEDSV08AA",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(10.dp)) {
+                Text("cartId: $CAPTURED_CART_ID", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                Text("guestOfficeId: $CAPTURED_GUEST_OFFICE", fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("key: ${CAPTURED_KEY.length} حرف", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                Text("body: ${CAPTURED_BODY.length} حرف", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+            }
         }
 
         Button(
             onClick = { runTests() },
             enabled = !running,
-            modifier = Modifier.fillMaxWidth().height(60.dp)
+            modifier = Modifier.fillMaxWidth().height(60.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
         ) {
             if (running) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
-                Text("جاري الاختبار...")
+                Text("جاري الإرسال...")
             } else {
-                Text("▶ تشغيل الاختبار", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("▶ اختبار الآن (قبل انتهاء السلة)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
         }
 
         results.forEach { r ->
-            Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(2.dp, r.color)) {
+            Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(3.dp, r.color)) {
                 Column(Modifier.padding(12.dp)) {
-                    Text(r.testName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                    Text("cartId: ${r.cartId}", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text("HTTP ${r.httpCode}", fontWeight = FontWeight.Bold, color = r.color, fontSize = 18.sp)
-                    Text(r.verdict, color = r.color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(r.testName, fontWeight = FontWeight.Bold)
+                    Text("HTTP ${r.httpCode}", fontWeight = FontWeight.Bold,
+                        color = r.color, fontSize = 20.sp)
+                    Text(r.verdict, color = r.color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     SelectionContainer {
-                        Text(r.body.take(400), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                        Text(r.body.take(500), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-        OutlinedButton(onClick = { navController.popBackStack() }, modifier = Modifier.fillMaxWidth()) {
-            Text("← رجوع")
-        }
+        Spacer(Modifier.height(20.dp))
+        OutlinedButton(
+            onClick = { navController.popBackStack() },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("← رجوع") }
     }
 }
