@@ -10,7 +10,9 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,15 +42,25 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     var apiSuccess by remember { mutableStateOf(false) }
     var apiResultCode by remember { mutableStateOf(0) }
     var apiResultBody by remember { mutableStateOf("") }
+    var patchUrl by remember { mutableStateOf("") }
+    var patchBodySize by remember { mutableStateOf(0) }
     var patchSent by remember { mutableStateOf(false) }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     val bridge = remember {
         object {
             @JavascriptInterface
+            fun onPatchRequest(url: String, bodySize: Int) {
+                Handler(Looper.getMainLooper()).post {
+                    patchUrl = url
+                    patchBodySize = bodySize
+                    status = "📤 PATCH يُرسل من WebView... body=$bodySize"
+                }
+            }
+
+            @JavascriptInterface
             fun onPatchResponse(statusCode: Int, responseBody: String) {
                 Handler(Looper.getMainLooper()).post {
-                    // حفظ كوكيز WebView (مهمة للدفع)
+                    // حفظ كوكيز WebView
                     val cm = CookieManager.getInstance()
                     val sauCookies = cm.getCookie("https://www.saudia.com") ?: ""
                     val dapiCookies = cm.getCookie("https://dapi.saudia.com") ?: ""
@@ -59,9 +71,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         .trim()
                         .trimStart(';', ' ')
 
-                    prefs.edit()
-                        .putString("dynamic_cookies", merged)
-                        .apply()
+                    prefs.edit().putString("dynamic_cookies", merged).apply()
 
                     apiResultCode = statusCode
                     apiResultBody = responseBody
@@ -69,18 +79,10 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                     if (statusCode == 200) {
                         apiSuccess = true
-                        status = "🎉 نجح! السيرفر قبـل بيانات المسافر (كو كيز محدّثة لـ ${merged.length}ch)"
-                        webViewRef?.visibility = WebView.INVISIBLE
+                        status = "🎉 نجح! (body كان $patchBodySize حرفاً)"
                     } else {
-                        status = "❌ فشل: HTTP $statusCode"
+                        status = "❌ فشل: HTTP $statusCode (body كان $patchBodySize حرفاً)"
                     }
-                }
-            }
-
-            @JavascriptInterface
-            fun onFormFilled() {
-                Handler(Looper.getMainLooper()).post {
-                    status = "📝 الفورم مُلئ. جاري الضغط على 'تأكيد بيانات المسافر'..."
                 }
             }
 
@@ -99,27 +101,49 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // ── تعليمات واضحة ──
         Card(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
         ) {
             Column(Modifier.padding(12.dp)) {
-                Text("🤖 تأكيد تلقائي — WebView يرسل، نلتقط الرد فقط", fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                Text(status, style = MaterialTheme.typography.bodySmall)
-                if (progress in 1..99 && !patchSent) {
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
-                }
-                Text("cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                Text("📝 املأ الفورم يدوياً", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text(
+                    "1. انزل في الصفحة أسفل\n" +
+                    "2. املأ: الاسم الأول، اسم العائلة، تاريخ الميلاد، رقم الهوية\n" +
+                    "3. اضغط زر \"تأكيد بيانات المسافر\"\n" +
+                    "4. راقب الرسالة أعلى الشاشة",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 11.sp
+                )
             }
         }
 
+        // ── حالة ──
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(Modifier.padding(10.dp)) {
+                Text(status, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                if (progress in 1..99) {
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                }
+                if (patchUrl.isNotEmpty()) {
+                    Text("URL: ${patchUrl.take(80)}...", fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                }
+                if (patchBodySize > 0) {
+                    Text("حجم body المُرسل: $patchBodySize حرف", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // ── WebView (مرئي دائماً) ──
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             factory = { ctx ->
                 WebView(ctx).apply {
-                    webViewRef = this
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
@@ -138,9 +162,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     }
 
                     webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                            progress = newProgress
-                        }
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) { progress = newProgress }
                     }
 
                     webViewClient = object : WebViewClient() {
@@ -156,42 +178,22 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                                     if (window.__saudiaHooked) return;
                                     window.__saudiaHooked = true;
                                     
-                                    // ⭐ نمرر الطلب ولا نمنعه، فقط نلتقط الـ Response
                                     var origFetch = window.fetch;
                                     window.fetch = function(input, init) {
                                         var url = typeof input === 'string' ? input : (input && input.url);
                                         var method = ((init && init.method) || 'GET').toUpperCase();
                                         if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
-                                            SaudiaBridge.onLog('PATCH letting through: '+url);
+                                            var bodySize = (init && init.body) ? init.body.length : 0;
+                                            SaudiaBridge.onPatchRequest(url, bodySize);
                                             var promise = origFetch.apply(this, arguments);
                                             promise.then(function(response) {
                                                 response.clone().text().then(function(text) {
                                                     SaudiaBridge.onPatchResponse(response.status, text);
                                                 });
-                                            }).catch(function(e) {
-                                                SaudiaBridge.onLog('PATCH err: '+e.message);
                                             });
                                             return promise;
                                         }
                                         return origFetch.apply(this, arguments);
-                                    };
-
-                                    // دعم XHR أيضاً (احتياط)
-                                    var origOpen = XMLHttpRequest.prototype.open;
-                                    var origSend = XMLHttpRequest.prototype.send;
-                                    XMLHttpRequest.prototype.open = function(m, u) {
-                                        this.__m = (m||'').toUpperCase();
-                                        this.__u = u;
-                                        return origOpen.apply(this, arguments);
-                                    };
-                                    XMLHttpRequest.prototype.send = function() {
-                                        var self = this;
-                                        if (self.__u && self.__u.indexOf('/travelers/web') > -1 && self.__m === 'PATCH') {
-                                            self.addEventListener('load', function() {
-                                                try { SaudiaBridge.onPatchResponse(self.status, self.responseText); } catch(e){}
-                                            });
-                                        }
-                                        return origSend.apply(this, arguments);
                                     };
                                 })();
                             """.trimIndent(), null)
@@ -199,10 +201,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            if (url == null || patchSent) return
-                            if (url.contains("passengerDetails")) {
-                                status = "📄 انتظار تحميل الفورم (6 ثوانٍ)..."
-                                view?.postDelayed({ fillAndClickConfirm(view) }, 6000)
+                            if (url == null) return
+                            if (url.contains("passengerDetails") && !patchSent) {
+                                status = "✅ الصفحة جاهزة — املأ الفورم يدوياً"
                             }
                         }
                     }
@@ -212,19 +213,21 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         )
 
+        // ── نتيجة ──
         if (patchSent) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (apiSuccess) MaterialTheme.colorScheme.primaryContainer
-                                     else MaterialTheme.colorScheme.errorContainer
-                )
+                border = BorderStroke(2.dp,
+                    if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
             ) {
-                Text(
-                    "HTTP ${apiResultCode}\n\n${apiResultBody.take(700)}",
-                    modifier = Modifier.padding(12.dp),
-                    fontFamily = FontFamily.Monospace, fontSize = 10.sp
-                )
+                Column(Modifier.padding(10.dp)) {
+                    Text("HTTP $apiResultCode", fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                        color = if (apiSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.height(4.dp))
+                    SelectionContainer {
+                        Text(apiResultBody.take(500), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                    }
+                }
             }
         }
 
@@ -242,69 +245,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         }
 
-        if (!patchSent) {
+        if (patchSent && !apiSuccess) {
             OutlinedButton(
-                onClick = {
-                    status = "🔄 إعادة المحاولة..."
-                    webViewRef?.reload()
-                },
+                onClick = { navController.popBackStack() },
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
-            ) { Text("🔄 إعادة تحميل") }
+            ) { Text("← رجوع للبدء من جديد") }
         }
     }
-}
-
-private fun fillAndClickConfirm(view: WebView) {
-    val js = """
-        (function() {
-            function setVal(name, val) {
-                var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
-                if (!el) return false;
-                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                setter.call(el, val);
-                el.dispatchEvent(new Event('input', {bubbles:true}));
-                el.dispatchEvent(new Event('change', {bubbles:true}));
-                el.dispatchEvent(new Event('blur', {bubbles:true}));
-                return true;
-            }
-            var attempts = 0;
-            var iv = setInterval(function() {
-                attempts++;
-                var fnOk = setVal('firstName', 'Khaled');
-                var lnOk = setVal('lastName', 'Otudi');
-                setVal('dateOfBirth', '1990-05-10');
-                setVal('nationalId', '1071580342');
-                setVal('documentNumber', '1071580342');
-                if (fnOk && lnOk) {
-                    clearInterval(iv);
-                    SaudiaBridge.onFormFilled();
-                    setTimeout(function() {
-                        var btns = document.querySelectorAll('button');
-                        for (var i = 0; i < btns.length; i++) {
-                            var t = (btns[i].innerText || '').trim();
-                            if (t.indexOf('تأكيد بيانات') > -1 || t.indexOf('تأكيد المسافر') > -1) {
-                                SaudiaBridge.onLog('CLICKED: '+t);
-                                btns[i].click();
-                                return;
-                            }
-                        }
-                        for (var j = 0; j < btns.length; j++) {
-                            var t2 = (btns[j].innerText || '').trim();
-                            if (t2.indexOf('تأكيد') > -1 && t2.indexOf('انتقال') === -1 && t2.indexOf('دفع') === -1) {
-                                SaudiaBridge.onLog('CLICKED (fallback): '+t2);
-                                btns[j].click();
-                                return;
-                            }
-                        }
-                        SaudiaBridge.onLog('NO BUTTON FOUND');
-                    }, 1500);
-                }
-                if (attempts > 30) {
-                    clearInterval(iv);
-                    SaudiaBridge.onLog('GAVE UP');
-                }
-            }, 500);
-        })();
-    """.trimIndent()
-    view.evaluateJavascript(js, null)
 }
