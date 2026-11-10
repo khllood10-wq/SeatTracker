@@ -67,27 +67,26 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
 
         HorizontalDivider()
 
-        // ── الزر الرئيسي: التأكيد التلقائي (WebView) ──
         if (!cartId.isNullOrEmpty()) {
+            // زر التأكيد التلقائي
             Button(
                 onClick = { navController.navigate(Screen.AutoConfirm.route) },
                 modifier = Modifier.fillMaxWidth().height(64.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
-                Text(
-                    "🤖 تأكيد تلقائي (يستخدم كود الموقع)",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
-                )
+                Text("🤖 تأكيد تلقائي (WebView)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
-            Text(
-                "يفتح صفحة المسافرين الحقيقية في الخلفية، يملأ البيانات تلقائياً، ويضغط 'تأكيد' — الموقع يتولى التشفير والإرسال.",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+
+            // زر اختبار Replay
+            OutlinedButton(
+                onClick = { navController.navigate(Screen.Replay.route) },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.tertiary)
+            ) {
+                Text("🧪 اختبار Replay (بدون WebView)", fontWeight = FontWeight.Bold)
+            }
         }
 
-        // ── سجل الأحداث ──
         if (logs.isNotEmpty()) {
             Text("سجل الأحداث:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
@@ -97,12 +96,7 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
                         logs.take(20).forEach { line ->
-                            Text(
-                                text = line,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(vertical = 1.dp)
-                            )
+                            Text(text = line, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
                         }
                     }
                 }
@@ -111,7 +105,6 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
 
         HorizontalDivider()
 
-        // ── استجابة السلة ──
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
