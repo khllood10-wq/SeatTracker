@@ -75,47 +75,36 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
 
         HorizontalDivider()
 
-        if (!cartId.isNullOrEmpty() && !hasKey) {
-            Text("لا يوجد مفتاح تشفير محفوظ.", style = MaterialTheme.typography.titleSmall)
+        // ── الزر الرئيسي: التأكيد التلقائي ──
+        if (!cartId.isNullOrEmpty()) {
             Button(
-                onClick = {
-                    prefs.edit().putString("cart_id_for_capture", cartId).apply()
-                    navController.navigate(Screen.KeyCapture.route)
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-            ) { Text("🔐 التقاط المفتاح (مرة واحدة)", fontWeight = FontWeight.Bold) }
-        }
-
-        if (hasKey && !cartId.isNullOrEmpty()) {
-            Text("✅ المفتاح محفوظ", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-
-            // ⭐ زر التشخيص الجديد
-            Button(
-                onClick = { viewModel.runCryptoDiagnostic() },
+                onClick = { navController.navigate(Screen.AutoConfirm.route) },
                 modifier = Modifier.fillMaxWidth().height(64.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text("🔬 تشغيل مصفوفة التشخيص (T0–T6)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            }
-
-            Button(
-                onClick = { viewModel.sendEncryptedPassengerPayload() },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-            ) { Text("🔐 إرسال PATCH مشفر (الشكل الأصلي)", fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+            ) {
+                Text(
+                    "🤖 تأكيد تلقائي (يستخدم كود الموقع)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            }
+            Text(
+                "يفتح صفحة المسافرين الحقيقية، يملأ البيانات تلقائياً، يضغط 'تأكيد' — الموقع يتولى التشفير",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
 
-        // سجل التشخيص الحي
+        // ── سجل الأحداث ──
         if (logs.isNotEmpty()) {
-            Text("سجل التشخيص:", style = MaterialTheme.typography.titleSmall)
+            Text("سجل الأحداث:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
-                        logs.take(30).forEach { line ->
+                        logs.take(20).forEach { line ->
                             Text(
                                 text = line,
                                 fontFamily = FontFamily.Monospace,
@@ -129,7 +118,7 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
         }
 
         if (confirmResponse.isNotEmpty()) {
-            Text("النتائج الخام:", style = MaterialTheme.typography.titleSmall)
+            Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -138,7 +127,7 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
                     Text(
                         text = confirmResponse,
                         modifier = Modifier.padding(12.dp),
-                        fontFamily = FontFamily.Monospace, fontSize = 9.sp
+                        fontFamily = FontFamily.Monospace, fontSize = 10.sp
                     )
                 }
             }
@@ -146,6 +135,7 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
 
         HorizontalDivider()
 
+        // ── استجابة السلة ──
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
