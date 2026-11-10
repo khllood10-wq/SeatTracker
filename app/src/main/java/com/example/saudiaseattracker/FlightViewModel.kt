@@ -2,7 +2,6 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
-import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -294,7 +293,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🧪 اختبار تشخيصي — أبسط جسد + تشفير واحد فقط
+    //  🧪 اختبار 3 متغيرات RSA + headers بدون x-v-token
     // ═══════════════════════════════════════════════════════════
     fun sendEncryptedPassengerPayload() {
         val cartId = _cartId.value
@@ -310,50 +309,60 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
+        addLog("🔑 المفتاح المحفوظ (${rsaPem.length} حرف): ${rsaPem.take(60)}...")
+
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             addLog("═══════════════════════════════════════")
-            addLog("🧪 اختبار تشخيصي: أبسط جسد + تشفير واحد")
+            addLog("🧪 اختبار 3 متغيرات (بدون x-v-token + bodyid)")
 
             val plainJson = """{"passengerTypeCode":"ADT"}"""
-            addLog("📝 JSON: $plainJson")
-            addLog("📏 حجم JSON: ${plainJson.toByteArray().size} byte")
 
-            try {
-                val (keyB64, bodyHex) = HybridEncryptor.encrypt(
-                    plainJson, rsaPem, HybridEncryptor.Variant.PKCS1_RAW_CBC
-                )
-                addLog("🔑 key=${keyB64.length}ch, body=${bodyHex.length}ch")
+            val rsaModes = listOf(
+                HybridEncryptor.RsaMode.PKCS1,
+                HybridEncryptor.RsaMode.OAEP_SHA256_MGF1_SHA256,
+                HybridEncryptor.RsaMode.OAEP_SHA256_MGF1_SHA1,
+            )
 
-                val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
-                addLog("📦 حجم الـ payload: ${payload.toByteArray().size} byte")
+            for (mode in rsaModes) {
+                try {
+                    addLog("─── ${mode.name} ───")
+                    val (keyB64, bodyHex) = HybridEncryptor.encrypt(plainJson, rsaPem, mode)
+                    addLog("key=${keyB64.length}ch, body=${bodyHex.length}ch")
 
-                val requestBody = payload.toRequestBody("application/json".toMediaType())
+                    val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
+                    val requestBody = payload.toRequestBody("application/json".toMediaType())
 
-                val resp = RetrofitClient.api.updateTravelerRaw(
-                    cartId = cartId,
-                    travelerId = "SKH-1-EXT",
-                    headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                    request = requestBody
-                )
-                saveCookiesFromResponse(resp)
-                val code = resp.code()
-                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
+                    // استخدام headers بدون x-v-token
+                    val headers = buildHeaders(
+                        "2",
+                        isWebEndpoint = false,
+                        referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
+                    )
 
-                addLog("═══════════════════════════════════════")
-                addLog("📡 النتيجة: HTTP $code")
-                val displayBody = if (respBody.isEmpty()) "(empty)" else respBody
-                _passengerConfirmResponse.value = "HTTP $code\n\n$displayBody"
+                    val resp = RetrofitClient.api.updateTravelerRaw(
+                        cartId = cartId,
+                        travelerId = "SKH-1-EXT",
+                        headers = headers,
+                        request = requestBody
+                    )
+                    saveCookiesFromResponse(resp)
+                    val code = resp.code()
+                    val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
 
-                if (code == 200) {
-                    addLog("🎉 التشفير يعمل! المشكلة كانت في الحقول الأخرى")
-                } else {
-                    addLog("⚠️ التشفير لا يعمل — راجع الرد أعلاه")
+                    addLog("📡 ${mode.name} → HTTP $code")
+                    val displayBody = if (respBody.isEmpty()) "(empty)" else respBody.take(200)
+                    _passengerConfirmResponse.value = "${mode.name} → HTTP $code\n\n$displayBody"
+
+                    if (code == 200) {
+                        addLog("🎉🎉🎉 نجح! المتغير: ${mode.name}")
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    addLog("❌ ${mode.name}: ${e.message}")
                 }
-            } catch (e: Exception) {
-                addLog("❌ استثناء: ${e.message}")
-                _passengerConfirmResponse.value = "Exception: ${e.message}"
             }
+            addLog("⚠️ كل المتغيرات فشلت")
         }
     }
 
