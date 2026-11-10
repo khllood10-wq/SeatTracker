@@ -169,7 +169,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            if (url == null) return
+                            if (url == null || view == null) return
                             
                             // إذا كانت الصفحة الرئيسية، ابدأ إنشاء السلة
                             if (url.contains("saudia.com/ar-SA") && !url.contains("booking") && !isStarted) {
@@ -179,7 +179,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                             
                             // إذا كانت صفحة المسافرين، املأ الفورم واضغط تأكيد
                             if (url.contains("passengerDetails") && !isDone) {
-                                bridge.onFillForm() // ⬅️ تم تصحيح هذا السطر
+                                bridge.onFillForm()
                                 view.postDelayed({
                                     view.evaluateJavascript("""
                                         (function() {
