@@ -267,80 +267,100 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     }
 }
 
-// 🪄 دالة JavaScript التي تقوم بكل السحر (استخراج المفتاح + التشفير + الإرسال)
+// 🪄 الدالة الذكية للبحث عن المفتاح وتشفير البيانات
 fun getEncryptionJS(cartId: String, authToken: String, xDToken: String, sessionId: String): String {
     return """
-        (function() {
-            var cartId = '$cartId';
-            var authToken = '$authToken';
-            var xDToken = '$xDToken';
-            var sessionId = '$sessionId';
-            
-            async function run() {
-                try {
-                    SaudiaBridge.onLog('Fetching JS bundle to find RSA key...');
-                    let res = await fetch('https://www.saudia.com/dist/SaudiaWebApp/prod/browser/chunk-QUL4NBYT.js');
-                    let txt = await res.text();
-                    let keyMatch = txt.match(/MII[A-Za-z0-9+/]{200,}/g);
-                    if (!keyMatch) throw new Error("Key not found in bundle");
-                    let rsaPem = "-----BEGIN PUBLIC KEY-----\n" + keyMatch[0] + "\n-----END PUBLIC KEY-----";
-                    
-                    SaudiaBridge.onLog('Building payload...');
-                    let plaintext = JSON.stringify([{
-                        tid: null, id: "SKH-1-EXT", title: "Mr", passengerTypeCode: "ADT",
-                        firstName: "Khaled", lastName: "Otudi", dateOfBirth: "1991-05-09T21:00:00.000Z",
-                        nationality: "SA", rememberMe: true, uuid: cartId + "SKH-1-EXT",
-                        travellerDoc: {
-                            docType: "National ID", passportNumber: "", expiryDate: "",
-                            issuingCountry: "", nationalId: "1071580342", gccId: "",
-                            residentId: "", number: "1071580342", id: null
+        (async function() {
+            try {
+                let cartId = '$cartId';
+                let authToken = '$authToken';
+                let xDToken = '$xDToken';
+                let sessionId = '$sessionId';
+                
+                SaudiaBridge.onLog('Searching for RSA key dynamically...');
+                
+                // 1. البحث في كل ملفات الجافاسكريبت التي حملتها الصفحة
+                let urls = [
+                    'https://www.saudia.com/dist/SaudiaWebApp/prod/browser/chunk-QUL4NBYT.js',
+                    'https://www.saudia.com/dist/SaudiaWebApp/prod/browser/chunk-CH3OOBPT.js'
+                ];
+                let scripts = Array.from(document.scripts).map(s => s.src).filter(s => s && s.includes('.js'));
+                let resources = performance.getEntriesByType('resource').map(r => r.name).filter(n => n.includes('.js'));
+                urls = urls.concat(scripts).concat(resources);
+                
+                let rsaPem = null;
+                for (let u of urls) {
+                    if (!u || !u.includes('saudia.com')) continue;
+                    try {
+                        let res = await fetch(u);
+                        let txt = await res.text();
+                        // البحث عن أي مفتاح يبدأ بـ MII
+                        let m = txt.match(/MII[A-Za-z0-9+/=\s]{200,}/g);
+                        if (m) {
+                            rsaPem = "-----BEGIN PUBLIC KEY-----\n" + m[0].replace(/\s+/g, '') + "\n-----END PUBLIC KEY-----";
+                            SaudiaBridge.onLog('Key found in: ' + u.split('/').pop().substring(0, 20));
+                            break;
                         }
-                    }]);
-
-                    SaudiaBridge.onLog('Encrypting...');
-                    let aesKey = await crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["encrypt"]);
-                    let iv = crypto.getRandomValues(new Uint8Array(16));
-                    let encBodyBuffer = await crypto.subtle.encrypt({ name: "AES-CBC", iv: iv }, aesKey, new TextEncoder().encode(plaintext));
-                    
-                    let bodyBytes = new Uint8Array(iv.length + encBodyBuffer.byteLength);
-                    bodyBytes.set(iv, 0);
-                    bodyBytes.set(new Uint8Array(encBodyBuffer), iv.length);
-                    let bodyHex = Array.from(bodyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
-                    let rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
-                    let pemContents = rsaPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, '').replace(/\s/g, '');
-                    let binaryDerString = atob(pemContents);
-                    let binaryDer = new Uint8Array(binaryDerString.length);
-                    for (let i = 0; i < binaryDerString.length; i++) binaryDer[i] = binaryDerString.charCodeAt(i);
-                    let publicKey = await crypto.subtle.importKey("spki", binaryDer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
-                    let encKeyBuffer = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawAesKey);
-                    let keyBase64 = btoa(String.fromCharCode.apply(null, new Uint8Array(encKeyBuffer)));
-
-                    let payload = JSON.stringify({ key: keyBase64, body: bodyHex });
-                    SaudiaBridge.onPatchRequest(payload.length);
-                    
-                    var xhr = new XMLHttpRequest();
-                    xhr.open("PATCH", "https://dapi.saudia.com/shopping/carts/" + cartId + "/travelers/web/SKH-1-EXT?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
-                    xhr.setRequestHeader("Content-Type", "application/json");
-                    xhr.setRequestHeader("Authorization", authToken);
-                    xhr.setRequestHeader("x-d-token", xDToken);
-                    xhr.setRequestHeader("saa-session-id", sessionId);
-                    xhr.setRequestHeader("x-api-version", "2");
-                    xhr.setRequestHeader("platform", "Web");
-                    xhr.setRequestHeader("version", "27.2");
-                    xhr.setRequestHeader("channel", "MOBILE_WEB");
-                    
-                    xhr.onreadystatechange = function() {
-                        if (xhr.readyState === 4) {
-                            SaudiaBridge.onPatchResponse(xhr.status, xhr.responseText);
-                        }
-                    };
-                    xhr.send(payload);
-                } catch(e) {
-                    SaudiaBridge.onLog('Encryption Error: ' + e.message);
+                    } catch(e) {}
                 }
+                
+                if (!rsaPem) throw new Error("RSA key not found in any loaded script");
+                
+                SaudiaBridge.onLog('Building payload...');
+                let plaintext = JSON.stringify([{
+                    tid: null, id: "SKH-1-EXT", title: "Mr", passengerTypeCode: "ADT",
+                    firstName: "Khaled", lastName: "Otudi", dateOfBirth: "1991-05-09T21:00:00.000Z",
+                    nationality: "SA", rememberMe: true, uuid: cartId + "SKH-1-EXT",
+                    travellerDoc: {
+                        docType: "National ID", passportNumber: "", expiryDate: "",
+                        issuingCountry: "", nationalId: "1071580342", gccId: "",
+                        residentId: "", number: "1071580342", id: null
+                    }
+                }]);
+
+                SaudiaBridge.onLog('Encrypting...');
+                let aesKey = await crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["encrypt"]);
+                let iv = crypto.getRandomValues(new Uint8Array(16));
+                let encBodyBuffer = await crypto.subtle.encrypt({ name: "AES-CBC", iv: iv }, aesKey, new TextEncoder().encode(plaintext));
+                
+                let bodyBytes = new Uint8Array(iv.length + encBodyBuffer.byteLength);
+                bodyBytes.set(iv, 0);
+                bodyBytes.set(new Uint8Array(encBodyBuffer), iv.length);
+                let bodyHex = Array.from(bodyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+                let rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
+                let pemContents = rsaPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, '').replace(/\s/g, '');
+                let binaryDerString = atob(pemContents);
+                let binaryDer = new Uint8Array(binaryDerString.length);
+                for (let i = 0; i < binaryDerString.length; i++) binaryDer[i] = binaryDerString.charCodeAt(i);
+                
+                let publicKey = await crypto.subtle.importKey("spki", binaryDer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+                let encKeyBuffer = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawAesKey);
+                let keyBase64 = btoa(String.fromCharCode.apply(null, new Uint8Array(encKeyBuffer)));
+
+                let payload = JSON.stringify({ key: keyBase64, body: bodyHex });
+                SaudiaBridge.onPatchRequest(payload.length);
+                
+                var xhr = new XMLHttpRequest();
+                xhr.open("PATCH", "https://dapi.saudia.com/shopping/carts/" + cartId + "/travelers/web/SKH-1-EXT?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
+                xhr.setRequestHeader("Content-Type", "application/json");
+                xhr.setRequestHeader("Authorization", authToken);
+                xhr.setRequestHeader("x-d-token", xDToken);
+                xhr.setRequestHeader("saa-session-id", sessionId);
+                xhr.setRequestHeader("x-api-version", "2");
+                xhr.setRequestHeader("platform", "Web");
+                xhr.setRequestHeader("version", "27.2");
+                xhr.setRequestHeader("channel", "MOBILE_WEB");
+                
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === 4) {
+                        SaudiaBridge.onPatchResponse(xhr.status, xhr.responseText);
+                    }
+                };
+                xhr.send(payload);
+            } catch(e) {
+                SaudiaBridge.onLog('Encryption Error: ' + e.message);
             }
-            run();
         })();
     """.trimIndent()
 }
