@@ -45,6 +45,7 @@ fun AppNavigation() {
             composable(Screen.AutoConfirm.route) { AutoConfirmScreen(navController, viewModel) }
             composable(Screen.Replay.route) { ReplayScreen(navController, viewModel) }
             composable(Screen.UnencryptedPassenger.route) { UnencryptedPassengerScreen(navController, viewModel) }
+            composable(Screen.Order.route) { OrderScreen(navController, viewModel) }
             composable(Screen.Payment.route) { PaymentScreen(navController, viewModel) }
             composable(Screen.KeyCapture.route) { KeyCaptureScreen(navController) }
         }
