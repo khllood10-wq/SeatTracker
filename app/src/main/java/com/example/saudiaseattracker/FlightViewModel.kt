@@ -12,6 +12,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
@@ -57,15 +59,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _searchLogs.value = curr
     }
 
-    // ⭐ الدالة الجديدة التي يطلبها الـ WebView لتحديث السلة
     fun updateCartId(newId: String) {
         _cartId.value = newId
-        addLog("🔄 تم تحديث cartId إلى: $newId")
+        addLog("🔄 cartId: $newId")
     }
 
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
-        val prefs = getApplication<Application>()
-            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("auth_token", auth)
             .putString("xd_token", xDToken)
@@ -76,30 +76,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun getSavedAuthToken(): String? =
-        getApplication<Application>()
-            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-            .getString("auth_token", null)
-
+        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
     private fun getSavedXDToken(): String? =
-        getApplication<Application>()
-            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-            .getString("xd_token", null)
-
+        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
     private fun getSavedSessionId(): String? =
-        getApplication<Application>()
-            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-            .getString("session_id", null)
-
+        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
     private fun getSavedDynamicCookies(): String? =
-        getApplication<Application>()
-            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-            .getString("dynamic_cookies", null)
+        getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
 
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isEmpty()) return
-        val prefs = getApplication<Application>()
-            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val current = prefs.getString("dynamic_cookies", "") ?: ""
         val cookieMap = mutableMapOf<String, String>()
         if (current.isNotEmpty()) {
@@ -163,6 +151,45 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun buildHeadersPublic(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         return buildHeaders(apiVersion, includeXVToken = false, referer = referer)
+    }
+
+    // ⭐⭐ الدالة الجديدة الحاسمة — تأكيد المسافر بدون تشفير
+    fun confirmPassenger() {
+        val cartId = _cartId.value
+        if (cartId.isNullOrEmpty()) {
+            _passengerConfirmResponse.value = "❌ لا يوجد cartId"
+            return
+        }
+
+        viewModelScope.launch {
+            _passengerConfirmResponse.value = "⏳ جاري إرسال بيانات المسافر عبر API..."
+            addLog("📤 إرسال PATCH → /travelers/SKH-1-EXT")
+
+            val payload = """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-10","names":[{"firstName":"Khaled","lastName":"Otudi","title":"Mr","nameType":"universal"}],"regulatoryDetails":[{"regulatoryApisType":"ApisDetailRegulatoryDocument","regulatoryDocument":{"number":"1071580342","name":{"firstName":"KHALED","lastName":"OTUDI","nameType":"universal"},"nationalityCode":"SA","gender":"male","birthDate":"1991-05-10","documentType":"identityCard"}}]}"""
+
+            try {
+                val resp = RetrofitClient.api.updateTravelerRaw(
+                    cartId = cartId,
+                    travelerId = "SKH-1-EXT",
+                    headers = buildHeadersPublic("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    request = payload.toRequestBody("application/json".toMediaType())
+                )
+                saveCookiesFromResponse(resp)
+                val body = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(فارغ)"
+                val code = resp.code()
+
+                if (code == 200) {
+                    _passengerConfirmResponse.value = "🎉 نجح! HTTP 200\n\n$body"
+                    addLog("🎉 تأكيد المسافر نجح!")
+                } else {
+                    _passengerConfirmResponse.value = "❌ HTTP $code\n\n$body"
+                    addLog("❌ فشل: HTTP $code")
+                }
+            } catch (e: Exception) {
+                _passengerConfirmResponse.value = "❌ استثناء: ${e.message}"
+                addLog("❌ استثناء: ${e.message}")
+            }
+        }
     }
 
     fun startSearchingFlight(flightNumber: String) {
@@ -308,11 +335,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🛂 [5/5] فحص GACA...")
                 RetrofitClient.api.getGacaMandate(
-                    headers = buildHeaders(
-                        "1",
-                        includeXVToken = true,
-                        referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"
-                    ),
+                    headers = buildHeaders("1", includeXVToken = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
                     request = GacaMandateRequest()
                 ).let {
                     saveCookiesFromResponse(it)
@@ -320,7 +343,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 addLog("═".repeat(40))
-                addLog("🎯 جاهز للتأكيد التلقائي.")
+                addLog("🎯 جاهز لتأكيد المسافر.")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
             }
