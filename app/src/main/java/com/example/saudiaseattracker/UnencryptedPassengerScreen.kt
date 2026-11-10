@@ -33,12 +33,14 @@ data class TestResult(
         else -> Color(0xFFD32F2F)
     }
     val verdict: String get() = when {
-        code == 200 -> "✅ نجح! السيرفر قبـل البيانات"
+        code == 200 -> "🎉 نجح! السيرفر قبـل البيانات كاملة"
         code == 404 -> "⚠️ السلة انتهت"
-        body.contains("Unexpected attribute") -> "❌ حقل مرفوض"
-        body.contains("passengerTypeCode") -> "❌ passengerTypeCode مفقود"
-        body.contains("firstName") -> "❌ firstName مرفوض"
-        body.contains("should") -> "🟠 خطأ في القيمة"
+        body.contains("dateOfBirth") -> "🟠 تاريخ الميلاد — تحقق من الصيغة"
+        body.contains("firstName") -> "🟠 firstName مطلوب"
+        body.contains("lastName") -> "🟠 lastName مطلوب"
+        body.contains("nationality") -> "🟠 nationality مطلوب"
+        body.contains("travellerDoc") -> "🟠 travellerDoc مطلوب"
+        body.contains("Unexpected") -> "❌ حقل مرفوض"
         else -> "⚠️ راجع التفاصيل"
     }
 }
@@ -60,28 +62,30 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
             val travelerId = "SKH-1-EXT"
             val uuid = "$cartId$travelerId"
 
-            // جميع أشكال الـ payload المحتملة
+            // ⭐ التصحيح: dateOfBirth بصيغة YYYY-MM-DD فقط
+            val dob = "1991-05-10"
+
             val tests = listOf(
-                "T1: 3 حقول (object)" to
-                    """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-09T21:00:00.000Z"}""",
+                "U1: 3 حقول + date صحيح" to
+                    """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob"}""",
 
-                "T2: 3 حقول (array)" to
-                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-09T21:00:00.000Z"}]""",
+                "U2: U1 (array)" to
+                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob"}]""",
 
-                "T3: names array + 3 حقول" to
-                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-09T21:00:00.000Z","names":[{"firstName":"Khaled","lastName":"Otudi","title":"Mr","nameType":"universal"}]}]""",
+                "U3: names array" to
+                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob","names":[{"firstName":"Khaled","lastName":"Otudi","title":"Mr","nameType":"universal"}]}]""",
 
-                "T4: flat firstName/lastName" to
-                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-09T21:00:00.000Z","firstName":"Khaled","lastName":"Otudi","title":"Mr"}]""",
+                "U4: flat names" to
+                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob","firstName":"Khaled","lastName":"Otudi","title":"Mr"}]""",
 
-                "T5: + nationality" to
-                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-09T21:00:00.000Z","firstName":"Khaled","lastName":"Otudi","title":"Mr","nationality":"SA"}]""",
+                "U5: + nationality" to
+                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob","firstName":"Khaled","lastName":"Otudi","title":"Mr","nationality":"SA"}]""",
 
-                "T6: + travellerDoc" to
-                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-09T21:00:00.000Z","firstName":"Khaled","lastName":"Otudi","title":"Mr","nationality":"SA","travellerDoc":{"docType":"National ID","nationalId":"1071580342","number":"1071580342"}}]""",
+                "U6: + travellerDoc" to
+                    """[{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"$dob","firstName":"Khaled","lastName":"Otudi","title":"Mr","nationality":"SA","travellerDoc":{"docType":"National ID","nationalId":"1071580342","number":"1071580342"}}]""",
 
-                "T7: full /web format" to
-                    """[{"tid":null,"id":"$travelerId","title":"Mr","passengerTypeCode":"ADT","firstName":"Khaled","lastName":"Otudi","dateOfBirth":"1991-05-09T21:00:00.000Z","nationality":"SA","rememberMe":true,"uuid":"$uuid","travellerDoc":{"docType":"National ID","passportNumber":"","expiryDate":"","issuingCountry":"","nationalId":"1071580342","gccId":"","residentId":"","number":"1071580342","id":null}}]"""
+                "U7: full /web format" to
+                    """[{"tid":null,"id":"$travelerId","title":"Mr","passengerTypeCode":"ADT","firstName":"Khaled","lastName":"Otudi","dateOfBirth":"$dob","nationality":"SA","rememberMe":true,"uuid":"$uuid","travellerDoc":{"docType":"National ID","passportNumber":"","expiryDate":"","issuingCountry":"","nationalId":"1071580342","gccId":"","residentId":"","number":"1071580342","id":null}}]"""
             )
 
             for ((name, payload) in tests) {
@@ -99,6 +103,9 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
                     )
                     val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: "(فارغ)"
                     results = results + TestResult(name, resp.code(), respBody)
+
+                    // إذا نجح أحد الاختبارات، توقف
+                    if (resp.code() == 200) break
                 } catch (e: Exception) {
                     results = results + TestResult(name, -1, e.message ?: "exception")
                 }
@@ -113,21 +120,21 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
         modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("🔓 اختبار بدون تشفير", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("🔓 اختبار بدون تشفير (v2)", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(
-            "يرسل 7 أشكال مختلفة من البيانات (بدون تشفير) إلى /travelers/{id} ونرى أيها يُقبل",
+            "dateOfBirth بصيغة YYYY-MM-DD — نتوقف عند أول 200",
             style = MaterialTheme.typography.bodySmall
         )
 
         if (cartId.isNullOrEmpty()) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                Text("❌ لا يوجد cartId — عد لشاشة المسافرين وأنشئ سلة", Modifier.padding(12.dp))
+                Text("❌ لا يوجد cartId", Modifier.padding(12.dp))
             }
         } else {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(10.dp)) {
                     Text("cartId: $cartId", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                    Text("travelerId: SKH-1-EXT", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    Text("التاريخ المرسل: 1991-05-10", fontSize = 11.sp)
                 }
             }
 
@@ -140,25 +147,21 @@ fun UnencryptedPassengerScreen(navController: NavController, viewModel: FlightVi
                 if (running) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text("جاري: $currentTest")
+                    Text("جاري: $currentTest", fontSize = 11.sp)
                 } else {
-                    Text("▶ تشغيل الاختبارات (7 محاولات)", fontWeight = FontWeight.Bold)
+                    Text("▶ تشغيل (يتوقف عند أول نجاح)", fontWeight = FontWeight.Bold)
                 }
-            }
-
-            if (running && results.isNotEmpty()) {
-                Text("النتائج الأولية (${results.size}/7):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
 
             results.forEach { r ->
                 Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(2.dp, r.color)) {
                     Column(Modifier.padding(10.dp)) {
                         Text(r.name, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Text("HTTP ${r.code}", color = r.color, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("HTTP ${r.code}", color = r.color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Text(r.verdict, color = r.color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(4.dp))
                         SelectionContainer {
-                            Text(r.body.take(300), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                            Text(r.body.take(350), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                         }
                     }
                 }
