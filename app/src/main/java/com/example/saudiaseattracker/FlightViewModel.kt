@@ -138,7 +138,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return headers
     }
 
-    // ⭐ دالة عامة يستخدمها AutoConfirmScreen (وكانت تُستخدم في ReplayScreen)
     fun buildHeadersPublic(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         return buildHeaders(apiVersion, includeXVToken = false, referer = referer)
     }
@@ -302,20 +301,58 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * يرسل {key, body} الملتقط من WebView عبر Retrofit.
-     * WebView يولّد التشفير، والتطبيق يرسل الطلب بنفسه (بدون WebView).
-     * @return true إذا كان HTTP 200
+     * ⭐ إرسال {key, body} الملتقط من WebView بـ **نفس** الكوكيز/Headers/UA التي كان يستخدمها WebView.
      */
     suspend fun sendCapturedPayload(key: String, body: String, cartId: String): Boolean {
         return try {
-            addLog("📤 إرسال PATCH... key=${key.length}، body=${body.length}")
+            addLog("📤 إرسال PATCH...")
+            val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+            val capturedCookies = prefs.getString("dynamic_cookies", null)
+            val capturedUA = prefs.getString("captured_user_agent", null)
+            val capturedHeadersJson = prefs.getString("captured_headers", null)
+
+            // نبني headers من الافتراضي، ثم نُطابق ما استخدمه WebView
+            val headers = mutableMapOf<String, String>()
+            headers.putAll(buildHeadersPublic("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"))
+
+            if (!capturedCookies.isNullOrEmpty()) {
+                headers["Cookie"] = capturedCookies
+                addLog("🍪 استخدمنا ${capturedCookies.length}ch كوكيز من WebView")
+            }
+            if (!capturedUA.isNullOrEmpty()) {
+                headers["User-Agent"] = capturedUA
+                addLog("🖥️ UA = ${capturedUA.take(50)}...")
+            }
+
+            // Headers الملتقطة من fetch (نفس ما استخدمه المتصفح بالضبط)
+            if (!capturedHeadersJson.isNullOrEmpty()) {
+                try {
+                    val json = JsonParser.parseString(capturedHeadersJson).asJsonObject
+                    var applied = 0
+                    json.entrySet().forEach { (k, v) ->
+                        val lk = k.lowercase()
+                        if (v.isJsonPrimitive && lk !in listOf(
+                                "content-length", "host", "connection",
+                                "transfer-encoding", "accept-encoding"
+                            )) {
+                            try {
+                                headers[k] = v.asString
+                                applied++
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    addLog("📋 استخدمنا $applied header من WebView")
+                } catch (e: Exception) {
+                    addLog("⚠️ فشل تحليل headers: ${e.message}")
+                }
+            }
+
             val payload = """{"key":"$key","body":"$body"}"""
             val requestBody = payload.toRequestBody("application/json".toMediaType())
             val resp = RetrofitClient.api.updateTravelerRaw(
                 cartId = cartId,
                 travelerId = "SKH-1-EXT",
-                headers = buildHeadersPublic("2",
-                    "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                headers = headers,
                 request = requestBody
             )
             saveCookiesFromResponse(resp)
@@ -325,14 +362,4 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             resp.code() == 200
         } catch (e: Exception) {
             addLog("❌ ${e.message}")
-            _passengerConfirmResponse.value = "❌ ${e.message}"
-            false
-        }
-    }
-
-    fun addLog(message: String) {
-        val curr = _searchLogs.value.toMutableList()
-        curr.add(0, message)
-        _searchLogs.value = curr
-    }
-}
+            _passengerConfirmResponse
