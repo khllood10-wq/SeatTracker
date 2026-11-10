@@ -29,7 +29,6 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value
     val rawCartResponse = viewModel.rawCartResponse.collectAsStateWithLifecycle().value.orEmpty()
     val foundFlight = viewModel.foundFlight.collectAsStateWithLifecycle().value
-    val confirmResponse = viewModel.passengerConfirmResponse.collectAsStateWithLifecycle().value.orEmpty()
     val logs = viewModel.searchLogs.collectAsStateWithLifecycle().value
     val context = LocalContext.current
 
@@ -68,25 +67,27 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
 
         HorizontalDivider()
 
+        // ── الزر الرئيسي: التأكيد التلقائي (WebView) ──
         if (!cartId.isNullOrEmpty()) {
             Button(
-                onClick = { navController.navigate(Screen.Replay.route) },
+                onClick = { navController.navigate(Screen.AutoConfirm.route) },
                 modifier = Modifier.fillMaxWidth().height(64.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Text(
-                    "🧪 اختبار Replay (بدون WebView)",
+                    "🤖 تأكيد تلقائي (يستخدم كود الموقع)",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
+                    fontSize = 15.sp
                 )
             }
             Text(
-                "يرسل {key, body} الملتقط مباشرة إلى الـ API لمعرفة إن كان السيرفر يقبله",
+                "يفتح صفحة المسافرين الحقيقية في الخلفية، يملأ البيانات تلقائياً، ويضغط 'تأكيد' — الموقع يتولى التشفير والإرسال.",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
 
+        // ── سجل الأحداث ──
         if (logs.isNotEmpty()) {
             Text("سجل الأحداث:", style = MaterialTheme.typography.titleSmall)
             SelectionContainer {
@@ -108,24 +109,9 @@ fun PassengersScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        if (confirmResponse.isNotEmpty()) {
-            Text("نتيجة الطلب:", style = MaterialTheme.typography.titleSmall)
-            SelectionContainer {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                ) {
-                    Text(
-                        text = confirmResponse,
-                        modifier = Modifier.padding(12.dp),
-                        fontFamily = FontFamily.Monospace, fontSize = 10.sp
-                    )
-                }
-            }
-        }
-
         HorizontalDivider()
 
+        // ── استجابة السلة ──
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
