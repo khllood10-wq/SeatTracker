@@ -40,18 +40,18 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
 
     val airBoundId = foundFlight?.airBoundId ?: ""
 
-    var status by remember { mutableStateOf("⏳ تحميل الصفحة الرئيسية...") }
+    var status by remember { mutableStateOf("⏳ تحميل الصفحة...") }
     var logs by remember { mutableStateOf<List<String>>(emptyList()) }
     var progress by remember { mutableStateOf(0) }
     var patchSent by remember { mutableStateOf(false) }
-    var patchBodySize by remember { mutableStateOf(0) }
     var apiResultCode by remember { mutableStateOf(0) }
     var apiResultBody by remember { mutableStateOf("") }
     var apiSuccess by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var cartCreatedId by remember { mutableStateOf<String?>(null) }
 
     fun addLog(msg: String) {
-        logs = (logs + msg).takeLast(20)
+        logs = (logs + msg).takeLast(15)
     }
 
     val bridge = remember {
@@ -59,21 +59,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             @JavascriptInterface
             fun onCartCreated(newCartId: String) {
                 Handler(Looper.getMainLooper()).post {
+                    cartCreatedId = newCartId
                     viewModel.updateCartId(newCartId)
-                    status = "✅ السلة: $newCartId. جاري التشفير المباشر..."
-                    addLog("🛒 Cart created: $newCartId")
-                    
-                    // سحر التشفير: نطلب من الجافاسكريبت تنفيذ التشفير وإرسال الـ PATCH
-                    webViewRef?.evaluateJavascript(getEncryptionJS(newCartId, authToken, xDToken, sessionId), null)
-                }
-            }
-
-            @JavascriptInterface
-            fun onPatchRequest(bodyLength: Int) {
-                Handler(Looper.getMainLooper()).post {
-                    patchBodySize = bodyLength
-                    status = "📤 تم تشفير البيانات (حجم = $bodyLength حرف). جاري الإرسال..."
-                    addLog("📤 PATCH prepared: $bodyLength chars")
+                    status = "✅ السلة جاهزة. جاري الانتقال لصفحة المسافرين..."
+                    addLog("🛒 Cart: $newCartId. Redirecting...")
+                    webViewRef?.loadUrl("https://www.saudia.com/ar-SA/booking/passengerDetails?cartId=$newCartId")
                 }
             }
 
@@ -86,11 +76,11 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                     apiSuccess = (statusCode == 200)
 
                     if (statusCode == 200) {
-                        status = "🎉 نجح! السيرفر قبل البيانات."
-                        addLog("🎉 HTTP 200 OK")
+                        status = "🎉 نجح! تم حفظ بيانات المسافر."
+                        addLog("🎉 PATCH HTTP 200 OK")
                     } else {
-                        status = "❌ فشل: HTTP $statusCode"
-                        addLog("❌ HTTP $statusCode")
+                        status = "❌ فشل الـ PATCH: HTTP $statusCode"
+                        addLog("❌ PATCH HTTP $statusCode")
                     }
                 }
             }
@@ -104,9 +94,9 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         }
     }
 
-    fun startCartCreation() {
-        status = "🛒 جاري إنشاء السلة عبر WebView..."
-        addLog("🛒 بدء إنشاء السلة للرحلة: $airBoundId")
+    fun startProcess() {
+        status = "🛒 جاري إنشاء السلة..."
+        addLog("🛒 Creating cart...")
         webViewRef?.evaluateJavascript("""
             (function() {
                 var airBoundId = '$airBoundId';
@@ -114,7 +104,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                 var xDToken = '$xDToken';
                 var sessionId = '$sessionId';
                 
-                SaudiaBridge.onLog('Starting XHR for Cart...');
                 var xhr = new XMLHttpRequest();
                 xhr.open("POST", "https://dapi.saudia.com/shopping/carts?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
                 xhr.setRequestHeader("Content-Type", "application/json");
@@ -125,25 +114,14 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                 xhr.setRequestHeader("platform", "Web");
                 xhr.setRequestHeader("version", "27.2");
                 xhr.setRequestHeader("channel", "MOBILE_WEB");
-                xhr.setRequestHeader("browserid", "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9");
                 
                 xhr.onreadystatechange = function() {
-                    if (xhr.readyState === 4) {
-                        if (xhr.status === 200 || xhr.status === 201) {
-                            try {
-                                var data = JSON.parse(xhr.responseText);
-                                var cartId = data.id || (data.data && data.data.id);
-                                if (cartId) {
-                                    SaudiaBridge.onCartCreated(cartId);
-                                } else {
-                                    SaudiaBridge.onLog('Cart ID missing in response');
-                                }
-                            } catch(e) {
-                                SaudiaBridge.onLog('Parse error: ' + e.message);
-                            }
-                        } else {
-                            SaudiaBridge.onLog('XHR Failed: ' + xhr.status);
-                        }
+                    if (xhr.readyState === 4 && (xhr.status === 200 || xhr.status === 201)) {
+                        try {
+                            var data = JSON.parse(xhr.responseText);
+                            var cartId = data.id || (data.data && data.data.id);
+                            if (cartId) SaudiaBridge.onCartCreated(cartId);
+                        } catch(e) {}
                     }
                 };
                 xhr.send(JSON.stringify({ airBoundIds: [airBoundId] }));
@@ -157,27 +135,26 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(12.dp)) {
-                Text("🤖 تشفير مباشر (بدون UI)", fontWeight = FontWeight.Bold)
+                Text("🤖 التأكيد التلقائي (Angular الأصلي)", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                
-                if (progress in 1..99 && !patchSent && !status.contains("✅")) {
+                if (progress in 1..99 && !patchSent) {
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                 }
-                
-                if (patchBodySize > 0) {
-                    Text("حجم البيانات المشفرة: $patchBodySize حرف", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                }
-
                 Spacer(Modifier.height(8.dp))
-                Button(onClick = { startCartCreation() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("🛒 بدء العملية (إنشاء سلة + تشفير + إرسال)")
+                Button(
+                    onClick = { startProcess() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !patchSent
+                ) {
+                    Text("🛒 بدء العملية")
                 }
             }
         }
 
-        Box(modifier = Modifier.fillMaxWidth().height(250.dp).padding(horizontal = 8.dp)) {
+        // WebView مرئي لكي ترى بنفسك ما يحدث
+        Box(modifier = Modifier.fillMaxWidth().height(400.dp).padding(horizontal = 8.dp)) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
@@ -205,9 +182,75 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                if (url != null && url.contains("saudia.com/ar-SA")) {
-                                    status = "✅ الصفحة الرئيسية جاهزة. اضغط الزر لبدء العملية."
-                                    addLog("Page loaded. Ready.")
+                                if (url == null) return
+
+                                if (url.contains("passengerDetails") && !patchSent) {
+                                    status = "📝 الصفحة تحملت. تعبئة الفورم..."
+                                    
+                                    // حقن هوك لمراقبة رد الـ PATCH الذي يرسله Angular
+                                    view.evaluateJavascript("""
+                                        (function() {
+                                            if (window.__patchHooked) return;
+                                            window.__patchHooked = true;
+                                            var origFetch = window.fetch;
+                                            window.fetch = function(input, init) {
+                                                var url = typeof input === 'string' ? input : (input && input.url);
+                                                var method = ((init && init.method) || 'GET').toUpperCase();
+                                                if (url && url.indexOf('/travelers/web') > -1 && method === 'PATCH') {
+                                                    var promise = origFetch.apply(this, arguments);
+                                                    promise.then(function(response) {
+                                                        response.clone().text().then(function(text) {
+                                                            SaudiaBridge.onPatchResponse(response.status, text);
+                                                        });
+                                                    });
+                                                    return promise;
+                                                }
+                                                return origFetch.apply(this, arguments);
+                                            };
+                                        })();
+                                    """.trimIndent(), null)
+
+                                    // تعبئة الفورم بعد ثانيتين
+                                    view.postDelayed({
+                                        view.evaluateJavascript("""
+                                            (function() {
+                                                function setVal(name, val) {
+                                                    var el = document.querySelector('[formcontrolname="'+name+'"]') || document.querySelector('[name="'+name+'"]');
+                                                    if (!el) return false;
+                                                    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                    setter.call(el, val);
+                                                    el.dispatchEvent(new Event('input', {bubbles:true}));
+                                                    el.dispatchEvent(new Event('change', {bubbles:true}));
+                                                    el.dispatchEvent(new Event('blur', {bubbles:true}));
+                                                    return true;
+                                                }
+                                                var attempts = 0;
+                                                var iv = setInterval(function() {
+                                                    attempts++;
+                                                    var fnOk = setVal('firstName', 'Khaled');
+                                                    var lnOk = setVal('lastName', 'Otudi');
+                                                    setVal('dateOfBirth', '1990-05-10');
+                                                    setVal('nationalId', '1071580342');
+                                                    setVal('documentNumber', '1071580342');
+                                                    
+                                                    if (fnOk && lnOk) {
+                                                        clearInterval(iv);
+                                                        setTimeout(function() {
+                                                            var btns = document.querySelectorAll('button');
+                                                            for (var i = 0; i < btns.length; i++) {
+                                                                var t = (btns[i].innerText || '').trim();
+                                                                if (t.indexOf('تأكيد بيانات') > -1 || t.indexOf('تأكيد المسافر') > -1) {
+                                                                    btns[i].click();
+                                                                    return;
+                                                                }
+                                                            }
+                                                        }, 1000);
+                                                    }
+                                                    if (attempts > 20) clearInterval(iv);
+                                                }, 500);
+                                            })();
+                                        """.trimIndent(), null)
+                                    }, 2000)
                                 }
                             }
                         }
@@ -257,110 +300,5 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                 Text("➡️ الانتقال لصفحة الدفع", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
         }
-
-        if (!patchSent) {
-            OutlinedButton(
-                onClick = { navController.popBackStack() },
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            ) { Text("إلغاء والرجوع") }
-        }
     }
-}
-
-// 🪄 الدالة الذكية للبحث عن المفتاح وتشفير البيانات
-fun getEncryptionJS(cartId: String, authToken: String, xDToken: String, sessionId: String): String {
-    return """
-        (async function() {
-            try {
-                let cartId = '$cartId';
-                let authToken = '$authToken';
-                let xDToken = '$xDToken';
-                let sessionId = '$sessionId';
-                
-                SaudiaBridge.onLog('Searching for RSA key dynamically...');
-                
-                // 1. البحث في كل ملفات الجافاسكريبت التي حملتها الصفحة
-                let urls = [
-                    'https://www.saudia.com/dist/SaudiaWebApp/prod/browser/chunk-QUL4NBYT.js',
-                    'https://www.saudia.com/dist/SaudiaWebApp/prod/browser/chunk-CH3OOBPT.js'
-                ];
-                let scripts = Array.from(document.scripts).map(s => s.src).filter(s => s && s.includes('.js'));
-                let resources = performance.getEntriesByType('resource').map(r => r.name).filter(n => n.includes('.js'));
-                urls = urls.concat(scripts).concat(resources);
-                
-                let rsaPem = null;
-                for (let u of urls) {
-                    if (!u || !u.includes('saudia.com')) continue;
-                    try {
-                        let res = await fetch(u);
-                        let txt = await res.text();
-                        // البحث عن أي مفتاح يبدأ بـ MII
-                        let m = txt.match(/MII[A-Za-z0-9+/=\s]{200,}/g);
-                        if (m) {
-                            rsaPem = "-----BEGIN PUBLIC KEY-----\n" + m[0].replace(/\s+/g, '') + "\n-----END PUBLIC KEY-----";
-                            SaudiaBridge.onLog('Key found in: ' + u.split('/').pop().substring(0, 20));
-                            break;
-                        }
-                    } catch(e) {}
-                }
-                
-                if (!rsaPem) throw new Error("RSA key not found in any loaded script");
-                
-                SaudiaBridge.onLog('Building payload...');
-                let plaintext = JSON.stringify([{
-                    tid: null, id: "SKH-1-EXT", title: "Mr", passengerTypeCode: "ADT",
-                    firstName: "Khaled", lastName: "Otudi", dateOfBirth: "1991-05-09T21:00:00.000Z",
-                    nationality: "SA", rememberMe: true, uuid: cartId + "SKH-1-EXT",
-                    travellerDoc: {
-                        docType: "National ID", passportNumber: "", expiryDate: "",
-                        issuingCountry: "", nationalId: "1071580342", gccId: "",
-                        residentId: "", number: "1071580342", id: null
-                    }
-                }]);
-
-                SaudiaBridge.onLog('Encrypting...');
-                let aesKey = await crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["encrypt"]);
-                let iv = crypto.getRandomValues(new Uint8Array(16));
-                let encBodyBuffer = await crypto.subtle.encrypt({ name: "AES-CBC", iv: iv }, aesKey, new TextEncoder().encode(plaintext));
-                
-                let bodyBytes = new Uint8Array(iv.length + encBodyBuffer.byteLength);
-                bodyBytes.set(iv, 0);
-                bodyBytes.set(new Uint8Array(encBodyBuffer), iv.length);
-                let bodyHex = Array.from(bodyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
-                let rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
-                let pemContents = rsaPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, '').replace(/\s/g, '');
-                let binaryDerString = atob(pemContents);
-                let binaryDer = new Uint8Array(binaryDerString.length);
-                for (let i = 0; i < binaryDerString.length; i++) binaryDer[i] = binaryDerString.charCodeAt(i);
-                
-                let publicKey = await crypto.subtle.importKey("spki", binaryDer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
-                let encKeyBuffer = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawAesKey);
-                let keyBase64 = btoa(String.fromCharCode.apply(null, new Uint8Array(encKeyBuffer)));
-
-                let payload = JSON.stringify({ key: keyBase64, body: bodyHex });
-                SaudiaBridge.onPatchRequest(payload.length);
-                
-                var xhr = new XMLHttpRequest();
-                xhr.open("PATCH", "https://dapi.saudia.com/shopping/carts/" + cartId + "/travelers/web/SKH-1-EXT?guestOfficeId=JEDSV08MA&lang=ar-SA", true);
-                xhr.setRequestHeader("Content-Type", "application/json");
-                xhr.setRequestHeader("Authorization", authToken);
-                xhr.setRequestHeader("x-d-token", xDToken);
-                xhr.setRequestHeader("saa-session-id", sessionId);
-                xhr.setRequestHeader("x-api-version", "2");
-                xhr.setRequestHeader("platform", "Web");
-                xhr.setRequestHeader("version", "27.2");
-                xhr.setRequestHeader("channel", "MOBILE_WEB");
-                
-                xhr.onreadystatechange = function() {
-                    if (xhr.readyState === 4) {
-                        SaudiaBridge.onPatchResponse(xhr.status, xhr.responseText);
-                    }
-                };
-                xhr.send(payload);
-            } catch(e) {
-                SaudiaBridge.onLog('Encryption Error: ' + e.message);
-            }
-        })();
-    """.trimIndent()
 }
