@@ -294,7 +294,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔐 تجربة 8 متغيرات تشفير (HEX/BASE64/ASCII + CBC/GCM)
+    //  🧪 اختبار تشخيصي — أبسط جسد + تشفير واحد فقط
     // ═══════════════════════════════════════════════════════════
     fun sendEncryptedPassengerPayload() {
         val cartId = _cartId.value
@@ -313,51 +313,47 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _passengerConfirmResponse.value = null
             addLog("═══════════════════════════════════════")
-            addLog("🔐 بدء تجربة ${HybridEncryptor.Variant.values().size} متغيرات...")
+            addLog("🧪 اختبار تشخيصي: أبسط جسد + تشفير واحد")
 
-            val plainJson = """
-                {"passengerTypeCode":"ADT","gender":"male","title":"MR","givenName":"Khaled","surname":"Otudi","dateOfBirth":"1991-05-10","nationality":"SA","documents":[{"type":"NATIONAL_ID","number":"1071580342","countryOfIssuance":"SA"}]}
-            """.trimIndent()
+            // ←←← جسد بسيط جداً: فقط الحقل الذي يطلبه السيرفر
+            val plainJson = """{"passengerTypeCode":"ADT"}"""
+            addLog("📝 JSON: $plainJson")
+            addLog("📏 حجم JSON: ${plainJson.toByteArray().size} byte")
 
-            var bestResponse = ""
+            try {
+                val (keyB64, bodyHex) = HybridEncryptor.encrypt(
+                    plainJson, rsaPem, HybridEncryptor.Variant.PKCS1_RAW_CBC
+                )
+                addLog("🔑 key=${keyB64.length}ch, body=${bodyHex.length}ch")
 
-            for (variant in HybridEncryptor.Variant.values()) {
-                try {
-                    addLog("─── ${variant.label} ───")
-                    val (keyB64, bodyHex) = HybridEncryptor.encrypt(plainJson, rsaPem, variant)
-                    addLog("key=${keyB64.length}ch, body=${bodyHex.length}ch")
+                val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
+                addLog("📦 حجم الـ payload: ${payload.toByteArray().size} byte")
 
-                    val payload = """{"key":"$keyB64","body":"$bodyHex"}"""
-                    val requestBody = payload.toRequestBody("application/json".toMediaType())
+                val requestBody = payload.toRequestBody("application/json".toMediaType())
 
-                    val resp = RetrofitClient.api.updateTravelerRaw(
-                        cartId = cartId,
-                        travelerId = "SKH-1-EXT",
-                        headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
-                        request = requestBody
-                    )
-                    saveCookiesFromResponse(resp)
-                    val code = resp.code()
-                    val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
+                val resp = RetrofitClient.api.updateTravelerRaw(
+                    cartId = cartId,
+                    travelerId = "SKH-1-EXT",
+                    headers = buildHeaders("2", isWebEndpoint = true, referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+                    request = requestBody
+                )
+                saveCookiesFromResponse(resp)
+                val code = resp.code()
+                val respBody = resp.body()?.string() ?: resp.errorBody()?.string() ?: ""
 
-                    addLog("📡 ${variant.label} → HTTP $code")
-                    bestResponse = "${variant.label} → HTTP $code\n\n${respBody.ifEmpty { "(empty)" }}"
-                    _passengerConfirmResponse.value = bestResponse
+                addLog("═══════════════════════════════════════")
+                addLog("📡 النتيجة: HTTP $code")
+                _passengerConfirmResponse.value = "HTTP $code\n\n$respBody.ifEmpty { "(empty)" }"
 
-                    if (code == 200) {
-                        addLog("🎉🎉 نجح! المتغير: ${variant.label}")
-                        return@launch
-                    }
-
-                    if (code == 401 || code == 403) {
-                        addLog("❌ توكن — توقف")
-                        return@launch
-                    }
-                } catch (e: Exception) {
-                    addLog("❌ ${variant.label} استثناء: ${e.message}")
+                if (code == 200) {
+                    addLog("🎉 التشفير يعمل! المشكلة كانت في الحقول الأخرى")
+                } else {
+                    addLog("⚠️ التشفير لا يعمل — راجع الرد أعلاه")
                 }
+            } catch (e: Exception) {
+                addLog("❌ استثناء: ${e.message}")
+                _passengerConfirmResponse.value = "Exception: ${e.message}"
             }
-            addLog("⚠️ كل المتغيرات فشلت")
         }
     }
 
