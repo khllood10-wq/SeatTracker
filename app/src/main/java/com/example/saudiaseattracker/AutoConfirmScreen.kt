@@ -135,7 +135,7 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(12.dp)) {
-                Text("🤖 التأكيد التلقائي (Angular الأصلي)", fontWeight = FontWeight.Bold)
+                Text("🤖 التأكيد التلقائي (WebView)", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 if (progress in 1..99 && !patchSent) {
@@ -153,7 +153,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             }
         }
 
-        // WebView مرئي لكي ترى بنفسك ما يحدث
         Box(modifier = Modifier.fillMaxWidth().height(400.dp).padding(horizontal = 8.dp)) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -182,12 +181,12 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                if (url == null) return
+                                // إصلاح الخطأ: التأكد من أن view ليس null
+                                if (url == null || view == null) return
 
                                 if (url.contains("passengerDetails") && !patchSent) {
                                     status = "📝 الصفحة تحملت. تعبئة الفورم..."
                                     
-                                    // حقن هوك لمراقبة رد الـ PATCH الذي يرسله Angular
                                     view.evaluateJavascript("""
                                         (function() {
                                             if (window.__patchHooked) return;
@@ -210,7 +209,6 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
                                         })();
                                     """.trimIndent(), null)
 
-                                    // تعبئة الفورم بعد ثانيتين
                                     view.postDelayed({
                                         view.evaluateJavascript("""
                                             (function() {
