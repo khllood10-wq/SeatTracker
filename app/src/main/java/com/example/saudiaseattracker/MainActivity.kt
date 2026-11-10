@@ -48,6 +48,9 @@ fun AppNavigation() {
             composable(Screen.Passengers.route) {
                 PassengersScreen(navController = navController, viewModel = viewModel)
             }
+            composable(Screen.AutoConfirm.route) {
+                AutoConfirmScreen(navController = navController, viewModel = viewModel)
+            }
             composable(Screen.Replay.route) {
                 ReplayScreen(navController = navController, viewModel = viewModel)
             }
