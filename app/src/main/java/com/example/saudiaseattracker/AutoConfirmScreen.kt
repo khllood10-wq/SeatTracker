@@ -25,35 +25,15 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
     val isSending = response.contains("⏳")
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            "✅ تأكيد المسافر (API مباشر)",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            "بدون تشفير، بدون WebView — الطلب يُرسل مباشرة إلى dapi.saudia.com",
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text("✅ تأكيد المسافر (API)", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column(Modifier.padding(12.dp)) {
-                Text("cartId: ${cartId ?: "لا يوجد"}", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                Spacer(Modifier.height(4.dp))
-                Text("travelerId: SKH-1-EXT", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "البيانات: Khaled Otudi / 1071580342 / 1991-05-10 / SA / identityCard",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("cartId: ${cartId ?: "لا يوجد"}", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                Text("البيانات: Khaled Otudi / 1071580342 / 1991-05-10 / SA", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -61,19 +41,15 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
             Button(
                 onClick = { viewModel.confirmPassenger() },
                 enabled = !isSending && !cartId.isNullOrEmpty(),
-                modifier = Modifier.fillMaxWidth().height(64.dp),
+                modifier = Modifier.fillMaxWidth().height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 if (isSending) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(10.dp))
-                    Text("جاري الإرسال...", fontWeight = FontWeight.Bold)
+                    Text("جاري الإرسال...")
                 } else {
-                    Text("📤 إرسال تأكيد المسافر", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("📤 إرسال تأكيد المسافر", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
             }
         }
@@ -81,42 +57,32 @@ fun AutoConfirmScreen(navController: NavController, viewModel: FlightViewModel) 
         if (response.isNotEmpty()) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                border = BorderStroke(
-                    width = 3.dp,
-                    color = if (isSuccess) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.error
-                )
+                border = BorderStroke(3.dp, if (isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
             ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(
-                        if (isSuccess) "🎉 نجح!" else "الرد:",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        if (isSuccess) "🎉 نجح! HTTP 200" else "الرد:",
+                        fontWeight = FontWeight.Bold, fontSize = 16.sp,
                         color = if (isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                     )
                     Spacer(Modifier.height(6.dp))
-                    SelectionContainer {
-                        Text(
-                            response.take(1200),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 10.sp
-                        )
-                    }
+                    SelectionContainer { Text(response.take(1000), fontFamily = FontFamily.Monospace, fontSize = 10.sp) }
                 }
             }
         }
 
+        // ⭐ الآن الانتقال لـ OrderScreen وليس PaymentScreen
         if (isSuccess) {
             Button(
                 onClick = {
-                    navController.navigate(Screen.Payment.route) {
+                    navController.navigate(Screen.Order.route) {
                         popUpTo(Screen.Passengers.route) { inclusive = false }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(64.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
             ) {
-                Text("➡️ الانتقال لصفحة الدفع", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("➡️ إتمام الحجز + SADAD", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
         }
 
