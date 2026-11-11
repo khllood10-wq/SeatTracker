@@ -47,7 +47,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
-    // ⭐ التجهيز التلقائي للجلسة عند فتح الرئيسية
     LaunchedEffect(Unit) {
         if (viewModel.hasToken()) {
             viewModel.markSessionReady()
@@ -69,7 +68,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         ) {
             Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
-            // ── بانر الجلسة (يظهر فقط أثناء التجهيز) ──
+            // ── بانر الجلسة ──
             if (!sessionReady) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -89,7 +88,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ── وضع المراقبة Toggle ──
+            // ── وضع المراقبة ──
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -190,6 +189,21 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
+            // ⭐⭐⭐ زر تحدي التوكن ⭐⭐⭐
+            OutlinedButton(
+                onClick = { navController.navigate(Screen.TokenChallenge.route) },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text(
+                    "🎯 تحدي: التقاط التوكن بدون WebView",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
             // ── Stepper ──
             if (steps.any { it.status != StepStatus.PENDING }) {
                 Text("مراحل الحجز:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -199,42 +213,37 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             // ── النتيجة ──
             if (pnr.isNotEmpty()) {
                 when (paymentStatus) {
-                    StepStatus.SUCCESS -> {
-                        ResultCard(
-                            title = "🎉 تم الحجز الكامل!",
-                            titleColor = Color(0xFF00C853),
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            borderColor = Color(0xFF00C853),
-                            pnr = pnr, sadad = sadad, clipboard = clipboard,
-                            note = "ادفع رقم SADAD في البنك — يصلك الإيميل + التذكرة تلقائياً"
-                        )
-                    }
-                    StepStatus.SKIPPED -> {
-                        ResultCard(
-                            title = "👁️ وضع المراقبة — وصلنا للدفع",
-                            titleColor = MaterialTheme.colorScheme.tertiary,
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                            borderColor = MaterialTheme.colorScheme.tertiary,
-                            pnr = pnr, sadad = sadad, clipboard = clipboard,
-                            note = "لم يُرسل الدفع — PNR يلغى تلقائياً بعد ~5 ساعات"
-                        )
-                    }
-                    StepStatus.FAILED -> {
-                        ResultCard(
-                            title = "⚠️ فشل الدفع",
-                            titleColor = MaterialTheme.colorScheme.error,
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                            borderColor = MaterialTheme.colorScheme.error,
-                            pnr = pnr, sadad = sadad, clipboard = clipboard,
-                            note = "قد يكون لديك حجز سابق معلق — ادفعه أو انتظر انتهاء المهلة"
-                        )
-                    }
-                    else -> {
-                        Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)) {
-                            Column(Modifier.padding(14.dp)) {
-                                Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                if (sadad.isNotEmpty()) Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
+                    StepStatus.SUCCESS -> ResultCard(
+                        title = "🎉 تم الحجز الكامل!",
+                        titleColor = Color(0xFF00C853),
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        borderColor = Color(0xFF00C853),
+                        pnr = pnr, sadad = sadad, clipboard = clipboard,
+                        note = "ادفع رقم SADAD في البنك — يصلك الإيميل + التذكرة تلقائياً"
+                    )
+                    StepStatus.SKIPPED -> ResultCard(
+                        title = "👁️ وضع المراقبة — وصلنا للدفع",
+                        titleColor = MaterialTheme.colorScheme.tertiary,
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        borderColor = MaterialTheme.colorScheme.tertiary,
+                        pnr = pnr, sadad = sadad, clipboard = clipboard,
+                        note = "لم يُرسل الدفع — PNR يلغى تلقائياً بعد ~5 ساعات"
+                    )
+                    StepStatus.FAILED -> ResultCard(
+                        title = "⚠️ فشل الدفع",
+                        titleColor = MaterialTheme.colorScheme.error,
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        borderColor = MaterialTheme.colorScheme.error,
+                        pnr = pnr, sadad = sadad, clipboard = clipboard,
+                        note = "قد يكون لديك حجز سابق معلق — ادفعه أو انتظر انتهاء المهلة"
+                    )
+                    else -> Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            if (sadad.isNotEmpty()) Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
                 }
@@ -255,7 +264,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ⭐ WebView مخفي (1×1 px) — يعمل في الخلفية لتجهيز الجلسة
+        // WebView مخفي
         if (!sessionReady) {
             HiddenSessionWebView(viewModel = viewModel)
         }
@@ -263,7 +272,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// WebView مخفي — يجلب التوكن + الكوكيز من saudia.com
+// WebView مخفي
 // ══════════════════════════════════════════════════════════════
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
@@ -279,7 +288,6 @@ private fun HiddenSessionWebView(viewModel: FlightViewModel) {
                 if (captured) return
                 captured = true
                 viewModel.saveTokens(auth, xD, sid, ua)
-                // حفظ كوكيز WebView
                 try {
                     val cm = CookieManager.getInstance()
                     val sau = cm.getCookie("https://www.saudia.com") ?: ""
@@ -406,7 +414,7 @@ private fun getSessionHookJS(): String = """
 """.trimIndent()
 
 // ══════════════════════════════════════════════════════════════
-// عناصر الواجهة المساعدة
+// عناصر مساعدة
 // ══════════════════════════════════════════════════════════════
 @Composable
 private fun ResultCard(
