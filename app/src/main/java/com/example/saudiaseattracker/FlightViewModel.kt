@@ -71,7 +71,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
             context = getApplication(),
-            rawApiKey = BuildConfig.HYPER_API_KEY,
+            rawApiKey = BuildConfig.HYPER_API_KEY, // 👈 هنا نمرر المفتاح
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             acceptLanguage = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
         )
