@@ -9,7 +9,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class HyperSessionManager(
@@ -20,6 +19,7 @@ class HyperSessionManager(
 ) {
     companion object {
         const val TAG = "HyperSessionError"
+        // تأكد أن هذا الـ User-Agent مطابق تماماً لما تستخدمه في FlightViewModel
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
         const val SAUDIA_HOST = "www.saudia.com"
@@ -48,17 +48,6 @@ class HyperSessionManager(
         .connectionSpecs(listOf(
             ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                 .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
-                .cipherSuites(
-                    CipherSuite.TLS_AES_128_GCM_SHA256,
-                    CipherSuite.TLS_AES_256_GCM_SHA384,
-                    CipherSuite.TLS_CHACHA20_POLY1305_SHA256,
-                    CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-                    CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-                    CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-                    CipherSuite.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-                    CipherSuite.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-                    CipherSuite.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
-                )
                 .build(),
             ConnectionSpec.CLEARTEXT
         ))
@@ -117,32 +106,14 @@ class HyperSessionManager(
         val egressIp = fetchEgressIp()
         val pow = tryFetchPowIfNeeded()
 
-        // محاولة أولى: إرسال scriptHash (أخف وأسرع)
-        val sensorPayload = try {
-            generateSensor(
-                script = script,
-                scriptUrl = scriptUrl!!,
-                pageUrl = SAUDIA_URL,
-                ip = egressIp,
-                pow = pow,
-                useHash = true // 👈 المحاولة الأولى بالـ Hash
-            )
-        } catch (e: IOException) {
-            if (e.message?.contains("422") == true || e.message?.contains("script_required") == true) {
-                Log.w(TAG, "⚠️ السكريبت غير معروف لدى Hyper. إعادة المحاولة بإرسال السكريبت كاملاً...")
-                // محاولة ثانية: إرسال script كاملاً (لأن Hyper لم يره من قبل)
-                generateSensor(
-                    script = script,
-                    scriptUrl = scriptUrl!!,
-                    pageUrl = SAUDIA_URL,
-                    ip = egressIp,
-                    pow = pow,
-                    useHash = false // 👈 إرسال السكريبت كاملاً
-                )
-            } else {
-                throw e // خطأ آخر، لا علاقة له بـ 422
-            }
-        }
+        // إرسال script كاملاً دائماً (أبسط وأكثر أماناً)
+        val sensorPayload = generateSensor(
+            script = script,
+            scriptUrl = scriptUrl!!,
+            pageUrl = SAUDIA_URL,
+            ip = egressIp,
+            pow = pow
+        )
 
         val result = submitSensor(sensorPath!!, sensorPayload)
 
@@ -216,7 +187,9 @@ class HyperSessionManager(
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
             if (!resp.isSuccessful) throw IOException("فشل جلب IP: ${resp.code} - $body")
-            return JSONObject(body).getString("ip")
+            val ip = JSONObject(body).getString("ip")
+            Log.d(TAG, "🌐 IP المستخدم: $ip")
+            return ip
         }
     }
 
@@ -248,36 +221,13 @@ class HyperSessionManager(
         scriptUrl: String,
         pageUrl: String,
         ip: String,
-        pow: String?,
-        useHash: Boolean
+        pow: String?
     ): String {
         val body = JSONObject().apply {
             put("userAgent", userAgent)
             put("pageUrl", pageUrl)
             put("scriptUrl", scriptUrl)
-            
-            if (useHash) {
-                // محاولة إرسال البصمة أولاً
-                val scriptHash = try {
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    val hashBytes = digest.digest(script.toByteArray(Charsets.UTF_8))
-                    hashBytes.joinToString("") { "%02x".format(it) }
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ فشل حساب Hash للسكريبت: ${e.message}")
-                    ""
-                }
-                
-                if (scriptHash.isNotEmpty()) {
-                    put("scriptHash", scriptHash)
-                } else {
-                    // إذا فشل حساب الـ Hash، أرسل السكريبت كاملاً
-                    put("script", script)
-                }
-            } else {
-                // إرسال السكريبت كاملاً (لأن Hyper لم يره من قبل)
-                put("script", script)
-            }
-            
+            put("script", script) // إرسال السكريبت كاملاً دائماً
             put("ip", ip)
             put("acceptLanguage", acceptLanguage)
             if (!pow.isNullOrBlank()) put("pow", pow)
