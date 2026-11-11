@@ -9,6 +9,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.RemoveCircleOutline
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,6 +37,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sadad by viewModel.finalSadad.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
+    val paymentStep = steps.find { it.id == "payment" }
+    val paymentStatus = paymentStep?.status ?: StepStatus.PENDING
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -42,6 +48,57 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+
+        // ⭐⭐ وضع المراقبة Toggle ⭐⭐
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = if (viewModel.monitoringMode)
+                    MaterialTheme.colorScheme.tertiaryContainer
+                else MaterialTheme.colorScheme.surfaceVariant
+            ),
+            border = if (viewModel.monitoringMode)
+                BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary)
+            else null
+        ) {
+            Row(
+                Modifier.padding(12.dp).fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (viewModel.monitoringMode)
+                        Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    contentDescription = null,
+                    tint = if (viewModel.monitoringMode)
+                        MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "👁️ وضع المراقبة",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        if (viewModel.monitoringMode)
+                            "✅ مفعّل: يصل لمرحلة الدفع (PNR + SADAD) بدون إتمام"
+                        else
+                            "معطّل: حجز كامل (طلب + دفع + إيميل)",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = viewModel.monitoringMode,
+                    onCheckedChange = {
+                        viewModel.monitoringMode = it
+                        if (!viewModel.isRunning.value) viewModel.clearResults()
+                    },
+                    enabled = !isRunning
+                )
+            }
+        }
 
         // ── ملخص بيانات المسافر ──
         SummaryCard(
@@ -71,7 +128,11 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             onClick = { viewModel.runFullBooking() },
             enabled = !isRunning && viewModel.passengerData.isValid() && viewModel.flightData.isValid(),
             modifier = Modifier.fillMaxWidth().height(64.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (viewModel.monitoringMode)
+                    MaterialTheme.colorScheme.tertiary
+                else MaterialTheme.colorScheme.primary
+            )
         ) {
             if (isRunning) {
                 CircularProgressIndicator(
@@ -80,51 +141,95 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     color = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(Modifier.width(12.dp))
-                Text("جاري الحجز...", fontWeight = FontWeight.Bold)
+                Text("جاري التنفيذ...", fontWeight = FontWeight.Bold)
             } else {
-                Text("🚀 بدء الحجز التلقائي", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    if (viewModel.monitoringMode)
+                        "👁️ بدء المراقبة"
+                    else
+                        "🚀 بدء الحجز التلقائي",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
             }
         }
 
         // ── Stepper ──
         Text("مراحل الحجز:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        steps.forEach { step ->
-            StepRow(step)
-        }
+        steps.forEach { step -> StepRow(step) }
 
-        // ── Success card ──
+        // ── Result Card ──
         if (pnr.isNotEmpty()) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                border = BorderStroke(3.dp, Color(0xFF00C853))
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Text("🎉 تم الحجز!", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00C853))
-                    Spacer(Modifier.height(8.dp))
-                    Row {
-                        Text("PNR: ", fontWeight = FontWeight.Bold)
-                        Text(pnr, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = Color(0xFF00C853))
-                    }
-                    if (sadad.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("SADAD: ", fontWeight = FontWeight.Bold)
-                            Text(sadad, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = Color(0xFF00C853))
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = { clipboard.setText(AnnotatedString(sadad)) },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("📋 نسخ SADAD") }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                            Column(Modifier.padding(10.dp)) {
-                                Text("⚠️ اذهب للبنك وادفع رقم SADAD", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Text("بعد الدفع يصلك الإيميل + التذكرة تلقائياً", fontSize = 11.sp)
+            when (paymentStatus) {
+                StepStatus.SUCCESS -> {
+                    // Full booking success
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        border = BorderStroke(3.dp, Color(0xFF00C853))
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("🎉 تم الحجز الكامل!", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00C853))
+                            Spacer(Modifier.height(8.dp))
+                            PnrSadadInfo(pnr, sadad, clipboard)
+                            Spacer(Modifier.height(10.dp))
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                                Column(Modifier.padding(10.dp)) {
+                                    Text("⚠️ اذهب للبنك الآن", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("ادفع رقم SADAD. بعد الدفع يصلك الإيميل + التذكرة تلقائياً.", fontSize = 11.sp)
+                                }
                             }
+                        }
+                    }
+                }
+                StepStatus.SKIPPED -> {
+                    // Monitoring mode
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                        border = BorderStroke(3.dp, MaterialTheme.colorScheme.tertiary)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("👁️ وضع المراقبة — وصلنا لمرحلة الدفع", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
+                            Spacer(Modifier.height(8.dp))
+                            PnrSadadInfo(pnr, sadad, clipboard)
+                            Spacer(Modifier.height(10.dp))
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                                Column(Modifier.padding(10.dp)) {
+                                    Text("⚠️ لم يتم إرسال الدفع", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("• الطلب موجود (PNR) لكنه غير مدفوع", fontSize = 11.sp)
+                                    Text("• سيلغى تلقائياً بعد ~5 ساعات", fontSize = 11.sp)
+                                    Text("• لإتمامه: أوقف المراقبة وأعد التشغيل", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                StepStatus.FAILED -> {
+                    // Payment failed
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        border = BorderStroke(3.dp, MaterialTheme.colorScheme.error)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("⚠️ فشل الدفع", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.height(8.dp))
+                            PnrSadadInfo(pnr, sadad, clipboard)
+                            Spacer(Modifier.height(8.dp))
+                            Text("قد يكون لديك حجز سابق معلق. ادفعه أو انتظر انتهاء المهلة.", fontSize = 11.sp)
+                        }
+                    }
+                }
+                else -> {
+                    // PNR exists but payment pending
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            if (sadad.isNotEmpty()) Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
                 }
@@ -144,6 +249,26 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PnrSadadInfo(pnr: String, sadad: String, clipboard: androidx.compose.ui.platform.ClipboardManager) {
+    Row {
+        Text("PNR: ", fontWeight = FontWeight.Bold)
+        Text(pnr, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = Color(0xFF00C853))
+    }
+    if (sadad.isNotEmpty()) {
+        Spacer(Modifier.height(6.dp))
+        Row {
+            Text("SADAD: ", fontWeight = FontWeight.Bold)
+            Text(sadad, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = Color(0xFF00C853))
+        }
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { clipboard.setText(AnnotatedString(sadad)) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("📋 نسخ SADAD") }
     }
 }
 
@@ -171,25 +296,27 @@ private fun StepRow(step: BookingStep) {
                 StepStatus.RUNNING -> MaterialTheme.colorScheme.secondaryContainer
                 StepStatus.SUCCESS -> MaterialTheme.colorScheme.primaryContainer
                 StepStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
+                StepStatus.SKIPPED -> MaterialTheme.colorScheme.tertiaryContainer
                 StepStatus.PENDING -> MaterialTheme.colorScheme.surfaceVariant
             }
         )
     ) {
         Row(
-            Modifier.padding(10.dp),
+            Modifier.padding(10.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = when (step.status) {
                     StepStatus.SUCCESS -> Icons.Default.CheckCircle
                     StepStatus.FAILED -> Icons.Default.Error
-                    StepStatus.RUNNING -> Icons.Default.RadioButtonUnchecked
-                    StepStatus.PENDING -> Icons.Default.RadioButtonUnchecked
+                    StepStatus.SKIPPED -> Icons.Default.RemoveCircleOutline
+                    StepStatus.RUNNING, StepStatus.PENDING -> Icons.Default.RadioButtonUnchecked
                 },
                 contentDescription = null,
                 tint = when (step.status) {
                     StepStatus.SUCCESS -> Color(0xFF00C853)
                     StepStatus.FAILED -> Color(0xFFD32F2F)
+                    StepStatus.SKIPPED -> MaterialTheme.colorScheme.tertiary
                     StepStatus.RUNNING -> MaterialTheme.colorScheme.primary
                     StepStatus.PENDING -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
