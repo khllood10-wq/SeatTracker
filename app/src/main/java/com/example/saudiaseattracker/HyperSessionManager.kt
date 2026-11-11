@@ -16,7 +16,7 @@ class HyperSessionManager(
     private val acceptLanguage: String = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
 ) {
     companion object {
-        // استخدمنا هذا الاسم ليظهر في اللوكات بسهولة
+        // الـ TAG هنا تم تغييره ليسهل البحث عنه في تطبيق اللوكات
         const val TAG = "HyperSessionError" 
         const val DEFAULT_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -74,7 +74,7 @@ class HyperSessionManager(
         try {
             solveOrRenew()
         } catch (e: Exception) {
-            // هنا يتم التقاط أي خطأ وطباعته بالتفصيل للوكات
+            // هنا يتم التقاط أي خطأ وطباعته بالتفصيل
             Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions: ${e.localizedMessage}", e)
         }
     }
@@ -111,7 +111,7 @@ class HyperSessionManager(
 
             Log.d(TAG, "✅ تم الحصول على reese84 token (صالح ${result.renewInSec}s)")
         } catch (e: Exception) {
-            throw e // نمرر الخطأ للدالة الأم لتطبعه
+            throw e 
         }
     }
 
@@ -232,7 +232,6 @@ class HyperSessionManager(
         client.newCall(req).execute().use { resp ->
             val respBody = resp.body?.string() ?: throw IOException("Hyper API: رد فارغ")
             
-            // هذا هو السطر الأهم الذي سيطبع سبب الرفض (401, 403, 402...)
             if (!resp.isSuccessful) {
                 Log.e(TAG, "❌ رفضت Hyper الطلب! (HTTP ${resp.code}) | السبب: $respBody")
                 throw IOException("Hyper API ${resp.code}: $respBody")
