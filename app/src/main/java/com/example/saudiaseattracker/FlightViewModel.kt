@@ -112,7 +112,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
-    // ⭐ Session state (for hidden WebView)
+    // ⭐ Session state
     private val _sessionReady = MutableStateFlow(false)
     val sessionReady: StateFlow<Boolean> = _sessionReady
 
@@ -154,15 +154,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     // ══════════════════════════════════════════════════════
     // Token / Cookie / Headers
     // ══════════════════════════════════════════════════════
+
+    /**
+     * ⭐ حفظ التوكن مع timestamp — يستخدمه MainScreen لفحص العمر
+     */
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
-        val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val prefs = getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("auth_token", auth)
             .putString("xd_token", xDToken)
             .putString("session_id", sessionId)
             .putString("user_agent", userAgent)
+            .putLong("token_saved_at", System.currentTimeMillis())  // ⭐ جديد
             .apply()
         addLog("✅ تم التقاط التوكن")
+        android.util.Log.d("Session", "Token saved at ${System.currentTimeMillis()}")
         markSessionReady()
     }
 
@@ -183,6 +190,19 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         .getString("dynamic_cookies", null)
 
     fun hasToken(): Boolean = getAuth() != null
+
+    /**
+     * ⭐ فحص عمر التوكن — يُستخدم في MainScreen
+     */
+    fun getTokenAgeMinutes(): Long {
+        val prefs = getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val savedAt = prefs.getLong("token_saved_at", 0L)
+        if (savedAt == 0L) return Long.MAX_VALUE
+        return (System.currentTimeMillis() - savedAt) / 60_000
+    }
+
+    fun isTokenExpired(): Boolean = getTokenAgeMinutes() > 55
 
     private fun saveCookies(response: Response<*>) {
         val setCookies = response.headers().values("Set-Cookie")
@@ -245,9 +265,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     // ══════════════════════════════════════════════════════
     fun runFullBooking() {
         if (_isRunning.value) return
-        if (!hasToken()) { addLog("❌ لا يوجد توكن"); return }
-        if (!passengerData.isValid()) { addLog("❌ بيانات المسافر غير مكتملة"); return }
-        if (!flightData.isValid()) { addLog("❌ بيانات الرحلة غير مكتملة"); return }
+        if (!hasToken()) {
+            addLog("❌ لا يوجد توكن — انتظر تجهيز الجلسة")
+            return
+        }
+        if (isTokenExpired()) {
+            addLog("❌ التوكن منتهي — اضغط 'تحديث الجلسة'")
+            return
+        }
+        if (!passengerData.isValid()) {
+            addLog("❌ بيانات المسافر غير مكتملة")
+            return
+        }
+        if (!flightData.isValid()) {
+            addLog("❌ بيانات الرحلة غير مكتملة")
+            return
+        }
 
         clearResults()
         _isRunning.value = true
@@ -330,7 +363,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("👁️ وضع المراقبة اكتمل")
                     addLog("PNR: $pnr")
                     addLog("SADAD: $sadad")
-                    addLog("⚠️ لم يُرسل الدفع — PNR يلغى تلقائياً بعد ~5 ساعات")
+                    addLog("⚠️ لم يُرسل الدفع — PNR يلغى تلقائياً")
                     addLog("═════════════════════════════════════")
                     _isRunning.value = false
                     return@launch
