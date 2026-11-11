@@ -67,11 +67,15 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
+    // ═══════ التوكن اليدوي (للتجربة) ═══════
+    // 👇 ضع التوكن الذي التقطته من المتصفح هنا (يبدأ بـ eyJ...)
+    var manualToken: String = "Bearer ضع_التوكن_الذي_التقطته_هنا"
+
     // ═══════ Hyper Solutions ═══════
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
             context = getApplication(),
-            rawApiKey = BuildConfig.HYPER_API_KEY, // 👈 هنا نمرر المفتاح
+            rawApiKey = BuildConfig.HYPER_API_KEY,
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             acceptLanguage = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
         )
@@ -233,6 +237,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
+        
         val h = mutableMapOf(
             "x-api-version" to apiVersion,
             "platform" to "Web",
@@ -244,7 +249,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
-            "channel" to "MOBILE_WEB",
+            "channel" to "WEB", // 👈 تم التعديل
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
@@ -252,6 +257,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
+
+        // 👇 استخدام التوكن اليدوي
+        if (manualToken.isNotBlank() && manualToken != "Bearer ضع_التوكن_الذي_التقطته_هنا") {
+            h["Authorization"] = manualToken
+        }
 
         val dynamic = getCookies()
         val reese = hyperSession.getCookieHeader()
