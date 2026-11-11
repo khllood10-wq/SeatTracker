@@ -2,9 +2,9 @@ package com.example.saudiaseattracker
 
 import android.content.Context
 import android.util.Log
-import com.github.chnouman.tlsclient.TLSClient
-import com.github.chnouman.tlsclient.TLSClientBuilder
-import com.github.chnouman.tlsclient.models.TLSClientProfile
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -27,10 +27,28 @@ class HyperSessionManager(
         const val KEY_COOKIE_DOMAIN = "reese84_cookie_domain"
     }
 
-    // 👇 استخدام TLS Client بدلاً من OkHttp لتجاوز Imperva
-    private val client = TLSClientBuilder()
-        .withProfile(TLSClientProfile.CHROME_120)
-        .withTimeout(30, TimeUnit.SECONDS)
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .connectionSpecs(listOf(
+            ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
+                .cipherSuites(
+                    CipherSuite.TLS_AES_128_GCM_SHA256,
+                    CipherSuite.TLS_AES_256_GCM_SHA384,
+                    CipherSuite.TLS_CHACHA20_POLY1305_SHA256,
+                    CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+                    CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+                    CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+                    CipherSuite.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+                    CipherSuite.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+                    CipherSuite.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+                )
+                .build(),
+            ConnectionSpec.CLEARTEXT
+        ))
         .build()
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -108,79 +126,92 @@ class HyperSessionManager(
 
     private fun discoverPaths() {
         Log.d(TAG, "🔍 اكتشاف مسارات التحدي...")
-        val headers = mapOf(
-            "User-Agent" to userAgent,
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language" to acceptLanguage,
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "none",
-            "Sec-Fetch-User" to "?1"
-        )
+        val req = Request.Builder()
+            .url(SAUDIA_URL)
+            .get()
+            .header("User-Agent", userAgent)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+            .header("Accept-Language", acceptLanguage)
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "none")
+            .header("Sec-Fetch-User", "?1")
+            .build()
 
-        val response = client.get(SAUDIA_URL, headers = headers)
-        val html = response.body ?: throw IOException("لا يوجد HTML")
-        
-        val pathRegex = Regex("""src\s*=\s*"(/[^/]+/[^?]+)\?.*"""")
-        val fullRegex = Regex("""scriptElement\.src\s*=\s*"(.*?)"""")
+        client.newCall(req).execute().use { resp ->
+            val html = resp.body?.string() ?: throw IOException("لا يوجد HTML")
+            val pathRegex = Regex("""src\s*=\s*"(/[^/]+/[^?]+)\?.*"""")
+            val fullRegex = Regex("""scriptElement\.src\s*=\s*"(.*?)"""")
 
-        val pathMatch = pathRegex.find(html)
-        val fullMatch = fullRegex.find(html)
+            val pathMatch = pathRegex.find(html)
+            val fullMatch = fullRegex.find(html)
 
-        if (pathMatch == null || fullMatch == null) {
-            Log.e(TAG, "❌ لم يتم العثور على مسار سكريبت التحدي (Imperva).")
-            throw IOException("لم يتم العثور على مسار التحدي.")
+            if (pathMatch == null || fullMatch == null) {
+                Log.e(TAG, "❌ لم يتم العثور على مسار سكريبت التحدي (Imperva).")
+                throw IOException("لم يتم العثور على مسار التحدي.")
+            }
+
+            val rawPath = pathMatch.groupValues[1]
+            val fullPath = fullMatch.groupValues[1]
+
+            sensorPath = "$rawPath?d=$SAUDIA_HOST"
+            scriptUrl = "https://$SAUDIA_HOST$fullPath"
         }
-
-        val rawPath = pathMatch.groupValues[1]
-        val fullPath = fullMatch.groupValues[1]
-
-        sensorPath = "$rawPath?d=$SAUDIA_HOST"
-        scriptUrl = "https://$SAUDIA_HOST$fullPath"
     }
 
     private fun fetchScript(url: String): String {
-        val headers = mapOf(
-            "User-Agent" to userAgent,
-            "Accept" to "*/*",
-            "Accept-Language" to acceptLanguage,
-            "Sec-Fetch-Dest" to "script",
-            "Sec-Fetch-Mode" to "no-cors",
-            "Sec-Fetch-Site" to "same-origin"
-        )
-        val response = client.get(url, headers = headers)
-        if (response.status != 200) {
-            Log.e(TAG, "❌ فشل جلب السكريبت (HTTP ${response.status})")
-            throw IOException("فشل جلب السكريبت: ${response.status}")
+        val req = Request.Builder()
+            .url(url)
+            .get()
+            .header("User-Agent", userAgent)
+            .header("Accept", "*/*")
+            .header("Accept-Language", acceptLanguage)
+            .header("Sec-Fetch-Dest", "script")
+            .header("Sec-Fetch-Mode", "no-cors")
+            .header("Sec-Fetch-Site", "same-origin")
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل جلب السكريبت (HTTP ${resp.code})")
+                throw IOException("فشل جلب السكريبت: ${resp.code}")
+            }
+            return resp.body?.string() ?: throw IOException("السكريبت فارغ")
         }
-        return response.body ?: throw IOException("السكريبت فارغ")
     }
 
     private fun fetchEgressIp(): String {
-        val headers = mapOf("x-api-key" to apiKey)
-        val response = client.get("https://ip.hypersolutions.co/ip", headers = headers)
-        val body = response.body ?: throw IOException("رد فارغ عند جلب IP")
-        if (response.status != 200) {
-            Log.e(TAG, "❌ فشل جلب IP من Hyper (HTTP ${response.status}): $body")
-            throw IOException("فشل جلب IP: ${response.status}")
+        val req = Request.Builder()
+            .url("https://ip.hypersolutions.co/ip")
+            .get()
+            .header("x-api-key", apiKey)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل جلب IP من Hyper (HTTP ${resp.code}): $body")
+                throw IOException("فشل جلب IP: ${resp.code}")
+            }
+            return JSONObject(body).getString("ip")
         }
-        return JSONObject(body).getString("ip")
     }
 
     private fun tryFetchPowIfNeeded(): String? {
         return try {
-            val headers = mapOf(
-                "User-Agent" to userAgent,
-                "Content-Type" to "text/plain; charset=utf-8"
-            )
-            val response = client.post("https://$SAUDIA_HOST${sensorPath!!}", body = "{\"f\":\"gpc\"}", headers = headers)
-            val body = response.body
-            if (response.status == 200 && !body.isNullOrBlank() && body.length > 10) {
-                Log.d(TAG, "✅ PoW مطلوب وتم جلبه")
-                body
-            } else {
-                Log.d(TAG, "ℹ️ لا يبدو أن PoW مطلوب (HTTP ${response.status})")
-                null
+            val req = Request.Builder()
+                .url("https://$SAUDIA_HOST${sensorPath!!}")
+                .post("{\"f\":\"gpc\"}".toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                .header("User-Agent", userAgent)
+                .header("Content-Type", "text/plain; charset=utf-8")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string()
+                if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) {
+                    Log.d(TAG, "✅ PoW مطلوب وتم جلبه")
+                    body
+                } else {
+                    Log.d(TAG, "ℹ️ لا يبدو أن PoW مطلوب (HTTP ${resp.code})")
+                    null
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ خطأ أثناء محاولة جلب PoW: ${e.message}")
@@ -205,42 +236,48 @@ class HyperSessionManager(
             if (!pow.isNullOrBlank()) put("pow", pow)
         }.toString()
 
-        val headers = mapOf(
-            "x-api-key" to apiKey,
-            "Content-Type" to "application/json"
-        )
-        val response = client.post("$HYPER_BASE/reese84", body = body, headers = headers)
-        val respBody = response.body ?: throw IOException("Hyper API: رد فارغ")
+        val req = Request.Builder()
+            .url("$HYPER_BASE/reese84")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .header("x-api-key", apiKey)
+            .header("Content-Type", "application/json")
+            .build()
 
-        if (response.status != 200) {
-            Log.e(TAG, "❌ رفضت Hyper الطلب! (HTTP ${response.status}) | السبب: $respBody")
-            throw IOException("Hyper API ${response.status}: $respBody")
+        client.newCall(req).execute().use { resp ->
+            val respBody = resp.body?.string() ?: throw IOException("Hyper API: رد فارغ")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ رفضت Hyper الطلب! (HTTP ${resp.code}) | السبب: $respBody")
+                throw IOException("Hyper API ${resp.code}: $respBody")
+            }
+            return JSONObject(respBody).getString("payload")
         }
-        return JSONObject(respBody).getString("payload")
     }
 
     private data class TokenResult(val token: String, val renewInSec: Long, val cookieDomain: String)
 
     private fun submitSensor(sensorPath: String, payload: String): TokenResult {
         val url = "https://$SAUDIA_HOST$sensorPath"
-        val headers = mapOf(
-            "User-Agent" to userAgent,
-            "Content-Type" to "text/plain; charset=utf-8",
-            "Accept" to "*/*"
-        )
-        val response = client.post(url, body = payload, headers = headers)
-        val body = response.body ?: throw IOException("رد فارغ من إرسال sensor")
+        val req = Request.Builder()
+            .url(url)
+            .post(payload.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+            .header("User-Agent", userAgent)
+            .header("Content-Type", "text/plain; charset=utf-8")
+            .header("Accept", "*/*")
+            .build()
 
-        if (response.status != 200) {
-            Log.e(TAG, "❌ فشل إرسال sensor إلى saudia (HTTP ${response.status}): $body")
-            throw IOException("فشل إرسال sensor (${response.status})")
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IOException("رد فارغ من إرسال sensor")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل إرسال sensor إلى saudia (HTTP ${resp.code}): $body")
+                throw IOException("فشل إرسال sensor (${resp.code})")
+            }
+            val json = JSONObject(body)
+            return TokenResult(
+                token = json.getString("token"),
+                renewInSec = json.optLong("renewInSec", 900L),
+                cookieDomain = json.optString("cookieDomain", SAUDIA_HOST)
+            )
         }
-        val json = JSONObject(body)
-        return TokenResult(
-            token = json.getString("token"),
-            renewInSec = json.optLong("renewInSec", 900L),
-            cookieDomain = json.optString("cookieDomain", SAUDIA_HOST)
-        )
     }
 
     fun expiryAt(): Long = expiryMs
