@@ -81,12 +81,9 @@ fun AppNavigation() {
     ) { padding ->
         NavHost(
             navController = navController,
-            startDestination = Screen.Login.route,
+            startDestination = Screen.Home.route,
             modifier = Modifier.padding(padding)
         ) {
-            composable(Screen.Login.route) {
-                LoginScreen(navController, viewModel)
-            }
             composable(Screen.Home.route) {
                 MainScreen(navController, viewModel)
             }
