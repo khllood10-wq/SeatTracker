@@ -42,22 +42,19 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     var needRefresh by remember { mutableStateOf(false) }
 
-    // فحص عمر التوكن عند فتح الشاشة
+    // ⭐ فحص فعلي لصلاحية JWT عبر hasToken()
     LaunchedEffect(Unit) {
-        val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
-        val savedAt = prefs.getLong("token_saved_at", 0L)
-        val ageMinutes = (System.currentTimeMillis() - savedAt) / 60000
+        val isValid = viewModel.hasToken()
+        android.util.Log.d("Session", "Session check: valid=$isValid")
 
-        android.util.Log.d("Session", "Token age: $ageMinutes min | hasToken=${viewModel.hasToken()}")
-
-        if (viewModel.hasToken() && ageMinutes in 0..55) {
+        if (isValid) {
             viewModel.markSessionReady()
             android.util.Log.d("Session", "Token valid → skip WebView")
         } else {
-            prefs.edit().remove("auth_token").remove("token_saved_at").apply()
+            viewModel.clearSession()
             viewModel.markSessionPreparing()
             needRefresh = true
-            android.util.Log.d("Session", "Token expired → refresh")
+            android.util.Log.d("Session", "Token invalid/expired → SessionKeeper")
         }
     }
 
@@ -94,15 +91,32 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
 
             if (sessionReady) {
-                OutlinedButton(
-                    onClick = {
-                        val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
-                        prefs.edit().remove("auth_token").remove("token_saved_at").apply()
-                        viewModel.markSessionPreparing()
-                        needRefresh = true
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("🔄 تحديث الجلسة", fontSize = 12.sp) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
+                            prefs.edit().remove("auth_token").remove("token_saved_at")
+                                .remove("jwt_exp").remove("jwt_iat").apply()
+                            viewModel.markSessionPreparing()
+                            needRefresh = true
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("🔄 تحديث", fontSize = 11.sp) }
+
+                    OutlinedButton(
+                        onClick = {
+                            val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
+                            prefs.edit().clear().apply()
+                            viewModel.markSessionPreparing()
+                            needRefresh = true
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text("💥 إعادة تعيين", fontSize = 11.sp) }
+                }
             }
 
             Card(
@@ -244,7 +258,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ⭐ SessionKeeper — شفاف بحجم الشاشة (يعمل في الخلفية)
+        // ⭐ SessionKeeper — شاشة سوداء مرئية (يعمل تلقائياً عند انتهاء التوكن)
         if (!sessionReady && needRefresh) {
             SessionKeeper(
                 viewModel = viewModel,
@@ -254,9 +268,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// عناصر مساعدة
-// ══════════════════════════════════════════════════════════════
 @Composable
 private fun ResultCard(
     title: String, titleColor: Color, containerColor: Color, borderColor: Color,
