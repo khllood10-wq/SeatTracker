@@ -12,16 +12,16 @@ interface SaudiaApi {
     suspend fun searchAirBounds(
         @Query("guestOfficeId") g: String = "JEDSV08MA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>,
-        @Body r: SaudiaSearchRequest
+        @HeaderMap headers: Map<String, String>, // 👈 تم تعديل الاسم
+        @Body request: SaudiaSearchRequest       // 👈 تم تعديل الاسم
     ): Response<SaudiaResponse>
 
     @POST("shopping/carts")
     suspend fun createCart(
         @Query("guestOfficeId") g: String = "JEDSV08MA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>,
-        @Body r: CreateCartRequest
+        @HeaderMap headers: Map<String, String>, // 👈 تم تعديل الاسم
+        @Body request: CreateCartRequest         // 👈 تم تعديل الاسم
     ): Response<ResponseBody>
 
     @GET("shopping/carts/{cartId}")
@@ -30,7 +30,7 @@ interface SaudiaApi {
         @Query("pageIdentity") p: String = "PassengerDetails",
         @Query("guestOfficeId") g: String = "JEDSV08MA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>
+        @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
 
     @POST("shopping/carts/{cartId}/extensions")
@@ -38,8 +38,8 @@ interface SaudiaApi {
         @Path("cartId") c: String,
         @Query("guestOfficeId") g: String = "JEDSV08MA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>,
-        @Body r: RequestBody
+        @HeaderMap headers: Map<String, String>, // 👈 تم تعديل الاسم
+        @Body request: RequestBody               // 👈 تم تعديل الاسم
     ): Response<ResponseBody>
 
     @PATCH("shopping/carts/{cartId}/travelers/{travelerId}")
@@ -48,8 +48,8 @@ interface SaudiaApi {
         @Path("travelerId") t: String,
         @Query("guestOfficeId") g: String = "JEDSV08MA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>,
-        @Body r: RequestBody
+        @HeaderMap headers: Map<String, String>, // 👈 تم تعديل الاسم
+        @Body request: RequestBody               // 👈 تم تعديل الاسم
     ): Response<ResponseBody>
 
     @POST("shopping/carts/{cartId}/contacts")
@@ -57,8 +57,8 @@ interface SaudiaApi {
         @Path("cartId") c: String,
         @Query("guestOfficeId") g: String = "JEDSV08AA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>,
-        @Body r: RequestBody
+        @HeaderMap headers: Map<String, String>, // 👈 تم تعديل الاسم
+        @Body request: RequestBody               // 👈 تم تعديل الاسم
     ): Response<ResponseBody>
 
     @POST("purchase/orders")
@@ -66,8 +66,8 @@ interface SaudiaApi {
         @Query("cartId") c: String,
         @Query("guestOfficeId") g: String = "JEDSV08AA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>,
-        @Body r: RequestBody
+        @HeaderMap headers: Map<String, String>, // 👈 تم تعديل الاسم
+        @Body request: RequestBody               // 👈 تم تعديل الاسم
     ): Response<ResponseBody>
 
     @POST("checkout/payment/orders/{orderId}/payment-records")
@@ -76,8 +76,8 @@ interface SaudiaApi {
         @Query("lastName") ln: String,
         @Query("guestOfficeId") g: String = "JEDSV08AA",
         @Query("lang") l: String = "ar-SA",
-        @HeaderMap h: Map<String, String>,
-        @Body r: RequestBody
+        @HeaderMap headers: Map<String, String>, // 👈 تم تعديل الاسم
+        @Body request: RequestBody               // 👈 تم تعديل الاسم
     ): Response<ResponseBody>
 }
 
