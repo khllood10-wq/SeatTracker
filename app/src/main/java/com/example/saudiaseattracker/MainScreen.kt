@@ -42,19 +42,17 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     var needRefresh by remember { mutableStateOf(false) }
 
-    // ✅ فحص فعلي فقط — لا force refresh
+    // ⭐⭐⭐ لا force refresh — فقط فحص وتحديث الحالة ⭐⭐⭐
     LaunchedEffect(Unit) {
         val isValid = viewModel.hasToken()
         android.util.Log.e("SessionKeeper", "=== APP OPEN: tokenValid=$isValid ===")
 
         if (isValid) {
             viewModel.markSessionReady()
-            android.util.Log.e("SessionKeeper", "✅ Token still valid — no WebView")
         } else {
-            android.util.Log.e("SessionKeeper", "❌ Token expired — starting SessionKeeper")
-            viewModel.clearSession()
             viewModel.markSessionPreparing()
-            needRefresh = true
+            // ❌ لا نفتح SessionKeeper تلقائياً
+            // needRefresh = true  ← معطّل
         }
     }
 
@@ -71,21 +69,19 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         ) {
             Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
+            // حالة الجلسة (بانر فقط — لا يفتح شيء)
             if (!sessionReady) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
-                    Row(
-                        Modifier.padding(10.dp).fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("⏳ تجهيز الجلسة", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            Text(sessionStatus, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                        }
+                    Column(Modifier.padding(10.dp)) {
+                        Text("⚠️ لا توجد جلسة صالحة", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            "جرّب اختبار GET أولاً، أو اضغط تحديث الجلسة يدوياً",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
                     }
                 }
             }
@@ -101,17 +97,15 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                             prefs.edit().remove("auth_token").remove("token_saved_at")
                                 .remove("jwt_exp").remove("jwt_iat").apply()
                             viewModel.markSessionPreparing()
-                            needRefresh = true
                         },
                         modifier = Modifier.weight(1f)
-                    ) { Text("🔄 تحديث", fontSize = 11.sp) }
+                    ) { Text("🔄 مسح التوكن", fontSize = 11.sp) }
 
                     OutlinedButton(
                         onClick = {
                             val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
                             prefs.edit().clear().apply()
                             viewModel.markSessionPreparing()
-                            needRefresh = true
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
@@ -119,6 +113,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
+            // وضع المراقبة
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -180,6 +175,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 onEdit = { navController.navigate(Screen.Flight.route) }
             )
 
+            // زر البدء — مفعّل دائماً (إذا JWT موجود)
             Button(
                 onClick = { viewModel.runFullBooking() },
                 enabled = !isRunning && sessionReady &&
@@ -198,13 +194,36 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     Spacer(Modifier.width(12.dp))
                     Text("جاري التنفيذ...", fontWeight = FontWeight.Bold)
                 } else if (!sessionReady) {
-                    Text("⏳ انتظر تجهيز الجلسة...", fontWeight = FontWeight.Bold)
+                    Text("⚠️ يحتاج جلسة — استخدم اختبار GET أو تحديث يدوي", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 } else {
                     Text(
                         if (viewModel.monitoringMode) "👁️ بدء المراقبة" else "🚀 بدء الحجز التلقائي",
                         fontWeight = FontWeight.Bold, fontSize = 16.sp
                     )
                 }
+            }
+
+            HorizontalDivider()
+
+            // ⭐⭐⭐ زر اختبار GET — الأهم الآن ⭐⭐⭐
+            Button(
+                onClick = { navController.navigate(Screen.GetTest.route) },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+            ) {
+                Text("🧪 اختبار GET (بدون WebView)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+
+            // تحديث الجلسة يدوياً (WebView)
+            OutlinedButton(
+                onClick = {
+                    viewModel.markSessionPreparing()
+                    needRefresh = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.warning)
+            ) {
+                Text("🌐 تحديث الجلسة (WebView — قد يظهر anti-bot)", fontSize = 12.sp)
             }
 
             OutlinedButton(
@@ -258,6 +277,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
+        // ⭐ SessionKeeper يعمل فقط عند الطلب اليدوي (needRefresh = true)
         if (!sessionReady && needRefresh) {
             SessionKeeper(
                 viewModel = viewModel,
