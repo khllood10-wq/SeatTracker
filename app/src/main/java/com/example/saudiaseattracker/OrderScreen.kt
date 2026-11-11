@@ -45,8 +45,9 @@ fun OrderScreen(navController: NavController, viewModel: FlightViewModel) {
     val cartId = viewModel.cartId.collectAsStateWithLifecycle().value.orEmpty()
     val clipboard = LocalClipboardManager.current
 
-    var email by remember { mutableStateOf("khllood10@gmail.com") }
-    var phone by remember { mutableStateOf("572260016") }
+    // ⭐ بيانات EBRAHIM OTUDI
+    var email by remember { mutableStateOf("aletwade@gmail.com") }
+    var phone by remember { mutableStateOf("543309909") }
     var lastName by remember { mutableStateOf("Otudi") }
 
     var steps by remember { mutableStateOf<List<Step>>(emptyList()) }
@@ -129,7 +130,7 @@ fun OrderScreen(navController: NavController, viewModel: FlightViewModel) {
 
             if (orderId.isNullOrEmpty()) { currentStep = "❌ لم نستلم PNR"; running = false; return@launch }
 
-            // ─── Step 4: Submit SADAD payment (بدون تشفير!) ───
+            // ─── Step 4: Submit SADAD payment ───
             currentStep = "4/4 — إرسال طلب السداد"
             try {
                 val payBody = """{
@@ -176,7 +177,7 @@ fun OrderScreen(navController: NavController, viewModel: FlightViewModel) {
     ) {
         Text("💳 إتمام الحجز — SADAD", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(
-            "4 خطوات بدون تشفير: extension → contacts → order → payment",
+            "المسافر: Ebrahim Otudi / 1065314187",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -225,7 +226,6 @@ fun OrderScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // Success card
         if (success) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -267,7 +267,6 @@ fun OrderScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // Steps
         if (steps.isNotEmpty()) {
             Text("الخطوات (${steps.size}/4):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
             steps.forEach { s ->
