@@ -1,93 +1,144 @@
 package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
-import android.view.ViewGroup
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavController
 
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
 fun LoginScreen(navController: NavController, viewModel: FlightViewModel) {
-    var hasIntercepted by remember { mutableStateOf(false) }
-    var loadAttempts by remember { mutableStateOf(0) }
+    val context = LocalContext.current
+    var status by remember { mutableStateOf("⏳ تسجيل الدخول إلى saudia.com...") }
+    var progress by remember { mutableStateOf(0) }
+    var captured by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+    val bridge = remember {
+        object {
+            @JavascriptInterface
+            fun onTokenCaptured(auth: String, xD: String, sid: String, ua: String) {
+                if (captured) return
+                captured = true
+                viewModel.saveTokens(auth, xD, sid, ua)
+                status = "✅ تم التقاط التوكن — جاري الانتقال..."
+            }
+        }
+    }
+
+    // الانتقال للرئيسية بمجرد التقاط التوكن
+    LaunchedEffect(captured) {
+        if (captured) {
+            kotlinx.coroutines.delay(500)
+            navController.navigate(Screen.Home.route) {
+                popUpTo(Screen.Login.route) { inclusive = true }
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Text("🔐 تسجيل الدخول", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(status, style = MaterialTheme.typography.bodySmall)
+                if (progress in 1..99) {
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
 
         AndroidView(
-            modifier = Modifier.size(1.dp),
-            factory = { context ->
-                val webView = WebView(context)
-                val capturedUserAgent = webView.settings.userAgentString
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.userAgentString =
+                        "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                    addJavascriptInterface(bridge, "SaudiaBridge")
 
-                webView.layoutParams = ViewGroup.LayoutParams(1, 1)
-
-                webView.settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    loadWithOverviewMode = true
-                    useWideViewPort = true
-                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                }
-
-                webView.webChromeClient = WebChromeClient()
-
-                android.webkit.CookieManager.getInstance().setAcceptCookie(true)
-                android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
-
-                // ═══ 🔥 السطر الجديد: اربط الـ WebView بـ WebViewManager ═══
-                WebViewManager.attach(webView)
-
-                webView.webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(
-                        view: WebView?,
-                        request: android.webkit.WebResourceRequest?
-                    ): android.webkit.WebResourceResponse? {
-                        val url = request?.url.toString()
-
-                        if (!hasIntercepted && url.contains("dapi.saudia.com")) {
-                            val authHeader = request?.requestHeaders?.get("Authorization")
-                            val xdToken = request?.requestHeaders?.get("x-d-token")
-                            val sessionId = request?.requestHeaders?.get("saa-session-id")
-
-                            if (authHeader != null && authHeader.startsWith("Bearer ") && authHeader.length > 20) {
-                                val finalSessionId = sessionId ?: java.util.UUID.randomUUID().toString()
-                                viewModel.saveTokens(authHeader, xdToken ?: "", finalSessionId, capturedUserAgent)
-                                hasIntercepted = true
-                                view?.post {
-                                    navController.navigate(Screen.Search.route) {
-                                        popUpTo(Screen.Search.route) { inclusive = true }
-                                    }
-                                }
-                            }
-                        }
-                        return super.shouldInterceptRequest(view, request)
-                    }
-
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        if (!hasIntercepted && loadAttempts < 3) {
-                            loadAttempts++
-                            view?.postDelayed({
-                                if (!hasIntercepted) view.reload()
-                            }, 2000)
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageStarted(
+                            view: WebView?,
+                            url: String?,
+                            favicon: android.graphics.Bitmap?
+                        ) {
+                            super.onPageStarted(view, url, favicon)
+                            view?.evaluateJavascript("""
+                                (function() {
+                                    if (window.__loginHooked) return;
+                                    window.__loginHooked = true;
+                                    var origFetch = window.fetch;
+                                    window.fetch = function(input, init) {
+                                        try {
+                                            var h = (init && init.headers) || {};
+                                            var auth = h.Authorization || h.authorization;
+                                            var xD = h['x-d-token'];
+                                            var sid = h['saa-session-id'];
+                                            if (auth && auth.indexOf('Bearer') > -1) {
+                                                SaudiaBridge.onTokenCaptured(
+                                                    auth, xD || '', sid || '', navigator.userAgent
+                                                );
+                                            }
+                                        } catch(e) {}
+                                        return origFetch.apply(this, arguments);
+                                    };
+                                    var origOpen = XMLHttpRequest.prototype.open;
+                                    var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+                                    XMLHttpRequest.prototype.open = function() {
+                                        this.__h = {};
+                                        return origOpen.apply(this, arguments);
+                                    };
+                                    XMLHttpRequest.prototype.setRequestHeader = function(k, v) {
+                                        if (this.__h) this.__h[k] = v;
+                                        if (k.toLowerCase() === 'authorization' && v.indexOf('Bearer') > -1) {
+                                            SaudiaBridge.onTokenCaptured(
+                                                v, this.__h['x-d-token'] || '',
+                                                this.__h['saa-session-id'] || '', navigator.userAgent
+                                            );
+                                        }
+                                        return origSetHeader.apply(this, arguments);
+                                    };
+                                })();
+                            """.trimIndent(), null)
                         }
                     }
-                }
 
-                webView.loadUrl("https://www.saudia.com/ar-SA")
-                webView
+                    loadUrl("https://www.saudia.com/ar-SA")
+                }
             }
         )
+
+        if (!captured) {
+            OutlinedButton(
+                onClick = {
+                    val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
+                    if (!prefs.getString("auth_token", null).isNullOrEmpty()) {
+                        navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.Login.route) { inclusive = true }
+                        }
+                    } else {
+                        status = "⚠️ لا يوجد توكن محفوظ بعد — سجّل دخول أولاً"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            ) { Text("تخطي (إذا كنت مسجل دخول سابقاً)") }
+        }
     }
 }
