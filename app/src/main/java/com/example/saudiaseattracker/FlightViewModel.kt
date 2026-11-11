@@ -18,6 +18,9 @@ import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
 
+// ══════════════════════════════════════════════════════════
+// Data Models
+// ══════════════════════════════════════════════════════════
 data class PassengerData(
     val title: String = "Mr",
     val firstName: String = "Ebrahim",
@@ -65,13 +68,17 @@ data class BookingStep(
     val detail: String = ""
 )
 
+// ══════════════════════════════════════════════════════════
+// ViewModel
+// ══════════════════════════════════════════════════════════
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Inputs ──
     var passengerData by mutableStateOf(PassengerData())
     var flightData by mutableStateOf(FlightData())
-    var monitoringMode by mutableStateOf(false)  // ⭐ وضع المراقبة
+    var monitoringMode by mutableStateOf(false)
 
+    // ── Steps ──
     private val _steps = MutableStateFlow(
         listOf(
             BookingStep("search", "البحث عن الرحلة"),
@@ -85,9 +92,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     )
     val steps: StateFlow<List<BookingStep>> = _steps
 
+    // ── Logs ──
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
+    // ── Flow State ──
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
 
@@ -103,6 +112,26 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
+    // ⭐ Session state (for hidden WebView)
+    private val _sessionReady = MutableStateFlow(false)
+    val sessionReady: StateFlow<Boolean> = _sessionReady
+
+    private val _sessionStatus = MutableStateFlow("⏳ جاري تجهيز الجلسة...")
+    val sessionStatus: StateFlow<String> = _sessionStatus
+
+    fun markSessionReady() {
+        _sessionReady.value = true
+        _sessionStatus.value = "✅ الجلسة جاهزة"
+    }
+
+    fun markSessionPreparing() {
+        _sessionReady.value = false
+        _sessionStatus.value = "⏳ جاري تجهيز الجلسة..."
+    }
+
+    // ══════════════════════════════════════════════════════
+    // Utilities
+    // ══════════════════════════════════════════════════════
     fun addLog(message: String) {
         val curr = _searchLogs.value.toMutableList()
         curr.add(0, message)
@@ -123,7 +152,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ══════════════════════════════════════════════════════
-    // Prefs / Headers
+    // Token / Cookie / Headers
     // ══════════════════════════════════════════════════════
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -134,12 +163,26 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("user_agent", userAgent)
             .apply()
         addLog("✅ تم التقاط التوكن")
+        markSessionReady()
     }
 
-    private fun getAuth() = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("auth_token", null)
-    private fun getXDT() = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("xd_token", null)
-    private fun getSID() = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("session_id", null)
-    private fun getCookies() = getApplication<Application>().getSharedPreferences("auth_prefs", Context.MODE_PRIVATE).getString("dynamic_cookies", null)
+    private fun getAuth() = getApplication<Application>()
+        .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        .getString("auth_token", null)
+
+    private fun getXDT() = getApplication<Application>()
+        .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        .getString("xd_token", null)
+
+    private fun getSID() = getApplication<Application>()
+        .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        .getString("session_id", null)
+
+    private fun getCookies() = getApplication<Application>()
+        .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        .getString("dynamic_cookies", null)
+
+    fun hasToken(): Boolean = getAuth() != null
 
     private fun saveCookies(response: Response<*>) {
         val setCookies = response.headers().values("Set-Cookie")
@@ -162,7 +205,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putString("dynamic_cookies", updated).apply()
     }
 
-    private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
+    private fun buildHeaders(
+        apiVersion: String,
+        referer: String = "https://www.saudia.com/"
+    ): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val h = mutableMapOf(
@@ -194,10 +240,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun buildHeadersPublic(v: String, ref: String = "https://www.saudia.com/"): Map<String, String> =
         buildHeaders(v, ref)
 
-    fun hasToken(): Boolean = getAuth() != null
-
     // ══════════════════════════════════════════════════════
-    // Full Booking Flow (with Monitoring Mode)
+    // Full Booking Flow
     // ══════════════════════════════════════════════════════
     fun runFullBooking() {
         if (_isRunning.value) return
@@ -211,7 +255,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                // ─── SEARCH ───
+                // ─── 1. SEARCH ───
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound()
                 if (flight == null) {
@@ -223,7 +267,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _foundFlight.value = flight
                 delay(1200)
 
-                // ─── CART ───
+                // ─── 2. CART ───
                 setStep("cart", StepStatus.RUNNING)
                 val cartId = createCart(flight.airBoundId)
                 if (cartId == null) {
@@ -235,7 +279,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("cart", StepStatus.SUCCESS, "cartId: $cartId")
                 delay(1200)
 
-                // ─── PASSENGER ───
+                // ─── 3. PASSENGER ───
                 setStep("passenger", StepStatus.RUNNING)
                 if (!confirmPassenger(cartId)) {
                     setStep("passenger", StepStatus.FAILED)
@@ -245,7 +289,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("passenger", StepStatus.SUCCESS)
                 delay(1200)
 
-                // ─── EXTENSION ───
+                // ─── 4. EXTENSION ───
                 setStep("extension", StepStatus.RUNNING)
                 if (!addExtension(cartId)) {
                     setStep("extension", StepStatus.FAILED)
@@ -255,7 +299,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("extension", StepStatus.SUCCESS)
                 delay(1200)
 
-                // ─── CONTACTS ───
+                // ─── 5. CONTACTS ───
                 setStep("contacts", StepStatus.RUNNING)
                 if (!saveContacts(cartId)) {
                     setStep("contacts", StepStatus.FAILED)
@@ -265,7 +309,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("contacts", StepStatus.SUCCESS)
                 delay(1200)
 
-                // ─── ORDER ───
+                // ─── 6. ORDER ───
                 setStep("order", StepStatus.RUNNING)
                 val orderRes = createOrder(cartId)
                 if (orderRes == null) {
@@ -279,20 +323,20 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("order", StepStatus.SUCCESS, "PNR: $pnr | SADAD: $sadad")
                 delay(1200)
 
-                // ⭐⭐⭐ MONITORING CHECK ⭐⭐⭐
+                // ⭐ MONITORING MODE — STOP HERE
                 if (monitoringMode) {
-                    setStep("payment", StepStatus.SKIPPED, "👁️ وضع المراقبة: لم يتم إرسال الدفع")
+                    setStep("payment", StepStatus.SKIPPED, "👁️ وضع المراقبة: لم يُرسل الدفع")
                     addLog("═════════════════════════════════════")
                     addLog("👁️ وضع المراقبة اكتمل")
                     addLog("PNR: $pnr")
                     addLog("SADAD: $sadad")
-                    addLog("⚠️ لم يُرسل الدفع — احجز من الموقع أو أوقف المراقبة وأعد")
+                    addLog("⚠️ لم يُرسل الدفع — PNR يلغى تلقائياً بعد ~5 ساعات")
                     addLog("═════════════════════════════════════")
                     _isRunning.value = false
                     return@launch
                 }
 
-                // ─── PAYMENT ───
+                // ─── 7. PAYMENT ───
                 setStep("payment", StepStatus.RUNNING)
                 if (!submitPayment(pnr)) {
                     setStep("payment", StepStatus.FAILED, "قد تحتاج دفع حجز سابق أولاً")
@@ -313,6 +357,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ─── Individual Steps ───
     private suspend fun searchUntilFound(maxAttempts: Int = 30): FoundFlightDetails? {
         val dateStr = "${flightData.date}T00:00:00.000"
         for (attempt in 1..maxAttempts) {
@@ -326,7 +371,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     ),
                     offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                 )
-                val resp = RetrofitClient.api.searchAirBounds(headers = buildHeaders("4"), request = req)
+                val resp = RetrofitClient.api.searchAirBounds(
+                    headers = buildHeaders("4"),
+                    request = req
+                )
                 saveCookies(resp)
                 if (resp.isSuccessful) {
                     val groups = resp.body()?.data?.airBoundGroups
@@ -376,7 +424,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val json = JsonParser.parseString(body).asJsonObject
             json.getAsJsonObject("data")?.get("id")?.asString ?: json.get("id")?.asString
         }
-    } catch (e: Exception) { addLog("❌ cart: ${e.message}"); null }
+    } catch (e: Exception) {
+        addLog("❌ cart: ${e.message}")
+        null
+    }
 
     private suspend fun confirmPassenger(cartId: String): Boolean = try {
         val p = passengerData
@@ -390,7 +441,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         saveCookies(resp)
         addLog("PATCH traveler: HTTP ${resp.code()}")
         resp.code() == 200
-    } catch (e: Exception) { addLog("❌ passenger: ${e.message}"); false }
+    } catch (e: Exception) {
+        addLog("❌ passenger: ${e.message}")
+        false
+    }
 
     private suspend fun addExtension(cartId: String): Boolean = try {
         val body = """[{"content":"eyJzdGF0dXMiOiJWRVJJRklFRCIsImhlYWx0aENoZWNrU3RhdHVzIjoiTk9fUkVTUE9OU0UifQ==","travelerId":"SKH-1-EXT","extensionType":"TextExtension","name":"YQENSTATUS"}]"""
@@ -403,7 +457,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         saveCookies(resp)
         addLog("POST extensions: HTTP ${resp.code()}")
         resp.isSuccessful
-    } catch (e: Exception) { addLog("❌ ext: ${e.message}"); false }
+    } catch (e: Exception) {
+        addLog("❌ ext: ${e.message}")
+        false
+    }
 
     private suspend fun saveContacts(cartId: String): Boolean = try {
         val p = passengerData
@@ -416,7 +473,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         saveCookies(resp)
         addLog("POST contacts: HTTP ${resp.code()}")
         resp.isSuccessful
-    } catch (e: Exception) { addLog("❌ contacts: ${e.message}"); false }
+    } catch (e: Exception) {
+        addLog("❌ contacts: ${e.message}")
+        false
+    }
 
     private suspend fun createOrder(cartId: String): Pair<String, String>? = try {
         val resp = RetrofitClient.api.createOrderRaw(
@@ -432,7 +492,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val sadad = Regex("\"numericId\"\\s*:\\s*\"([0-9]{10,14})\"").find(body)?.groupValues?.get(1) ?: ""
             Pair(pnr, sadad)
         }
-    } catch (e: Exception) { addLog("❌ order: ${e.message}"); null }
+    } catch (e: Exception) {
+        addLog("❌ order: ${e.message}")
+        null
+    }
 
     private suspend fun submitPayment(pnr: String): Boolean = try {
         val p = passengerData
@@ -446,5 +509,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         saveCookies(resp)
         addLog("POST payment-records: HTTP ${resp.code()}")
         resp.isSuccessful
-    } catch (e: Exception) { addLog("❌ payment: ${e.message}"); false }
+    } catch (e: Exception) {
+        addLog("❌ payment: ${e.message}")
+        false
+    }
 }
