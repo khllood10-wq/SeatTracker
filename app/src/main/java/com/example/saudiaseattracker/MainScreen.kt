@@ -42,7 +42,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     var needRefresh by remember { mutableStateOf(false) }
 
-    // ⭐⭐⭐ لا force refresh — فقط فحص وتحديث الحالة ⭐⭐⭐
+    // ⭐ لا force refresh — فقط فحص وتحديث الحالة (بدون فتح WebView)
     LaunchedEffect(Unit) {
         val isValid = viewModel.hasToken()
         android.util.Log.e("SessionKeeper", "=== APP OPEN: tokenValid=$isValid ===")
@@ -52,7 +52,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         } else {
             viewModel.markSessionPreparing()
             // ❌ لا نفتح SessionKeeper تلقائياً
-            // needRefresh = true  ← معطّل
         }
     }
 
@@ -175,7 +174,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 onEdit = { navController.navigate(Screen.Flight.route) }
             )
 
-            // زر البدء — مفعّل دائماً (إذا JWT موجود)
+            // زر البدء
             Button(
                 onClick = { viewModel.runFullBooking() },
                 enabled = !isRunning && sessionReady &&
@@ -214,14 +213,14 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 Text("🧪 اختبار GET (بدون WebView)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
 
-            // تحديث الجلسة يدوياً (WebView)
+            // تحديث الجلسة يدوياً (WebView) — اللون البرتقالي
             OutlinedButton(
                 onClick = {
                     viewModel.markSessionPreparing()
                     needRefresh = true
                 },
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.warning)
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFA726))
             ) {
                 Text("🌐 تحديث الجلسة (WebView — قد يظهر anti-bot)", fontSize = 12.sp)
             }
