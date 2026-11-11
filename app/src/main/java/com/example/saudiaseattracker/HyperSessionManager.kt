@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class HyperSessionManager(
@@ -34,7 +35,6 @@ class HyperSessionManager(
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
-        // اعتراض الطلبات لإضافة هيدرات المتصفح الحقيقية (مهم جداً لتجاوز Imperva)
         .addInterceptor { chain ->
             val original = chain.request()
             val requestBuilder = original.newBuilder()
@@ -93,19 +93,18 @@ class HyperSessionManager(
         }
         
         if (apiKey.isBlank()) {
-            Log.e(TAG, "❌ خطأ فادح: مفتاح API فارغ! (تأكد من إضافته في GitHub Secrets وملف build.gradle)")
-            return
+            Log.e(TAG, "❌ خطأ فادح: مفتاح API فارغ!")
+            throw IOException("مفتاح API فارغ! تأكد من إعداده في GitHub.")
         }
 
         Log.d(TAG, "🔄 جاري حل/تجديد reese84...")
         try {
-            // 👇 تشغيل الاتصال في الخلفية لتجنب NetworkOnMainThreadException
             runBlocking(Dispatchers.IO) {
                 solveOrRenew()
             }
         } catch (e: Exception) {
-            // 👇 طباعة تفصيلية جداً للخطأ
-            Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions:\nالنوع: ${e.javaClass.name}\nالرسالة: ${e.message}\nالتفاصيل: ${e.stackTraceToString()}")
+            Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions: ${e.localizedMessage}", e)
+            throw e 
         }
     }
 
@@ -162,8 +161,8 @@ class HyperSessionManager(
             val fullMatch = fullRegex.find(html)
 
             if (pathMatch == null || fullMatch == null) {
-                Log.e(TAG, "❌ لم يتم العثور على مسار سكريبت التحدي (Imperva).")
-                throw IOException("لم يتم العثور على مسار التحدي.")
+                Log.e(TAG, "❌ لم يتم العثور على مسار سكريبت التحدي.")
+                throw IOException("لم يتم العثور على مسار سكريبت التحدي.")
             }
 
             val rawPath = pathMatch.groupValues[1]
@@ -184,10 +183,7 @@ class HyperSessionManager(
             .header("Sec-Fetch-Site", "same-origin")
             .build()
         client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                Log.e(TAG, "❌ فشل جلب السكريبت (HTTP ${resp.code})")
-                throw IOException("فشل جلب السكريبت: ${resp.code}")
-            }
+            if (!resp.isSuccessful) throw IOException("فشل جلب السكريبت: ${resp.code}")
             return resp.body?.string() ?: throw IOException("السكريبت فارغ")
         }
     }
@@ -200,10 +196,7 @@ class HyperSessionManager(
             .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
-            if (!resp.isSuccessful) {
-                Log.e(TAG, "❌ فشل جلب IP من Hyper (HTTP ${resp.code}): $body")
-                throw IOException("فشل جلب IP: ${resp.code}")
-            }
+            if (!resp.isSuccessful) throw IOException("فشل جلب IP: ${resp.code} - $body")
             return JSONObject(body).getString("ip")
         }
     }
@@ -219,7 +212,7 @@ class HyperSessionManager(
                 val body = resp.body?.string()
                 if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) {
                     Log.d(TAG, "✅ PoW مطلوب وتم جلبه")
-                    body
+                    body 
                 } else {
                     Log.d(TAG, "ℹ️ لا يبدو أن PoW مطلوب (HTTP ${resp.code})")
                     null
@@ -238,15 +231,35 @@ class HyperSessionManager(
         ip: String,
         pow: String?
     ): String {
+        // 1. حساب بصمة السكريبت (SHA-256 Hash) بدلاً من إرسال السكريبت كاملاً
+        val scriptHash = try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val hashBytes = digest.digest(script.toByteArray(Charsets.UTF_8))
+            hashBytes.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ فشل حساب Hash للسكريبت: ${e.message}")
+            ""
+        }
+
+        // 2. بناء الحمولة
         val body = JSONObject().apply {
             put("userAgent", userAgent)
             put("pageUrl", pageUrl)
             put("scriptUrl", scriptUrl)
-            put("script", script)
+            
+            if (scriptHash.isNotEmpty()) {
+                put("scriptHash", scriptHash)
+            } else {
+                put("script", script) // احتياطياً
+            }
+            
             put("ip", ip)
             put("acceptLanguage", acceptLanguage)
             if (!pow.isNullOrBlank()) put("pow", pow)
         }.toString()
+
+        // 3. طباعة الحمولة للتشخيص
+        Log.d(TAG, "📤 Hyper Request Body: $body")
 
         val req = Request.Builder()
             .url("$HYPER_BASE/reese84")
