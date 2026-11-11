@@ -104,6 +104,9 @@ fun AppNavigation() {
             composable(Screen.TokenInitTester.route) {
                 TokenInitTesterScreen(navController, viewModel)
             }
+            composable(Screen.GetTest.route) {
+                GetTestScreen(navController, viewModel)
+            }
         }
     }
 }
