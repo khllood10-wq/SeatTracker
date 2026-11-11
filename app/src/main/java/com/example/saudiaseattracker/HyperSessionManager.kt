@@ -2,6 +2,8 @@ package com.example.saudiaseattracker
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -32,6 +34,17 @@ class HyperSessionManager(
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
+        // اعتراض الطلبات لإضافة هيدرات المتصفح الحقيقية (مهم جداً لتجاوز Imperva)
+        .addInterceptor { chain ->
+            val original = chain.request()
+            val requestBuilder = original.newBuilder()
+                .header("User-Agent", userAgent)
+                .header("Accept-Language", acceptLanguage)
+                .header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+                .header("sec-ch-ua-mobile", "?0")
+                .header("sec-ch-ua-platform", "\"Windows\"")
+            chain.proceed(requestBuilder.build())
+        }
         .connectionSpecs(listOf(
             ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                 .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
@@ -86,9 +99,13 @@ class HyperSessionManager(
 
         Log.d(TAG, "🔄 جاري حل/تجديد reese84...")
         try {
-            solveOrRenew()
+            // 👇 تشغيل الاتصال في الخلفية لتجنب NetworkOnMainThreadException
+            runBlocking(Dispatchers.IO) {
+                solveOrRenew()
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions: ${e.localizedMessage}", e)
+            // 👇 طباعة تفصيلية جداً للخطأ
+            Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions:\nالنوع: ${e.javaClass.name}\nالرسالة: ${e.message}\nالتفاصيل: ${e.stackTraceToString()}")
         }
     }
 
@@ -129,9 +146,7 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(SAUDIA_URL)
             .get()
-            .header("User-Agent", userAgent)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-            .header("Accept-Language", acceptLanguage)
             .header("Sec-Fetch-Dest", "document")
             .header("Sec-Fetch-Mode", "navigate")
             .header("Sec-Fetch-Site", "none")
@@ -163,9 +178,7 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(url)
             .get()
-            .header("User-Agent", userAgent)
             .header("Accept", "*/*")
-            .header("Accept-Language", acceptLanguage)
             .header("Sec-Fetch-Dest", "script")
             .header("Sec-Fetch-Mode", "no-cors")
             .header("Sec-Fetch-Site", "same-origin")
@@ -200,7 +213,6 @@ class HyperSessionManager(
             val req = Request.Builder()
                 .url("https://$SAUDIA_HOST${sensorPath!!}")
                 .post("{\"f\":\"gpc\"}".toRequestBody("text/plain; charset=utf-8".toMediaType()))
-                .header("User-Agent", userAgent)
                 .header("Content-Type", "text/plain; charset=utf-8")
                 .build()
             client.newCall(req).execute().use { resp ->
@@ -260,7 +272,6 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(url)
             .post(payload.toRequestBody("text/plain; charset=utf-8".toMediaType()))
-            .header("User-Agent", userAgent)
             .header("Content-Type", "text/plain; charset=utf-8")
             .header("Accept", "*/*")
             .build()
