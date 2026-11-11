@@ -283,4 +283,16 @@ class HyperSessionManager(
             )
         }
     }
+
+    // ═══════ الدوال المضافة مؤخراً ═══════
+    
+    fun expiryAt(): Long = expiryMs
+
+    fun forceClear() {
+        currentToken = null
+        expiryMs = 0L
+        sensorPath = null
+        scriptUrl = null
+        prefs.edit().clear().apply()
+    }
 }
