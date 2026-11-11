@@ -8,7 +8,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -51,7 +50,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     var needRefresh by remember { mutableStateOf(false) }
 
-    // ⭐ فحص عمر التوكن — إذا أقدم من 55 دقيقة → أجبر التحديث
+    // ⭐ فحص عمر التوكن عند فتح الشاشة
     LaunchedEffect(Unit) {
         val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         val savedAt = prefs.getLong("token_saved_at", 0L)
@@ -63,7 +62,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             viewModel.markSessionReady()
             android.util.Log.d("Session", "Token still valid, skipping WebView")
         } else {
-            // مسح التوكن القديم لفرض التحديث
             prefs.edit()
                 .remove("auth_token")
                 .remove("token_saved_at")
@@ -107,7 +105,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ── زر التحديث اليدوي (احتياط) ──
+            // ── زر تجديد الجلسة ──
             if (sessionReady) {
                 OutlinedButton(
                     onClick = {
@@ -206,7 +204,8 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             ) {
                 if (isRunning) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp), strokeWidth = 2.dp,
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                     Spacer(Modifier.width(12.dp))
@@ -231,6 +230,15 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 Text("🎯 تحدي: التقاط التوكن بدون WebView", fontSize = 12.sp)
             }
 
+            // ⭐ زر اختبار إعادة استخدام x-d-token ⭐
+            OutlinedButton(
+                onClick = { navController.navigate(Screen.TokenInitTester.route) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+            ) {
+                Text("🔬 اختبار إعادة x-d-token → JWT", fontSize = 12.sp)
+            }
+
             // ── Stepper ──
             if (steps.any { it.status != StepStatus.PENDING }) {
                 Text("مراحل الحجز:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -240,15 +248,30 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             // ── النتيجة ──
             if (pnr.isNotEmpty()) {
                 when (paymentStatus) {
-                    StepStatus.SUCCESS -> ResultCard("🎉 تم الحجز الكامل!", Color(0xFF00C853),
-                        MaterialTheme.colorScheme.primaryContainer, Color(0xFF00C853),
-                        pnr, sadad, clipboard, "ادفع رقم SADAD في البنك")
-                    StepStatus.SKIPPED -> ResultCard("👁️ وصلنا للدفع", MaterialTheme.colorScheme.tertiary,
-                        MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.tertiary,
-                        pnr, sadad, clipboard, "لم يُرسل الدفع — PNR يلغى تلقائياً")
-                    StepStatus.FAILED -> ResultCard("⚠️ فشل الدفع", MaterialTheme.colorScheme.error,
-                        MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.error,
-                        pnr, sadad, clipboard, "قد يكون لديك حجز سابق معلق")
+                    StepStatus.SUCCESS -> ResultCard(
+                        title = "🎉 تم الحجز الكامل!",
+                        titleColor = Color(0xFF00C853),
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        borderColor = Color(0xFF00C853),
+                        pnr = pnr, sadad = sadad, clipboard = clipboard,
+                        note = "ادفع رقم SADAD في البنك"
+                    )
+                    StepStatus.SKIPPED -> ResultCard(
+                        title = "👁️ وصلنا للدفع",
+                        titleColor = MaterialTheme.colorScheme.tertiary,
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        borderColor = MaterialTheme.colorScheme.tertiary,
+                        pnr = pnr, sadad = sadad, clipboard = clipboard,
+                        note = "لم يُرسل الدفع — PNR يلغى تلقائياً"
+                    )
+                    StepStatus.FAILED -> ResultCard(
+                        title = "⚠️ فشل الدفع",
+                        titleColor = MaterialTheme.colorScheme.error,
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        borderColor = MaterialTheme.colorScheme.error,
+                        pnr = pnr, sadad = sadad, clipboard = clipboard,
+                        note = "قد يكون لديك حجز سابق معلق"
+                    )
                     else -> Card(border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)) {
                         Column(Modifier.padding(14.dp)) {
                             Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -273,7 +296,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ⭐ WebView كبير (100dp) لكن شفاف — يعمل في الخلفية
+        // ⭐ WebView مخفي (100dp خارج الشاشة)
         if (!sessionReady && needRefresh) {
             Box(
                 modifier = Modifier
@@ -366,7 +389,7 @@ private fun HiddenSessionWebView(viewModel: FlightViewModel, onComplete: () -> U
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                         super.onPageStarted(view, url, favicon)
                         android.util.Log.d("Session", "Page loading: $url")
-                        view?.evaluateJavascript(getImprovedHookJS(), null)
+                        view?.evaluateJavascript(getSessionHookJS(), null)
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
@@ -397,10 +420,10 @@ private fun HiddenSessionWebView(viewModel: FlightViewModel, onComplete: () -> U
     )
 }
 
-private fun getImprovedHookJS(): String = """
+private fun getSessionHookJS(): String = """
     (function() {
-        if (window.__hooked) return;
-        window.__hooked = true;
+        if (window.__sessionHooked) return;
+        window.__sessionHooked = true;
         SaudiaBridge.onLog('Hook installed');
 
         function getHeader(h, name) {
@@ -486,9 +509,14 @@ private fun getImprovedHookJS(): String = """
     })();
 """.trimIndent()
 
+// ══════════════════════════════════════════════════════════════
+// عناصر مساعدة
+// ══════════════════════════════════════════════════════════════
 @Composable
-private fun ResultCard(title: String, titleColor: Color, containerColor: Color, borderColor: Color,
-                       pnr: String, sadad: String, clipboard: androidx.compose.ui.platform.ClipboardManager, note: String) {
+private fun ResultCard(
+    title: String, titleColor: Color, containerColor: Color, borderColor: Color,
+    pnr: String, sadad: String, clipboard: androidx.compose.ui.platform.ClipboardManager, note: String
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = containerColor),
