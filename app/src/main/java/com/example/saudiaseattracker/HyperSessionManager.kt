@@ -9,7 +9,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class HyperSessionManager(
@@ -34,7 +33,6 @@ class HyperSessionManager(
         const val KEY_COOKIE_DOMAIN = "reese84_cookie_domain"
     }
 
-    // عميل OkHttp بسيط جداً ليتطابق مع curl
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -70,11 +68,20 @@ class HyperSessionManager(
 
     private fun solveOrRenew() {
         if (sensorPath == null || scriptUrl == null) discoverPaths()
-        val script = fetchScript(scriptUrl!!)
+        
         val egressIp = fetchEgressIp()
-        val pow = tryFetchPowIfNeeded()
-        val sensorPayload = generateSensor(script, scriptUrl!!, egressIp, pow)
+        Log.d(TAG, "🌐 IP المستخدم: $egressIp")
+
+        // 1. جلب السكريبت (بدون ضغط، تماما مثل curl)
+        val script = fetchScript(scriptUrl!!)
+        Log.d(TAG, "📜 طول السكريبت: ${script.length}")
+
+        // 2. توليد البصمة (بدون POW، تماما مثل Termux)
+        val sensorPayload = generateSensor(script, scriptUrl!!, egressIp)
+        
+        // 3. إرسال البصمة للسعودية
         val result = submitSensor(sensorPath!!, sensorPayload)
+
         currentToken = result.token
         expiryMs = System.currentTimeMillis() + result.renewInSec * 1000L
         prefs.edit().putString(KEY_TOKEN, result.token).putLong(KEY_EXPIRY, expiryMs).apply()
@@ -100,6 +107,7 @@ class HyperSessionManager(
     private fun fetchScript(url: String): String {
         val req = Request.Builder().url(url).get()
             .header("User-Agent", userAgent)
+            .header("Accept-Encoding", "identity") // إجبار السيرفر على عدم الضغط
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("فشل جلب السكريبت: ${resp.code}")
@@ -118,79 +126,32 @@ class HyperSessionManager(
         }
     }
 
-    private fun tryFetchPowIfNeeded(): String? {
-        return try {
-            val req = Request.Builder()
-                .url("https://$SAUDIA_HOST${sensorPath!!}")
-                .post("{\"f\":\"gpc\"}".toRequestBody("text/plain; charset=utf-8".toMediaType()))
-                .header("Content-Type", "text/plain; charset=utf-8")
-                .header("User-Agent", userAgent)
-                .build()
-            client.newCall(req).execute().use { resp ->
-                val body = resp.body?.string()
-                if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) body else null
-            }
-        } catch (e: Exception) { null }
-    }
-
-    private fun generateSensor(script: String, scriptUrl: String, ip: String, pow: String?): String {
-        // استخدام scriptHash (موصى به من Hyper لتقليل حجم الطلب)
-        val scriptHash = MessageDigest.getInstance("SHA-256")
-            .digest(script.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-
+    private fun generateSensor(script: String, scriptUrl: String, ip: String): String {
         val body = JSONObject().apply {
             put("userAgent", userAgent)
             put("pageUrl", SAUDIA_URL)
             put("scriptUrl", scriptUrl)
-            put("scriptHash", scriptHash) // إرسال البصمة بدلاً من السكريبت كاملاً
+            put("script", script) // إرسال السكريبت كاملاً مثل jq
             put("ip", ip)
             put("acceptLanguage", acceptLanguage)
-            if (!pow.isNullOrBlank()) put("pow", pow)
         }.toString()
 
+        Log.d(TAG, "📤 إرسال طلب التوليد إلى Hyper...")
+        
         val req = Request.Builder()
             .url("$HYPER_BASE/reese84")
             .post(body.toRequestBody("application/json".toMediaType()))
             .header("x-api-key", apiKey)
             .header("Content-Type", "application/json")
+            .header("User-Agent", "curl/7.88.1") // إجبار السيرفر على رؤيتنا كـ curl
             .build()
 
         client.newCall(req).execute().use { resp ->
             val respBody = resp.body?.string() ?: throw IOException("رد Hyper فارغ")
             if (!resp.isSuccessful) {
                 Log.e(TAG, "❌ رفضت Hyper الطلب! (HTTP ${resp.code}) | السبب: $respBody")
-                // إذا طلب الخادم السكريبت كاملاً (422)، نعيد المحاولة بإرساله
-                if (resp.code == 422) {
-                    return generateSensorWithFullScript(script, scriptUrl, ip, pow)
-                }
                 throw IOException("Hyper API ${resp.code}: $respBody")
             }
-            return JSONObject(respBody).getString("payload")
-        }
-    }
-
-    private fun generateSensorWithFullScript(script: String, scriptUrl: String, ip: String, pow: String?): String {
-        val body = JSONObject().apply {
-            put("userAgent", userAgent)
-            put("pageUrl", SAUDIA_URL)
-            put("scriptUrl", scriptUrl)
-            put("script", script) // إرسال السكريبت كاملاً
-            put("ip", ip)
-            put("acceptLanguage", acceptLanguage)
-            if (!pow.isNullOrBlank()) put("pow", pow)
-        }.toString()
-
-        val req = Request.Builder()
-            .url("$HYPER_BASE/reese84")
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .header("x-api-key", apiKey)
-            .header("Content-Type", "application/json")
-            .build()
-
-        client.newCall(req).execute().use { resp ->
-            val respBody = resp.body?.string() ?: throw IOException("رد Hyper فارغ")
-            if (!resp.isSuccessful) throw IOException("Hyper API ${resp.code}: $respBody")
             return JSONObject(respBody).getString("payload")
         }
     }
@@ -203,6 +164,8 @@ class HyperSessionManager(
             .post(payload.toRequestBody("text/plain; charset=utf-8".toMediaType()))
             .header("Content-Type", "text/plain; charset=utf-8")
             .header("User-Agent", userAgent)
+            .header("Accept", "*/*")
+            .header("Accept-Encoding", "identity")
             .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("رد السعودية فارغ")
