@@ -19,9 +19,10 @@ class HyperSessionManager(
 ) {
     companion object {
         const val TAG = "HyperSessionError"
-        // تأكد أن هذا الـ User-Agent مطابق تماماً لما تستخدمه في FlightViewModel
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
+        // 👇 الرابط الصحيح لجلب IP
+        const val HYPER_IP_URL = "https://api.hypersolutions.co/ip" 
         const val SAUDIA_HOST = "www.saudia.com"
         const val SAUDIA_URL = "https://www.saudia.com/ar-SA"
         const val PREFS = "hyper_prefs"
@@ -40,9 +41,14 @@ class HyperSessionManager(
             val requestBuilder = original.newBuilder()
                 .header("User-Agent", userAgent)
                 .header("Accept-Language", acceptLanguage)
-                .header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
-                .header("sec-ch-ua-mobile", "?0")
-                .header("sec-ch-ua-platform", "\"Windows\"")
+
+            // 👇 نضيف هيدرات المتصفح فقط إذا كان الطلب متجهاً إلى موقع السعودية
+            // (حتى لا نغضب سيرفر Hyper API)
+            if (original.url.host.contains("saudia.com")) {
+                requestBuilder.header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+                requestBuilder.header("sec-ch-ua-mobile", "?0")
+                requestBuilder.header("sec-ch-ua-platform", "\"Windows\"")
+            }
             chain.proceed(requestBuilder.build())
         }
         .connectionSpecs(listOf(
@@ -86,6 +92,10 @@ class HyperSessionManager(
             throw IOException("مفتاح API فارغ! تأكد من إعداده في GitHub.")
         }
 
+        // 👇 نطبع المفتاح للتأكد أنه وصل صح (نطبع أول 4 وآخر 4 أحرف فقط للأمان)
+        val maskedKey = if (apiKey.length > 8) "${apiKey.take(4)}...${apiKey.takeLast(4)}" else "قصير جداً"
+        Log.d(TAG, "🔑 المفتاح المستخدم حالياً: $maskedKey")
+
         Log.d(TAG, "🔄 جاري حل/تجديد reese84...")
         try {
             runBlocking(Dispatchers.IO) {
@@ -106,7 +116,6 @@ class HyperSessionManager(
         val egressIp = fetchEgressIp()
         val pow = tryFetchPowIfNeeded()
 
-        // إرسال script كاملاً دائماً (أبسط وأكثر أماناً)
         val sensorPayload = generateSensor(
             script = script,
             scriptUrl = scriptUrl!!,
@@ -180,13 +189,16 @@ class HyperSessionManager(
 
     private fun fetchEgressIp(): String {
         val req = Request.Builder()
-            .url("https://ip.hypersolutions.co/ip")
+            .url(HYPER_IP_URL)
             .get()
             .header("x-api-key", apiKey)
             .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
-            if (!resp.isSuccessful) throw IOException("فشل جلب IP: ${resp.code} - $body")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل جلب IP. الكود: ${resp.code}، الرد: $body")
+                throw IOException("فشل جلب IP: ${resp.code} - $body")
+            }
             val ip = JSONObject(body).getString("ip")
             Log.d(TAG, "🌐 IP المستخدم: $ip")
             return ip
@@ -203,15 +215,12 @@ class HyperSessionManager(
             client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string()
                 if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) {
-                    Log.d(TAG, "✅ PoW مطلوب وتم جلبه")
                     body 
                 } else {
-                    Log.d(TAG, "ℹ️ لا يبدو أن PoW مطلوب (HTTP ${resp.code})")
                     null
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "❌ خطأ أثناء محاولة جلب PoW: ${e.message}")
             null
         }
     }
@@ -227,7 +236,7 @@ class HyperSessionManager(
             put("userAgent", userAgent)
             put("pageUrl", pageUrl)
             put("scriptUrl", scriptUrl)
-            put("script", script) // إرسال السكريبت كاملاً دائماً
+            put("script", script)
             put("ip", ip)
             put("acceptLanguage", acceptLanguage)
             if (!pow.isNullOrBlank()) put("pow", pow)
