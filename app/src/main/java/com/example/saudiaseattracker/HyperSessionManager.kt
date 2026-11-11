@@ -117,13 +117,32 @@ class HyperSessionManager(
         val egressIp = fetchEgressIp()
         val pow = tryFetchPowIfNeeded()
 
-        val sensorPayload = generateSensor(
-            script = script,
-            scriptUrl = scriptUrl!!,
-            pageUrl = SAUDIA_URL,
-            ip = egressIp,
-            pow = pow
-        )
+        // محاولة أولى: إرسال scriptHash (أخف وأسرع)
+        val sensorPayload = try {
+            generateSensor(
+                script = script,
+                scriptUrl = scriptUrl!!,
+                pageUrl = SAUDIA_URL,
+                ip = egressIp,
+                pow = pow,
+                useHash = true // 👈 المحاولة الأولى بالـ Hash
+            )
+        } catch (e: IOException) {
+            if (e.message?.contains("422") == true || e.message?.contains("script_required") == true) {
+                Log.w(TAG, "⚠️ السكريبت غير معروف لدى Hyper. إعادة المحاولة بإرسال السكريبت كاملاً...")
+                // محاولة ثانية: إرسال script كاملاً (لأن Hyper لم يره من قبل)
+                generateSensor(
+                    script = script,
+                    scriptUrl = scriptUrl!!,
+                    pageUrl = SAUDIA_URL,
+                    ip = egressIp,
+                    pow = pow,
+                    useHash = false // 👈 إرسال السكريبت كاملاً
+                )
+            } else {
+                throw e // خطأ آخر، لا علاقة له بـ 422
+            }
+        }
 
         val result = submitSensor(sensorPath!!, sensorPayload)
 
@@ -229,28 +248,34 @@ class HyperSessionManager(
         scriptUrl: String,
         pageUrl: String,
         ip: String,
-        pow: String?
+        pow: String?,
+        useHash: Boolean
     ): String {
-        // 1. حساب بصمة السكريبت (SHA-256 Hash) بدلاً من إرسال السكريبت كاملاً
-        val scriptHash = try {
-            val digest = MessageDigest.getInstance("SHA-256")
-            val hashBytes = digest.digest(script.toByteArray(Charsets.UTF_8))
-            hashBytes.joinToString("") { "%02x".format(it) }
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ فشل حساب Hash للسكريبت: ${e.message}")
-            ""
-        }
-
-        // 2. بناء الحمولة
         val body = JSONObject().apply {
             put("userAgent", userAgent)
             put("pageUrl", pageUrl)
             put("scriptUrl", scriptUrl)
             
-            if (scriptHash.isNotEmpty()) {
-                put("scriptHash", scriptHash)
+            if (useHash) {
+                // محاولة إرسال البصمة أولاً
+                val scriptHash = try {
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    val hashBytes = digest.digest(script.toByteArray(Charsets.UTF_8))
+                    hashBytes.joinToString("") { "%02x".format(it) }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ فشل حساب Hash للسكريبت: ${e.message}")
+                    ""
+                }
+                
+                if (scriptHash.isNotEmpty()) {
+                    put("scriptHash", scriptHash)
+                } else {
+                    // إذا فشل حساب الـ Hash، أرسل السكريبت كاملاً
+                    put("script", script)
+                }
             } else {
-                put("script", script) // احتياطياً
+                // إرسال السكريبت كاملاً (لأن Hyper لم يره من قبل)
+                put("script", script)
             }
             
             put("ip", ip)
@@ -258,7 +283,6 @@ class HyperSessionManager(
             if (!pow.isNullOrBlank()) put("pow", pow)
         }.toString()
 
-        // 3. طباعة الحمولة للتشخيص
         Log.d(TAG, "📤 Hyper Request Body: $body")
 
         val req = Request.Builder()
