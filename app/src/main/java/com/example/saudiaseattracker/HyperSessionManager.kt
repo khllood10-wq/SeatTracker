@@ -9,13 +9,6 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/**
- * HyperSessionManager
- * - يحل تحدي Imperva reese84 (Dynamic) عبر Hyper Solutions API.
- * - يولد sensor، يرسله للموقع، ويحصل على reese84 token.
- * - يجدده تلقائياً قبل انتهاء renewInSec.
- * - يخزن التوكن في الذاكرة والـ SharedPreferences.
- */
 class HyperSessionManager(
     private val context: Context,
     private val apiKey: String,
@@ -23,7 +16,8 @@ class HyperSessionManager(
     private val acceptLanguage: String = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
 ) {
     companion object {
-        const val TAG = "HyperSession"
+        // استخدمنا هذا الاسم ليظهر في اللوكات بسهولة
+        const val TAG = "HyperSessionError" 
         const val DEFAULT_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
@@ -48,89 +42,80 @@ class HyperSessionManager(
     @Volatile private var expiryMs: Long = prefs.getLong(KEY_EXPIRY, 0L)
     @Volatile private var cookieDomain: String = prefs.getString(KEY_COOKIE_DOMAIN, SAUDIA_HOST) ?: SAUDIA_HOST
 
-    // مسارات ثابتة يتم اكتشافها مرة واحدة
-    @Volatile private var sensorPath: String? = null   // مثال: /abc-def/123456?d=www.saudia.com
-    @Volatile private var scriptUrl: String? = null    // مثال: https://www.saudia.com/abc-def/123456?s=xyz
+    @Volatile private var sensorPath: String? = null
+    @Volatile private var scriptUrl: String? = null
 
-    /** هل التوكن الحالي صالح لأكثر من [minRemainingMs]؟ */
     fun hasFreshToken(minRemainingMs: Long = 120_000L): Boolean {
         val t = currentToken ?: return false
         return t.isNotBlank() && (expiryMs - System.currentTimeMillis()) > minRemainingMs
     }
 
-    /** يعيد التوكن الحالي (قد يكون منتهياً). */
     fun getToken(): String? = currentToken
 
-    /** يعيد الكوكي بالشكل الجاهز للاستخدام في هيدر Cookie. */
     fun getCookieHeader(): String? {
         val t = currentToken ?: return null
         return "reese84=$t"
     }
 
-    /**
-     * يضمن وجود توكن صالح. إذا كان هناك توكن صالح، لا يفعل شيئاً.
-     * وإلا يحل التحدي من جديد (أو يجدد).
-     */
     @Synchronized
     fun ensureFreshToken(forceRenew: Boolean = false) {
         if (!forceRenew && hasFreshToken()) {
-            Log.d(TAG, "✅ التوكن الحالي صالح (متبقي ${(expiryMs - System.currentTimeMillis()) / 1000}s)")
+            Log.d(TAG, "✅ التوكن الحالي صالح")
             return
         }
+        
+        // فحص المفتاح قبل البدء
+        if (apiKey.isBlank()) {
+            Log.e(TAG, "❌ خطأ فادح: مفتاح API فارغ! (تأكد من إضافته في GitHub Secrets وملف build.gradle)")
+            return
+        }
+
         Log.d(TAG, "🔄 جاري حل/تجديد reese84...")
         try {
             solveOrRenew()
         } catch (e: Exception) {
-            Log.e(TAG, "❌ فشل حل reese84: ${e.message}", e)
-            throw e
+            // هنا يتم التقاط أي خطأ وطباعته بالتفصيل للوكات
+            Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions: ${e.localizedMessage}", e)
         }
     }
 
     private fun solveOrRenew() {
-        // 1) اكتشاف المسارات إذا لم تكن معروفة
-        if (sensorPath == null || scriptUrl == null) {
-            discoverPaths()
+        try {
+            if (sensorPath == null || scriptUrl == null) {
+                discoverPaths()
+            }
+
+            val script = fetchScript(scriptUrl!!)
+            val egressIp = fetchEgressIp()
+            val pow = tryFetchPowIfNeeded()
+
+            val sensorPayload = generateSensor(
+                script = script,
+                scriptUrl = scriptUrl!!,
+                pageUrl = SAUDIA_URL,
+                ip = egressIp,
+                pow = pow
+            )
+
+            val result = submitSensor(sensorPath!!, sensorPayload)
+
+            currentToken = result.token
+            expiryMs = System.currentTimeMillis() + result.renewInSec * 1000L
+            cookieDomain = result.cookieDomain
+
+            prefs.edit()
+                .putString(KEY_TOKEN, result.token)
+                .putLong(KEY_EXPIRY, expiryMs)
+                .putString(KEY_COOKIE_DOMAIN, cookieDomain)
+                .apply()
+
+            Log.d(TAG, "✅ تم الحصول على reese84 token (صالح ${result.renewInSec}s)")
+        } catch (e: Exception) {
+            throw e // نمرر الخطأ للدالة الأم لتطبعه
         }
-
-        // 2) جلب السكريبت (مطلوب في كل مرة)
-        val script = fetchScript(scriptUrl!!)
-
-        // 3) جلب IP الخروج (يجب أن يطابق IP العميل)
-        val egressIp = fetchEgressIp()
-
-        // 4) (اختياري) جلب PoW إذا كانت الصفحة الديناميكية تتطلبه
-        val pow = tryFetchPowIfNeeded()
-
-        // 5) توليد sensor عبر Hyper API
-        val sensorPayload = generateSensor(
-            script = script,
-            scriptUrl = scriptUrl!!,
-            pageUrl = SAUDIA_URL,
-            ip = egressIp,
-            pow = pow
-        )
-
-        // 6) إرسال sensor إلى الموقع للحصول على token
-        val result = submitSensor(sensorPath!!, sensorPayload)
-
-        // 7) حفظ النتيجة
-        currentToken = result.token
-        expiryMs = System.currentTimeMillis() + result.renewInSec * 1000L
-        cookieDomain = result.cookieDomain
-
-        prefs.edit()
-            .putString(KEY_TOKEN, result.token)
-            .putLong(KEY_EXPIRY, expiryMs)
-            .putString(KEY_COOKIE_DOMAIN, cookieDomain)
-            .apply()
-
-        Log.d(TAG, "✅ تم الحصول على reese84 token (صالح ${result.renewInSec}s)")
     }
 
-    // ---------- خطوات التنفيذ ----------
-
     private fun discoverPaths() {
-        Log.d(TAG, "🔍 اكتشاف مسارات التحدي...")
         val req = Request.Builder()
             .url(SAUDIA_URL)
             .get()
@@ -141,10 +126,6 @@ class HyperSessionManager(
 
         client.newCall(req).execute().use { resp ->
             val html = resp.body?.string() ?: throw IOException("لا يوجد HTML")
-            // استخراج scriptPath (بدون query) و fullScriptPath (مع query)
-            // من وثائق Hyper Solutions:
-            // pathRegex = /src\s*=\s*"(\/[^/]+\/[^?]+)\?.*"/
-            // fullPathRegex = /scriptElement\.src\s*=\s*"(.*?)"/
             val pathRegex = Regex("""src\s*=\s*"(/[^/]+/[^?]+)\?.*"""")
             val fullRegex = Regex("""scriptElement\.src\s*=\s*"(.*?)"""")
 
@@ -152,17 +133,15 @@ class HyperSessionManager(
             val fullMatch = fullRegex.find(html)
 
             if (pathMatch == null || fullMatch == null) {
-                throw IOException("لم يتم العثور على مسار سكريبت التحدي. قد لا تكون الصفحة محمية أو تغيرت البنية.")
+                Log.e(TAG, "❌ لم يتم العثور على مسار سكريبت التحدي (Imperva). هل الموقع محمي؟")
+                throw IOException("لم يتم العثور على مسار التحدي.")
             }
 
-            val rawPath = pathMatch.groupValues[1] // /abc/123
-            val fullPath = fullMatch.groupValues[1] // /abc/123?s=xyz
+            val rawPath = pathMatch.groupValues[1]
+            val fullPath = fullMatch.groupValues[1]
 
             sensorPath = "$rawPath?d=$SAUDIA_HOST"
             scriptUrl = "https://$SAUDIA_HOST$fullPath"
-
-            Log.d(TAG, "sensorPath=$sensorPath")
-            Log.d(TAG, "scriptUrl=$scriptUrl")
         }
     }
 
@@ -178,7 +157,10 @@ class HyperSessionManager(
             .header("Sec-Fetch-Site", "same-origin")
             .build()
         client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) throw IOException("فشل جلب السكريبت: ${resp.code}")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل جلب السكريبت (HTTP ${resp.code})")
+                throw IOException("فشل جلب السكريبت: ${resp.code}")
+            }
             return resp.body?.string() ?: throw IOException("السكريبت فارغ")
         }
     }
@@ -190,16 +172,15 @@ class HyperSessionManager(
             .header("x-api-key", apiKey)
             .build()
         client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string() ?: throw IOException("فشل جلب IP")
-            val json = JSONObject(body)
-            return json.getString("ip")
+            val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل جلب IP من Hyper (HTTP ${resp.code}): $body")
+                throw IOException("فشل جلب IP: ${resp.code}")
+            }
+            return JSONObject(body).getString("ip")
         }
     }
 
-    /**
-     * إذا كانت الصفحة الديناميكية تتطلب PoW، نرسل POST {"f":"gpc"} إلى sensorPath
-     * ونستخرج النص الناتج. إذا لم تكن مطلوبة، نعيد null.
-     */
     private fun tryFetchPowIfNeeded(): String? {
         return try {
             val req = Request.Builder()
@@ -211,16 +192,16 @@ class HyperSessionManager(
             client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string()
                 if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) {
-                    Log.d(TAG, "PoW مطلوب، تم جلبه (${body.length} حرف)")
-                    body
+                    Log.d(TAG, "✅ PoW مطلوب وتم جلبه")
+                    body 
                 } else {
-                    Log.d(TAG, "لا يبدو أن PoW مطلوب (رمز ${resp.code})")
+                    Log.d(TAG, "ℹ️ لا يبدو أن PoW مطلوب (HTTP ${resp.code})")
                     null
                 }
             }
-        } catch (e: Exception) {
-            Log.d(TAG, "تخطي PoW: ${e.message}")
-            null
+        } catch (e: Exception) { 
+            Log.e(TAG, "❌ خطأ أثناء محاولة جلب PoW: ${e.message}")
+            null 
         }
     }
 
@@ -250,11 +231,13 @@ class HyperSessionManager(
 
         client.newCall(req).execute().use { resp ->
             val respBody = resp.body?.string() ?: throw IOException("Hyper API: رد فارغ")
+            
+            // هذا هو السطر الأهم الذي سيطبع سبب الرفض (401, 403, 402...)
             if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ رفضت Hyper الطلب! (HTTP ${resp.code}) | السبب: $respBody")
                 throw IOException("Hyper API ${resp.code}: $respBody")
             }
-            val json = JSONObject(respBody)
-            return json.getString("payload")
+            return JSONObject(respBody).getString("payload")
         }
     }
 
@@ -273,7 +256,8 @@ class HyperSessionManager(
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("رد فارغ من إرسال sensor")
             if (!resp.isSuccessful) {
-                throw IOException("فشل إرسال sensor (${resp.code}): $body")
+                Log.e(TAG, "❌ فشل إرسال sensor إلى saudia (HTTP ${resp.code}): $body")
+                throw IOException("فشل إرسال sensor (${resp.code})")
             }
             val json = JSONObject(body)
             return TokenResult(
@@ -284,8 +268,6 @@ class HyperSessionManager(
         }
     }
 
-    // ═══════ الدوال المضافة مؤخراً ═══════
-    
     fun expiryAt(): Long = expiryMs
 
     fun forceClear() {
