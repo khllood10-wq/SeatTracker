@@ -2,6 +2,7 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
+import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
@@ -73,12 +75,10 @@ data class BookingStep(
 // ══════════════════════════════════════════════════════════
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // ── Inputs ──
     var passengerData by mutableStateOf(PassengerData())
     var flightData by mutableStateOf(FlightData())
     var monitoringMode by mutableStateOf(false)
 
-    // ── Steps ──
     private val _steps = MutableStateFlow(
         listOf(
             BookingStep("search", "البحث عن الرحلة"),
@@ -92,11 +92,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     )
     val steps: StateFlow<List<BookingStep>> = _steps
 
-    // ── Logs ──
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    // ── Flow State ──
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
 
@@ -112,7 +110,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
     val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
 
-    // ⭐ Session state
     private val _sessionReady = MutableStateFlow(false)
     val sessionReady: StateFlow<Boolean> = _sessionReady
 
@@ -129,9 +126,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _sessionStatus.value = "⏳ جاري تجهيز الجلسة..."
     }
 
-    // ══════════════════════════════════════════════════════
-    // Utilities
-    // ══════════════════════════════════════════════════════
     fun addLog(message: String) {
         val curr = _searchLogs.value.toMutableList()
         curr.add(0, message)
@@ -152,12 +146,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ══════════════════════════════════════════════════════
-    // Token / Cookie / Headers
+    // Token / Cookies / JWT validation
     // ══════════════════════════════════════════════════════
-
-    /**
-     * ⭐ حفظ التوكن مع timestamp — يستخدمه MainScreen لفحص العمر
-     */
     fun saveTokens(auth: String, xDToken: String, sessionId: String, userAgent: String) {
         val prefs = getApplication<Application>()
             .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -166,10 +156,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             .putString("xd_token", xDToken)
             .putString("session_id", sessionId)
             .putString("user_agent", userAgent)
-            .putLong("token_saved_at", System.currentTimeMillis())  // ⭐ جديد
+            .putLong("token_saved_at", System.currentTimeMillis())
             .apply()
         addLog("✅ تم التقاط التوكن")
-        android.util.Log.d("Session", "Token saved at ${System.currentTimeMillis()}")
+        android.util.Log.d("Session", "Token saved")
         markSessionReady()
     }
 
@@ -189,20 +179,55 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
         .getString("dynamic_cookies", null)
 
-    fun hasToken(): Boolean = getAuth() != null
-
     /**
-     * ⭐ فحص عمر التوكن — يُستخدم في MainScreen
+     * ⭐ فحص فعلي لصلاحية JWT (يفك exp من التوكن).
+     * لا يكتفي بوجود auth_token — يجب أن يكون صالحاً لمدة كافية.
      */
-    fun getTokenAgeMinutes(): Long {
-        val prefs = getApplication<Application>()
-            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-        val savedAt = prefs.getLong("token_saved_at", 0L)
-        if (savedAt == 0L) return Long.MAX_VALUE
-        return (System.currentTimeMillis() - savedAt) / 60_000
+    fun hasToken(): Boolean {
+        val auth = getAuth() ?: return false
+        return isJwtFresh(auth)
     }
 
-    fun isTokenExpired(): Boolean = getTokenAgeMinutes() > 55
+    private fun isJwtFresh(auth: String): Boolean {
+        try {
+            val cleanToken = auth.removePrefix("Bearer ").trim()
+            val parts = cleanToken.split(".")
+            if (parts.size < 2) {
+                android.util.Log.w("Session", "Invalid JWT (parts=${parts.size})")
+                return false
+            }
+            val part = parts[1]
+            val padded = part + "=".repeat((4 - part.length % 4) % 4)
+            val payload = String(
+                Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP)
+            )
+            val json = JSONObject(payload)
+            val exp = json.optLong("exp", 0)
+            val iat = json.optLong("iat", 0)
+            val now = System.currentTimeMillis() / 1000
+            val remaining = exp - now
+
+            android.util.Log.d("Session", "JWT check: iat=$iat exp=$exp remaining=${remaining}s")
+
+            // يجب أن يتبقى > 120 ثانية
+            return exp > 0 && remaining > 120
+        } catch (e: Exception) {
+            android.util.Log.e("Session", "JWT decode error: ${e.message}")
+            return false
+        }
+    }
+
+    fun clearSession() {
+        val prefs = getApplication<Application>()
+            .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .remove("auth_token")
+            .remove("token_saved_at")
+            .remove("jwt_exp")
+            .remove("jwt_iat")
+            .apply()
+        addLog("🗑️ تم مسح الجلسة")
+    }
 
     private fun saveCookies(response: Response<*>) {
         val setCookies = response.headers().values("Set-Cookie")
@@ -265,12 +290,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     // ══════════════════════════════════════════════════════
     fun runFullBooking() {
         if (_isRunning.value) return
+
+        // ⭐ فحص فعلي لصلاحية JWT قبل البدء
         if (!hasToken()) {
-            addLog("❌ لا يوجد توكن — انتظر تجهيز الجلسة")
-            return
-        }
-        if (isTokenExpired()) {
-            addLog("❌ التوكن منتهي — اضغط 'تحديث الجلسة'")
+            addLog("❌ التوكن منتهي — انتظر تجديد الجلسة")
+            markSessionPreparing()
             return
         }
         if (!passengerData.isValid()) {
@@ -288,7 +312,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                // ─── 1. SEARCH ───
+                // 1. SEARCH
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound()
                 if (flight == null) {
@@ -300,7 +324,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _foundFlight.value = flight
                 delay(1200)
 
-                // ─── 2. CART ───
+                // 2. CART
                 setStep("cart", StepStatus.RUNNING)
                 val cartId = createCart(flight.airBoundId)
                 if (cartId == null) {
@@ -312,7 +336,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("cart", StepStatus.SUCCESS, "cartId: $cartId")
                 delay(1200)
 
-                // ─── 3. PASSENGER ───
+                // 3. PASSENGER
                 setStep("passenger", StepStatus.RUNNING)
                 if (!confirmPassenger(cartId)) {
                     setStep("passenger", StepStatus.FAILED)
@@ -322,7 +346,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("passenger", StepStatus.SUCCESS)
                 delay(1200)
 
-                // ─── 4. EXTENSION ───
+                // 4. EXTENSION
                 setStep("extension", StepStatus.RUNNING)
                 if (!addExtension(cartId)) {
                     setStep("extension", StepStatus.FAILED)
@@ -332,7 +356,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("extension", StepStatus.SUCCESS)
                 delay(1200)
 
-                // ─── 5. CONTACTS ───
+                // 5. CONTACTS
                 setStep("contacts", StepStatus.RUNNING)
                 if (!saveContacts(cartId)) {
                     setStep("contacts", StepStatus.FAILED)
@@ -342,7 +366,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("contacts", StepStatus.SUCCESS)
                 delay(1200)
 
-                // ─── 6. ORDER ───
+                // 6. ORDER
                 setStep("order", StepStatus.RUNNING)
                 val orderRes = createOrder(cartId)
                 if (orderRes == null) {
@@ -359,17 +383,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 // ⭐ MONITORING MODE — STOP HERE
                 if (monitoringMode) {
                     setStep("payment", StepStatus.SKIPPED, "👁️ وضع المراقبة: لم يُرسل الدفع")
-                    addLog("═════════════════════════════════════")
-                    addLog("👁️ وضع المراقبة اكتمل")
-                    addLog("PNR: $pnr")
-                    addLog("SADAD: $sadad")
-                    addLog("⚠️ لم يُرسل الدفع — PNR يلغى تلقائياً")
-                    addLog("═════════════════════════════════════")
+                    addLog("👁️ وضع المراقبة اكتمل — PNR: $pnr | SADAD: $sadad")
                     _isRunning.value = false
                     return@launch
                 }
 
-                // ─── 7. PAYMENT ───
+                // 7. PAYMENT
                 setStep("payment", StepStatus.RUNNING)
                 if (!submitPayment(pnr)) {
                     setStep("payment", StepStatus.FAILED, "قد تحتاج دفع حجز سابق أولاً")
@@ -377,11 +396,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 setStep("payment", StepStatus.SUCCESS, "✅ اذهب للبنك وادفع")
-
-                addLog("═════════════════════════════════════")
-                addLog("🎉 الحجز مكتمل!")
-                addLog("PNR: $pnr | SADAD: $sadad")
-                addLog("═════════════════════════════════════")
+                addLog("🎉 الحجز مكتمل! PNR: $pnr | SADAD: $sadad")
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.message}")
             } finally {
@@ -390,7 +405,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ─── Individual Steps ───
+    // ══════════════════════════════════════════════════════
+    // Individual Steps
+    // ══════════════════════════════════════════════════════
     private suspend fun searchUntilFound(maxAttempts: Int = 30): FoundFlightDetails? {
         val dateStr = "${flightData.date}T00:00:00.000"
         for (attempt in 1..maxAttempts) {
@@ -436,6 +453,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("⚠️ محاولة $attempt — لا مقاعد")
                 } else if (resp.code() == 401 || resp.code() == 403) {
                     addLog("❌ توكن منتهي")
+                    markSessionPreparing()
                     return null
                 }
             } catch (e: Exception) {
