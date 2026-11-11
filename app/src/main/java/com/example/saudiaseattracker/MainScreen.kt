@@ -8,6 +8,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -38,6 +39,7 @@ import androidx.navigation.NavController
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
+    val context = LocalContext.current
     val steps by viewModel.steps.collectAsStateWithLifecycle()
     val isRunning by viewModel.isRunning.collectAsStateWithLifecycle()
     val logs by viewModel.searchLogs.collectAsStateWithLifecycle()
@@ -47,9 +49,29 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
+    var needRefresh by remember { mutableStateOf(false) }
+
+    // ⭐ فحص عمر التوكن — إذا أقدم من 55 دقيقة → أجبر التحديث
     LaunchedEffect(Unit) {
-        if (viewModel.hasToken()) viewModel.markSessionReady()
-        else viewModel.markSessionPreparing()
+        val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+        val savedAt = prefs.getLong("token_saved_at", 0L)
+        val ageMinutes = (System.currentTimeMillis() - savedAt) / 60000
+
+        android.util.Log.d("Session", "Token age: $ageMinutes minutes | hasToken=${viewModel.hasToken()}")
+
+        if (viewModel.hasToken() && ageMinutes in 0..55) {
+            viewModel.markSessionReady()
+            android.util.Log.d("Session", "Token still valid, skipping WebView")
+        } else {
+            // مسح التوكن القديم لفرض التحديث
+            prefs.edit()
+                .remove("auth_token")
+                .remove("token_saved_at")
+                .apply()
+            viewModel.markSessionPreparing()
+            needRefresh = true
+            android.util.Log.d("Session", "Token expired/missing → refreshing via WebView")
+        }
     }
 
     val paymentStep = steps.find { it.id == "payment" }
@@ -57,47 +79,83 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
+            // ── بانر الجلسة ──
             if (!sessionReady) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                 ) {
-                    Row(Modifier.padding(10.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.padding(10.dp).fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("⏳ تجهيز الجلسة (WebView مخفي)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            Text(sessionStatus, fontSize = 10.sp)
+                            Text("⏳ تجهيز الجلسة", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(sessionStatus, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
                         }
                     }
                 }
             }
 
+            // ── زر التحديث اليدوي (احتياط) ──
+            if (sessionReady) {
+                OutlinedButton(
+                    onClick = {
+                        val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+                        prefs.edit().remove("auth_token").remove("token_saved_at").apply()
+                        viewModel.markSessionPreparing()
+                        needRefresh = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("🔄 تحديث الجلسة", fontSize = 12.sp)
+                }
+            }
+
+            // ── وضع المراقبة ──
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (viewModel.monitoringMode) MaterialTheme.colorScheme.tertiaryContainer
+                    containerColor = if (viewModel.monitoringMode)
+                        MaterialTheme.colorScheme.tertiaryContainer
                     else MaterialTheme.colorScheme.surfaceVariant
                 ),
-                border = if (viewModel.monitoringMode) BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary) else null
+                border = if (viewModel.monitoringMode)
+                    BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary)
+                else null
             ) {
-                Row(Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.padding(12.dp).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
-                        imageVector = if (viewModel.monitoringMode) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        imageVector = if (viewModel.monitoringMode)
+                            Icons.Default.Visibility else Icons.Default.VisibilityOff,
                         contentDescription = null,
-                        tint = if (viewModel.monitoringMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = if (viewModel.monitoringMode)
+                            MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("👁️ وضع المراقبة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         Text(
-                            if (viewModel.monitoringMode) "✅ مفعّل: يصل للدفع بدون إتمام" else "معطّل: حجز كامل",
-                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            if (viewModel.monitoringMode)
+                                "✅ مفعّل: يصل للدفع بدون إتمام"
+                            else
+                                "معطّل: حجز كامل",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
@@ -111,6 +169,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
+            // ── ملخص المسافر ──
             SummaryCard(
                 title = "👤 المسافر",
                 lines = listOf(
@@ -122,6 +181,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 onEdit = { navController.navigate(Screen.Passenger.route) }
             )
 
+            // ── ملخص الرحلة ──
             SummaryCard(
                 title = "✈️ الرحلة",
                 lines = listOf(
@@ -132,41 +192,60 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 onEdit = { navController.navigate(Screen.Flight.route) }
             )
 
+            // ── زر البدء ──
             Button(
                 onClick = { viewModel.runFullBooking() },
-                enabled = !isRunning && sessionReady && viewModel.passengerData.isValid() && viewModel.flightData.isValid(),
+                enabled = !isRunning && sessionReady &&
+                        viewModel.passengerData.isValid() && viewModel.flightData.isValid(),
                 modifier = Modifier.fillMaxWidth().height(64.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (viewModel.monitoringMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                    containerColor = if (viewModel.monitoringMode)
+                        MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.primary
                 )
             ) {
                 if (isRunning) {
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp), strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
                     Spacer(Modifier.width(12.dp))
                     Text("جاري التنفيذ...", fontWeight = FontWeight.Bold)
                 } else if (!sessionReady) {
                     Text("⏳ انتظر تجهيز الجلسة...", fontWeight = FontWeight.Bold)
                 } else {
                     Text(
-                        if (viewModel.monitoringMode) "👁️ بدء المراقبة" else "🚀 بدء الحجز التلقائي",
+                        if (viewModel.monitoringMode) "👁️ بدء المراقبة"
+                        else "🚀 بدء الحجز التلقائي",
                         fontWeight = FontWeight.Bold, fontSize = 16.sp
                     )
                 }
             }
 
+            // ── زر التحدي ──
+            OutlinedButton(
+                onClick = { navController.navigate(Screen.TokenChallenge.route) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("🎯 تحدي: التقاط التوكن بدون WebView", fontSize = 12.sp)
+            }
+
+            // ── Stepper ──
             if (steps.any { it.status != StepStatus.PENDING }) {
                 Text("مراحل الحجز:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 steps.forEach { step -> StepRow(step) }
             }
 
+            // ── النتيجة ──
             if (pnr.isNotEmpty()) {
                 when (paymentStatus) {
                     StepStatus.SUCCESS -> ResultCard("🎉 تم الحجز الكامل!", Color(0xFF00C853),
                         MaterialTheme.colorScheme.primaryContainer, Color(0xFF00C853),
-                        pnr, sadad, clipboard, "ادفع رقم SADAD في البنك — يصلك الإيميل + التذكرة")
+                        pnr, sadad, clipboard, "ادفع رقم SADAD في البنك")
                     StepStatus.SKIPPED -> ResultCard("👁️ وصلنا للدفع", MaterialTheme.colorScheme.tertiary,
                         MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.tertiary,
-                        pnr, sadad, clipboard, "لم يُرسل الدفع — PNR يلغى تلقائياً بعد ~5 ساعات")
+                        pnr, sadad, clipboard, "لم يُرسل الدفع — PNR يلغى تلقائياً")
                     StepStatus.FAILED -> ResultCard("⚠️ فشل الدفع", MaterialTheme.colorScheme.error,
                         MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.error,
                         pnr, sadad, clipboard, "قد يكون لديك حجز سابق معلق")
@@ -179,6 +258,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
+            // ── السجل ──
             if (logs.isNotEmpty()) {
                 Text("📝 السجل:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -193,20 +273,30 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        if (!sessionReady) HiddenSessionWebView(viewModel = viewModel)
+        // ⭐ WebView كبير (100dp) لكن شفاف — يعمل في الخلفية
+        if (!sessionReady && needRefresh) {
+            Box(
+                modifier = Modifier
+                    .size(100.dp)
+                    .offset(x = (-1000).dp)
+            ) {
+                HiddenSessionWebView(viewModel = viewModel, onComplete = {
+                    needRefresh = false
+                })
+            }
+        }
     }
 }
 
 // ══════════════════════════════════════════════════════════════
-// WebView مخفي — يلتقط JWT من رد /session/auth/web/token/initialization
+// WebView مخفي
 // ══════════════════════════════════════════════════════════════
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
-private fun HiddenSessionWebView(viewModel: FlightViewModel) {
+private fun HiddenSessionWebView(viewModel: FlightViewModel, onComplete: () -> Unit) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
     var captured by remember { mutableStateOf(false) }
-    var reloadCount by remember { mutableIntStateOf(0) }
 
     val bridge = remember {
         object {
@@ -214,22 +304,31 @@ private fun HiddenSessionWebView(viewModel: FlightViewModel) {
             fun onTokenCaptured(auth: String, xD: String, sid: String, ua: String) {
                 if (captured) return
                 captured = true
+                android.util.Log.d("Session", "JWT captured: ${auth.take(40)}...")
                 viewModel.saveTokens(auth, xD, sid, ua)
                 try {
                     val cm = CookieManager.getInstance()
                     val sau = cm.getCookie("https://www.saudia.com") ?: ""
                     val dapi = cm.getCookie("https://dapi.saudia.com") ?: ""
-                    val merged = listOf(sau, dapi).filter { it.isNotBlank() }.joinToString("; ")
-                        .replace(Regex(";+"), ";").trim().trimStart(';', ' ')
-                    if (merged.isNotBlank()) prefs.edit().putString("dynamic_cookies", merged).apply()
+                    val merged = listOf(sau, dapi)
+                        .filter { it.isNotBlank() }
+                        .joinToString("; ")
+                        .replace(Regex(";+"), ";")
+                        .trim()
+                        .trimStart(';', ' ')
+                    if (merged.isNotBlank()) {
+                        prefs.edit().putString("dynamic_cookies", merged).apply()
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e("Session", "Cookie save: ${e.message}")
                 }
                 viewModel.markSessionReady()
+                onComplete()
             }
 
             @JavascriptInterface
             fun onXDTokenCaptured(xD: String) {
+                android.util.Log.d("Session", "x-d-token: ${xD.take(40)}...")
                 prefs.edit().putString("xd_token", xD).apply()
             }
 
@@ -241,8 +340,9 @@ private fun HiddenSessionWebView(viewModel: FlightViewModel) {
     }
 
     AndroidView(
-        modifier = Modifier.size(1.dp),
+        modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
+            android.util.Log.d("Session", "WebView created, loading saudia.com")
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
@@ -265,20 +365,29 @@ private fun HiddenSessionWebView(viewModel: FlightViewModel) {
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                         super.onPageStarted(view, url, favicon)
-                        // حقن الـ hook فوراً في بداية تحميل الصفحة
+                        android.util.Log.d("Session", "Page loading: $url")
                         view?.evaluateJavascript(getImprovedHookJS(), null)
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
-                        if (captured) return
-                        // إعادة تحميل مرة واحدة إذا لم نلتقط التوكن
-                        if (reloadCount == 0) {
-                            reloadCount = 1
-                            view?.postDelayed({
-                                view.evaluateJavascript(getImprovedHookJS(), null)
-                            }, 200)
-                        }
+                        android.util.Log.d("Session", "Page finished: $url | captured=$captured")
+                        view?.evaluateJavascript("""
+                            setTimeout(function() {
+                                try {
+                                    var auth = localStorage.getItem('authorization') ||
+                                               localStorage.getItem('token') ||
+                                               sessionStorage.getItem('saudia-access-token');
+                                    var xD = localStorage.getItem('x-d-token') || '';
+                                    var sid = localStorage.getItem('saa-session-id') || '';
+                                    if (auth && auth.indexOf('Bearer') > -1) {
+                                        SaudiaBridge.onTokenCaptured(auth, xD, sid, navigator.userAgent);
+                                    } else {
+                                        SaudiaBridge.onLog('No token in storage after load');
+                                    }
+                                } catch(e) {}
+                            }, 4000);
+                        """.trimIndent(), null)
                     }
                 }
 
@@ -288,44 +397,33 @@ private fun HiddenSessionWebView(viewModel: FlightViewModel) {
     )
 }
 
-/**
- * Hook محسّن: يعترض الردود وليس الطلبات فقط
- * يلتقط:
- * - x-d-token من request headers
- * - JWT + session_id من response body
- */
 private fun getImprovedHookJS(): String = """
     (function() {
         if (window.__hooked) return;
         window.__hooked = true;
+        SaudiaBridge.onLog('Hook installed');
 
-        // ── Hook fetch ──
+        function getHeader(h, name) {
+            if (!h) return '';
+            if (typeof h.get === 'function') return h.get(name) || h.get(name.toLowerCase()) || '';
+            for (var k in h) if (k.toLowerCase() === name.toLowerCase()) return h[k] || '';
+            return '';
+        }
+
         var origFetch = window.fetch;
         window.fetch = function(input, init) {
             var url = typeof input === 'string' ? input : (input && input.url) || '';
             var isTokenInit = url.indexOf('/session/auth/web/token/initialization') > -1;
 
-            // التقط x-d-token من الطلب
             if (isTokenInit && init && init.headers) {
                 try {
-                    var xd = '';
-                    if (init.headers.forEach) {
-                        init.headers.forEach(function(v, k) {
-                            if (k.toLowerCase() === 'x-d-token') xd = v;
-                        });
-                    } else {
-                        for (var k in init.headers) {
-                            if (k.toLowerCase() === 'x-d-token') xd = init.headers[k];
-                        }
-                    }
+                    var xd = getHeader(init.headers, 'x-d-token');
                     if (xd) SaudiaBridge.onXDTokenCaptured(xd);
                 } catch(e) {}
             }
 
-            // نفّذ الطلب وانتظر الرد
             var promise = origFetch.apply(this, arguments);
 
-            // التقط JWT من الرد
             if (isTokenInit) {
                 promise.then(function(resp) {
                     try {
@@ -334,15 +432,12 @@ private fun getImprovedHookJS(): String = """
                                 var data = JSON.parse(text);
                                 if (data.access_token) {
                                     SaudiaBridge.onTokenCaptured(
-                                        'Bearer ' + data.access_token,
-                                        '',
-                                        data.session_id || '',
-                                        navigator.userAgent
+                                        'Bearer ' + data.access_token, '',
+                                        data.session_id || '', navigator.userAgent
                                     );
-                                    SaudiaBridge.onLog('JWT captured from response!');
                                 }
                             } catch(e) {
-                                SaudiaBridge.onLog('parse: ' + e.message);
+                                SaudiaBridge.onLog('Parse error: ' + e.message);
                             }
                         });
                     } catch(e) {}
@@ -351,15 +446,11 @@ private fun getImprovedHookJS(): String = """
             return promise;
         };
 
-        // ── Hook XHR ──
         var origOpen = XMLHttpRequest.prototype.open;
         var origSend = XMLHttpRequest.prototype.send;
         var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
-
         XMLHttpRequest.prototype.open = function(m, u) {
-            this.__m = m;
-            this.__u = u;
-            this.__h = {};
+            this.__m = m; this.__u = u; this.__h = {};
             return origOpen.apply(this, arguments);
         };
         XMLHttpRequest.prototype.setRequestHeader = function(k, v) {
@@ -369,7 +460,6 @@ private fun getImprovedHookJS(): String = """
         XMLHttpRequest.prototype.send = function() {
             var self = this;
             var isTokenInit = self.__u && self.__u.indexOf('/session/auth/web/token/initialization') > -1;
-
             if (isTokenInit && self.__h) {
                 for (var k in self.__h) {
                     if (k.toLowerCase() === 'x-d-token') {
@@ -378,38 +468,27 @@ private fun getImprovedHookJS(): String = """
                     }
                 }
             }
-
             if (isTokenInit) {
                 self.addEventListener('load', function() {
                     try {
                         var data = JSON.parse(self.responseText);
                         if (data.access_token) {
                             SaudiaBridge.onTokenCaptured(
-                                'Bearer ' + data.access_token,
-                                '',
-                                data.session_id || '',
-                                navigator.userAgent
+                                'Bearer ' + data.access_token, '',
+                                data.session_id || '', navigator.userAgent
                             );
-                            SaudiaBridge.onLog('JWT captured from XHR response!');
                         }
                     } catch(e) {}
                 });
             }
             return origSend.apply(this, arguments);
         };
-
-        SaudiaBridge.onLog('Hooks installed');
     })();
 """.trimIndent()
 
-// ══════════════════════════════════════════════════════════════
-// عناصر مساعدة
-// ══════════════════════════════════════════════════════════════
 @Composable
-private fun ResultCard(
-    title: String, titleColor: Color, containerColor: Color, borderColor: Color,
-    pnr: String, sadad: String, clipboard: androidx.compose.ui.platform.ClipboardManager, note: String
-) {
+private fun ResultCard(title: String, titleColor: Color, containerColor: Color, borderColor: Color,
+                       pnr: String, sadad: String, clipboard: androidx.compose.ui.platform.ClipboardManager, note: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = containerColor),
