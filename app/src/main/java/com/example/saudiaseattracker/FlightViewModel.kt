@@ -8,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.JsonParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,7 +69,6 @@ data class BookingStep(
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
     // ═══════ Hyper Solutions ═══════
-    // ضع مفتاح API في local.properties و BuildConfig.HYPER_API_KEY
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
             context = getApplication(),
@@ -122,7 +120,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     val sessionStatus: StateFlow<String> = _sessionStatus
 
     init {
-        // تجهيز جلسة Hyper في الخلفية عند الإقلاع
         viewModelScope.launch {
             try {
                 addLog("🔄 تهيئة جلسة Hyper...")
@@ -165,11 +162,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _searchLogs.value = emptyList()
     }
 
-    // ═══════ الجلسة ═══════
-
     fun hasToken(): Boolean = hyperSession.hasFreshToken()
 
-    /** وقت انتهاء reese84 بالمللي ثانية (للعرض في الواجهة). */
     fun sessionExpiryMs(): Long = hyperSession.expiryAt()
 
     fun clearSession() {
@@ -179,7 +173,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         markSessionPreparing()
     }
 
-    /** تجديد يدوي (اختياري). */
     fun refreshSession() {
         viewModelScope.launch {
             try {
@@ -193,8 +186,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
-
-    // ═══════ Helpers ═══════
 
     private fun getCookies() = getApplication<Application>()
         .getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
@@ -244,7 +235,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
 
-        // دمج كوكيز الجلسة (إن وجدت) مع كوكي reese84 من Hyper
         val dynamic = getCookies()
         val reese = hyperSession.getCookieHeader()
         val cookieParts = mutableListOf<String>()
@@ -257,8 +247,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun buildHeadersPublic(v: String, ref: String = "https://www.saudia.com/") = buildHeaders(v, ref)
 
-    // ═══════ Full Booking Flow ═══════
-
     fun runFullBooking() {
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
@@ -269,7 +257,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                // ضمان جلسة Hyper قبل بدء البحث
                 try {
                     addLog("🔄 ضمان جلسة Hyper قبل البحث...")
                     hyperSession.ensureFreshToken()
@@ -330,7 +317,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         var attempt = 0
         while (attempt < max) {
             attempt++
-            // ضمان جلسة Hyper صالحة قبل كل محاولة
             try {
                 hyperSession.ensureFreshToken()
             } catch (e: Exception) {
@@ -395,8 +381,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         )
         saveCookies(r)
         if (!r.isSuccessful) null else {
-            val j = JsonParser.parseString(r.body()?.string() ?: "").asJsonObject
-            j.getAsJsonObject("data")?.get("id")?.asString ?: j.get("id")?.asString
+            val bodyStr = r.body()?.string() ?: ""
+            val j = JSONObject(bodyStr)
+            val dataObj = j.optJSONObject("data")
+            dataObj?.optString("id")?.takeIf { it.isNotEmpty() } ?: j.optString("id")
         }
     } catch (e: Exception) { null }
 
