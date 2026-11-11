@@ -26,25 +26,24 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.IOException
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLException
 
-// ⭐ x-d-token الكامل (النسخة القديمة من رسالتك السابقة — كاملة)
+// ══════════════════════════════════════════════════════════
+// القيم الملتقطة من السكريبت (الجديدة — timestamp 1794367508992)
+// ══════════════════════════════════════════════════════════
 private const val CAPTURED_XD_TOKEN =
-    "3:3MOuDgC9o9aZGi9lqZ9Hug==:mr119Ssxuu3BgqXq4/MzMlS4wXZ0OzBtIJnd8rXgilPtuHu+ib1ENbreyQYv4BimNvXyxWsN2XAHF4aP/yZrKICUI+6RMikjboJ+XChLrN4oxts8ZY/2S9+vNXJXKRlLzSjt9a0OZphBQeRWm2I+0xF3+BuZyentFtOVZJ2VzG4=:lxFXXnttAuAR3urdCchZGruXmuvvRCRkI/sLWSYeUeY=:z6grhOzHFxb1Jyk86YmLT5B4kYzwG8WvtQDhfP6PDPiSrN76roSLrJoln5eTH3woLjKaXhwhWoCzLQ5gS67UvJUgJVMDkSqmLwm9E6MU/oFtvX+UKbZlcHI67d8PKNKfZyB8c8HWjAiSvzcMo99/8GzAsfhkymKSgDCep3x1xY37cmhJDH0Iyr0Rri/jM34gcst7IyJvEBRzrXd3leRhnxgKzEFCJenQW93jz31qiXy9UEO5Mer1KeaC7/XuTeNpVDaK6eUg8MiQSKSBTeP7Ovdbj+TwgzsqhZX503E9jJBqVfpQ1RjZYYKelnhHWtUJzCMFAiJWxOkvgmDlb72CKbD1sVMuFIsjoLy+wUnWRZgVi/StcWB+V3GexaHJSmJ9RPEwdnisnIpewoZtu3uEZIRx8pRFZgTGSajEPAeWnKVn/I2J:"
+    "3:hZcTrr6YK93lEdp5NFgzPQ==:AiDNK0Qg3GNenZyYa3hXh+LDSmw4BrryVr+IjlGDRaV6VDiRgHd1tr7u5GiRg3lrgwm5S7JTgUtPVl4vcR2e+eADx6/KpUTVfdQB1+ZR3Oy2bFyhjud7PG5NnaMrrzDHibYnTJ4XOkB+7vamdj6ec0thu0ErLq99h8tBuhx+FKk=:bhsavVVDGyj8BwFeChe3IfW1J5GfxKzCEFJsOk+69Ek=:b195C0bceVKfSjfFuTmR2/FOWZNDT7Yuxvrva5RzIybGsuEug/CmrT+WvKFisHWmR3MbR3FJeBnQttFv2PatTQd6VUOwKe6kHvNfyma+p5VKUHt/A3mC65rPW6MHhxRRhaECf0YBwQz0BjmAQaNSl89Nq0LzU4mXKxlXoJX40m7m1uXDi24adMqprXxNxlfp6Q+F9oSqsNtgM+xeqQ5qvkBjNvBhJ7Cggq73F6IpGtpM19gHauHhoSlqTdnQT0o8WS4Uo1CIw+DhgSl+St/+ZQPiiwD/YVitnU07skHIX5OsHZV9BaIJtB1NsjBQo9U8vW7j2Kza6GxVXB6vOiw/2ip8rS5lfV+Asded4dow/Kuuemnq2Srs/au2iQ1cOncWggdYMhi4817iOZYKCC8uyxoRNAnJ734El8QzQXSNUioYebBOHpz2pWiMYnGBhO96sn33zQq5kK4SpBfvyA==:"
 
-// ⭐ key body الكامل من رسالتك
-private const val CAPTURED_KEY_BODY =
-    "ZERUVjZZbmF6Z2xETmwyNUxQQy80Vi9xUUpIU1Q1MEY4VUV0OXdtVTYrSW45K0h0NjYwcHBqU05kaWROTUJLS0kvTDMxVjkyQzZ6ZXpWV3ZWNW9XOER5Z2I3RGFKMm5GTXVUMzlLcTJmaDVUM0dpR3NJTFhLd1kxR2xHVWZmaklSRTJmcDNjREhmZllEdFF6Tm81"
+private const val CAPTURED_KEY =
+    "UUh2b1ptWElibEoraXR4N21KVUlpdGNuQWlKa2g4eUdXOFBzdUlCQU5aemlRRmhTK09paG1mZVZLNnJPdUxRN3FrUjdjYWxVL0tKRDBFSkxFUm5wK21rNkViMDhlcitYQThYTlNCaEZBQTRaMERTOWV2MXNOMFNWNzhKSDJzYUZ4SWQxOUNEZFJkUk1zVGhFaEhSTjBEcXpVUHdtMGNKNmoyUEF0eEs4NE0wcXZIVHNVOHVkTjNUWktBaW5hcjJkL0REdEpWckRhS2d1c3UvaXVFM1JyMDEybHZzZnl6Q2hrdEdBLzViMEdNUlh1VzMva1ZTWHVwYnFmU3UrUzRySTJjKzdybGU3ODcrT2JYQjVyaWREcGZQK3NQWFd2Zjd6SFVkeStXVTZ4dGNIN1NEZ01lMy84em5Dd3c3dTJ5WS9NeTROamd5eTVNdWlsVlJHM1VtOFRsVW1GcHJncUx3TVljSjZCMHowZUtnZVZWUlRtalBKZnd5dCtDNGMyVTFpUjVPa2RWNzBMZEg5UTVYaWhBSnVORHBFakZ2Wmc5bGs4a2JiNmtMd2w0c2F0b3QzR1gxZHBUYmlGdU8zaTZ6UlBRZmV0Q0FuR0ZVRUFVTk1MNTkzMUdBK1hzSGsyUzNsbUdoaElrczNac0hQZkVUdStyNG5qUFBqUGpxZTROZXM2QWwvaTZFdDhYbTNMd3dWVmVYT1F0R3FUOU1Wc04rSHU4eVBlV3J4cmdOYW9ubWlmMkxkeDV1Rm9oSUhvSjI4U0RBd0lnMGdiZVM3OXp3N3FMRHQ3blR5NWNEL3Y0TURPd3cwOERCY1lpdEs0bGJKNUFQSjhnWC8ycGN3REk1K1NLSHp4VlRyT3lrbDQ5V2Fhb2pnaHh4TTdJYlJxMXhGMG95UDJxRDVIU2c9"
+
+private const val CAPTURED_BODY =
+    "NjMyMmZkNGJjNDJjZmZiMzIwMzlhZTYzNTQ4ZGFkZjFkNmZhMmJkN2M4OTdkOGYwZGI2Y2VhZDU2YzYxMTdhODUxNmM0OWJjYmY5NjQ4OTRlN2E0OTRiMjM0MTQ1ZTU4NGY2NGQ1YTg5MmIzYjkzYjk0YmU3OWI3ZWMwNzVhYWYwYWFjZjY0YWY1NzMyOTI0MDU0NDA3MzMxNzI2ZTI1YzczNjY5OWYwYjU2OWZmOTU2MDM1NmZmMjVmOTg3NjhkNWQ0MWM5NTg5YzFkODE2YmRlM2RhZjA2ZjM1ZWUyZTU3ZWVjMGE4YjQ1ZThmY2NkZjI3Nzc1ZjAxN2M3NDVkNTBmMDFiOTFkNmVmMTljZWEzYThjZjg0ODEzNTkzOTJiMzZiODFjMzIyZmYyNWRmYzk5OWM4MzA3NzViNzRmOWJkNTU4MjczMzZiM2E2NGQ3NDhkNGI4MDdiNTYyOTMxYWY3MmIzYWFlMDFkZGY4NzZjOTljOTI2YjZmMjA5MWM4ZDE1ZGI4ODcyNjg0NDllODQwZmQ5ZjUzN2JmOWNmZDZhNDMzMTUwY2I5OGFmZDQ3NmM2N2RmZWRhMDE0YTU5NGU1YmJlMGM3NjIwMzUzMDkzNTcwOGUxZTEzMzg0NGFlYzlkODU4M2JiZTc5MGZmYjU1ZmE3N2YxZTAwY2FkNGY="
 
 data class InitTestResult(
     val label: String,
     val code: Int,
     val hasJwt: Boolean,
-    val hasSid: Boolean,
     val jwt: String,
     val sid: String,
     val bodyPreview: String,
@@ -63,14 +62,12 @@ data class InitTestResult(
     val verdict: String get() = when {
         hasJwt -> "🎉 JWT جديد!"
         code in 200..299 -> "200 بدون JWT"
-        code == 401 -> "❌ التوكن مرفوض (401)"
-        code == 403 -> "❌ Imperva يحظر (403)"
-        code == 0 && exceptionType.contains("Timeout") -> "⏱️ انتهت المهلة (${elapsedMs}ms)"
-        code == 0 && exceptionType.contains("UnknownHost") -> "🌐 DNS فشل"
-        code == 0 && exceptionType.contains("SSL") -> "🔒 TLS رُفض"
-        code == 0 && exceptionType.contains("IOException") -> "📡 اتصال مقطوع"
-        code == 0 -> "❌ استثناء: $exceptionType"
-        else -> "❌ خطأ HTTP $code"
+        code == 401 -> "❌ مرفوض 401"
+        code == 403 -> "❌ محظور 403 (Imperva)"
+        code == 0 && exceptionType.contains("Timeout") -> "⏱️ مهلة (${elapsedMs}ms)"
+        code == 0 && exceptionType.contains("SSL") -> "🔒 TLS مرفوض"
+        code == 0 -> "❌ $exceptionType"
+        else -> "❌ خطأ $code"
     }
 }
 
@@ -89,7 +86,6 @@ fun TokenInitTesterScreen(navController: NavController, viewModel: FlightViewMod
         running = true
         results = emptyList()
 
-        // ⭐ Timeout أطول (60 ثانية)
         val client = OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -103,11 +99,13 @@ fun TokenInitTesterScreen(navController: NavController, viewModel: FlightViewMod
             val savedCookies = prefs.getString("dynamic_cookies", "") ?: ""
 
             // ═══════════════════════════════════════════════
-            // T1: x-d-token + key + كوكيز محفوظة
+            // T1: مع الكوكيز (أهم اختبار)
             // ═══════════════════════════════════════════════
-            withContext(Dispatchers.Main) { currentTest = "T1: مع كل الكوكيز" }
-            val r1 = testTokenInit(client, endpoint, CAPTURED_XD_TOKEN, CAPTURED_KEY_BODY,
-                savedCookies.ifEmpty { null }, "T1: كل الكوكيز")
+            withContext(Dispatchers.Main) { currentTest = "T1: مع الكوكيز" }
+            val r1 = testTokenInit(
+                client, endpoint, CAPTURED_XD_TOKEN, CAPTURED_KEY, CAPTURED_BODY,
+                savedCookies.ifEmpty { null }, "T1: مع الكوكيز"
+            )
             withContext(Dispatchers.Main) { results = results + r1 }
             if (r1.hasJwt) { saveJwt(prefs, r1); withContext(Dispatchers.Main) { running = false }; return@launch }
             kotlinx.coroutines.delay(1000)
@@ -116,34 +114,12 @@ fun TokenInitTesterScreen(navController: NavController, viewModel: FlightViewMod
             // T2: بدون كوكيز
             // ═══════════════════════════════════════════════
             withContext(Dispatchers.Main) { currentTest = "T2: بدون كوكيز" }
-            val r2 = testTokenInit(client, endpoint, CAPTURED_XD_TOKEN, CAPTURED_KEY_BODY,
-                null, "T2: بدون كوكيز")
+            val r2 = testTokenInit(
+                client, endpoint, CAPTURED_XD_TOKEN, CAPTURED_KEY, CAPTURED_BODY,
+                null, "T2: بدون كوكيز"
+            )
             withContext(Dispatchers.Main) { results = results + r2 }
             if (r2.hasJwt) { saveJwt(prefs, r2); withContext(Dispatchers.Main) { running = false }; return@launch }
-            kotlinx.coroutines.delay(1000)
-
-            // ═══════════════════════════════════════════════
-            // T3: كوكيز Imperva فقط
-            // ═══════════════════════════════════════════════
-            val imperva = savedCookies.split("; ").filter {
-                it.startsWith("reese84=") || it.startsWith("incap_ses_") || it.startsWith("visid_incap_")
-            }
-            withContext(Dispatchers.Main) { currentTest = "T3: Imperva فقط" }
-            val r3 = testTokenInit(client, endpoint, CAPTURED_XD_TOKEN, CAPTURED_KEY_BODY,
-                imperva.ifEmpty { null }?.joinToString("; "), "T3: Imperva فقط")
-            withContext(Dispatchers.Main) { results = results + r3 }
-            if (r3.hasJwt) { saveJwt(prefs, r3); withContext(Dispatchers.Main) { running = false }; return@launch }
-            kotlinx.coroutines.delay(1000)
-
-            // ═══════════════════════════════════════════════
-            // T4: مع Connection: close
-            // ═══════════════════════════════════════════════
-            withContext(Dispatchers.Main) { currentTest = "T4: Connection: close" }
-            val r4 = testTokenInit(client, endpoint, CAPTURED_XD_TOKEN, CAPTURED_KEY_BODY,
-                savedCookies.ifEmpty { null }, "T4: Connection close",
-                extraHeaders = mapOf("Connection" to "close"))
-            withContext(Dispatchers.Main) { results = results + r4 }
-            if (r4.hasJwt) { saveJwt(prefs, r4); withContext(Dispatchers.Main) { running = false }; return@launch }
 
             withContext(Dispatchers.Main) {
                 currentTest = ""
@@ -156,15 +132,20 @@ fun TokenInitTesterScreen(navController: NavController, viewModel: FlightViewMod
         modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("🔬 اختبار إعادة x-d-token (تشخيصي)",
+        Text("🔬 اختبار token/initialization",
             style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("يعرض تفاصيل الاستثناء الكاملة — نحتاج نعرف لماذا HTTP 0",
+        Text("يرسل key + body كاملاً (form-urlencoded)",
             style = MaterialTheme.typography.bodySmall)
 
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column(Modifier.padding(10.dp)) {
+                Text("📋 القيم الملتقطة:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Text("x-d-token: ${CAPTURED_XD_TOKEN.length} حرف", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-                Text("key body: ${CAPTURED_KEY_BODY.length} حرف", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                Text("key: ${CAPTURED_KEY.length} حرف", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                Text("body: ${CAPTURED_BODY.length} حرف", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                Spacer(Modifier.height(6.dp))
+                val savedCookies = prefs.getString("dynamic_cookies", "") ?: ""
+                Text("Cookies: ${savedCookies.length} حرف", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
             }
         }
 
@@ -179,7 +160,42 @@ fun TokenInitTesterScreen(navController: NavController, viewModel: FlightViewMod
                 Spacer(Modifier.width(10.dp))
                 Text(currentTest, fontSize = 11.sp)
             } else {
-                Text("▶ تشغيل التشخيص", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("▶ إرسال token/initialization", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+        }
+
+        val foundJwt = results.find { it.hasJwt }
+        foundJwt?.let { r ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                border = BorderStroke(3.dp, Color(0xFF00C853))
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("🎉🎉 نجحنا!", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00C853))
+                    Spacer(Modifier.height(8.dp))
+                    Text("JWT: ${r.jwt.take(60)}...", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    Text("sid: ${r.sid.take(40)}...", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+                        Text(
+                            "✅ x-d-token + key + body يعملون من Kotlin!\n" +
+                            "لا نحتاج WebView لتجديد JWT.",
+                            modifier = Modifier.padding(10.dp),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) { inclusive = true }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("🚀 جرّب الحجز") }
+                }
             }
         }
 
@@ -199,12 +215,10 @@ fun TokenInitTesterScreen(navController: NavController, viewModel: FlightViewMod
                             Spacer(Modifier.height(6.dp))
                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                                 Column(Modifier.padding(8.dp)) {
-                                    Text("🔴 Exception Type:", fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                                    Text(r.exceptionType, fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = Color(0xFFD32F2F))
+                                    Text("🔴 ${r.exceptionType}", fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color(0xFFD32F2F))
                                     if (r.exceptionMessage.isNotEmpty()) {
-                                        Text("Message:", fontWeight = FontWeight.Bold, fontSize = 10.sp)
                                         SelectionContainer {
-                                            Text(r.exceptionMessage, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                                            Text(r.exceptionMessage, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                                         }
                                     }
                                 }
@@ -212,7 +226,7 @@ fun TokenInitTesterScreen(navController: NavController, viewModel: FlightViewMod
                         } else if (r.bodyPreview.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             SelectionContainer {
-                                Text(r.bodyPreview.take(400), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                                Text(r.bodyPreview.take(500), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                             }
                         }
                     }
@@ -232,20 +246,22 @@ private suspend fun testTokenInit(
     client: OkHttpClient,
     endpoint: String,
     xdToken: String,
-    keyBody: String,
+    key: String,
+    bodyValue: String,
     cookies: String?,
-    label: String,
-    extraHeaders: Map<String, String> = emptyMap()
+    label: String
 ): InitTestResult = withContext(Dispatchers.IO) {
     val startTime = System.currentTimeMillis()
     var exceptionType = ""
     var exceptionMessage = ""
 
     try {
-        val body = "key=$keyBody"
+        // ⚠️ مهم جداً: key=X&body=Y (form-urlencoded)
+        val reqBody = "key=$key&body=$bodyValue"
+
         val reqBuilder = Request.Builder()
             .url(endpoint)
-            .post(body.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+            .post(reqBody.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
             .header("x-d-token", xdToken)
             .header("platform", "Web")
             .header("version", "27.2")
@@ -258,7 +274,6 @@ private suspend fun testTokenInit(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        extraHeaders.forEach { (k, v) -> reqBuilder.header(k, v) }
         cookies?.let { if (it.isNotEmpty()) reqBuilder.header("Cookie", it) }
 
         val response = client.newCall(reqBuilder.build()).execute()
@@ -268,35 +283,26 @@ private suspend fun testTokenInit(
         response.close()
 
         var hasJwt = false
-        var hasSid = false
         var jwt = ""
         var sid = ""
 
         if (code in 200..299) {
             try {
                 val json = JSONObject(respBody)
-                val accessToken = json.optString("access_token", "")
-                val sessionId = json.optString("session_id", "")
-                if (accessToken.isNotEmpty()) { hasJwt = true; jwt = accessToken }
-                if (sessionId.isNotEmpty()) { hasSid = true; sid = sessionId }
-            } catch (e: Exception) {
-                Regex("\"access_token\"\\s*:\\s*\"([^\"]+)\"").find(respBody)?.let { hasJwt = true; jwt = it.groupValues[1] }
-                Regex("\"session_id\"\\s*:\\s*\"([^\"]+)\"").find(respBody)?.let { hasSid = true; sid = it.groupValues[1] }
-            }
+                jwt = json.optString("access_token", "")
+                sid = json.optString("session_id", "")
+                hasJwt = jwt.isNotEmpty()
+            } catch (e: Exception) {}
         }
 
-        InitTestResult(label, code, hasJwt, hasSid, jwt, sid, respBody.take(400), "", "", elapsed)
+        InitTestResult(label, code, hasJwt, jwt, sid, respBody.take(400), "", "", elapsed)
     } catch (e: Exception) {
         exceptionType = e.javaClass.simpleName
-        exceptionMessage = "${e.message ?: ""}\n\n${e.cause?.javaClass?.simpleName ?: ""}: ${e.cause?.message ?: ""}"
+        exceptionMessage = "${e.message ?: ""}\n${e.cause?.javaClass?.simpleName ?: ""}: ${e.cause?.message ?: ""}"
         Log.e("TokenInit", "[$label] $exceptionType: $exceptionMessage", e)
-
         InitTestResult(
-            label = label,
-            code = 0,
-            hasJwt = false, hasSid = false, jwt = "", sid = "",
-            bodyPreview = "",
-            exceptionType = exceptionType,
+            label = label, code = 0, hasJwt = false, jwt = "", sid = "",
+            bodyPreview = "", exceptionType = exceptionType,
             exceptionMessage = exceptionMessage.take(500),
             elapsedMs = System.currentTimeMillis() - startTime
         )
@@ -310,5 +316,5 @@ private fun saveJwt(prefs: android.content.SharedPreferences, r: InitTestResult)
         .putString("xd_token", CAPTURED_XD_TOKEN)
         .putLong("token_saved_at", System.currentTimeMillis())
         .apply()
-    Log.d("Session", "JWT saved from token init")
+    Log.d("Session", "JWT saved from token init test")
 }
