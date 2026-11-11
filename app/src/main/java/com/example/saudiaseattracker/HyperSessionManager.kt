@@ -13,21 +13,18 @@ import java.util.concurrent.TimeUnit
 
 class HyperSessionManager(
     context: Context,
-    rawApiKey: String, // 👈 نستقبل المفتاح الخام هنا
+    rawApiKey: String,
     private val userAgent: String = DEFAULT_UA,
     private val acceptLanguage: String = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
 ) {
-    // 👇 نقوم بتنظيف المفتاح من أي مسافات أو أسطر جديدة قد تكون أضيفت عن طريق الخطأ في GitHub
+    // تنظيف المفتاح من أي مسافات أو أسطر جديدة
     private val apiKey = rawApiKey.trim()
 
     companion object {
         const val TAG = "HyperSessionError"
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
-        
-        // 👇 نستخدم خدمة خارجية موثوقة لجلب الـ IP (بدلاً من نقطة نهاية Hyper التي تسبب مشاكل)
-        const val IP_FETCH_URL = "https://api.ipify.org?format=json" 
-        
+        const val IP_FETCH_URL = "https://ip.hypersolutions.co/ip"
         const val SAUDIA_HOST = "www.saudia.com"
         const val SAUDIA_URL = "https://www.saudia.com/ar-SA"
         const val PREFS = "hyper_prefs"
@@ -45,17 +42,17 @@ class HyperSessionManager(
         .followRedirects(true)
         .addInterceptor { chain ->
             val original = chain.request()
-            val requestBuilder = original.newBuilder()
+            val builder = original.newBuilder()
                 .header("User-Agent", userAgent)
                 .header("Accept-Language", acceptLanguage)
-
-            // هيدرات المتصفح فقط لطلبات السعودية (وليس لطلبات Hyper أو جلب الـ IP)
+            
+            // إضافة هيدرات المتصفح فقط لطلبات السعودية
             if (original.url.host.contains("saudia.com")) {
-                requestBuilder.header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
-                requestBuilder.header("sec-ch-ua-mobile", "?0")
-                requestBuilder.header("sec-ch-ua-platform", "\"Windows\"")
+                builder.header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+                builder.header("sec-ch-ua-mobile", "?0")
+                builder.header("sec-ch-ua-platform", "\"Windows\"")
             }
-            chain.proceed(requestBuilder.build())
+            chain.proceed(builder.build())
         }
         .connectionSpecs(listOf(
             ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
@@ -78,7 +75,6 @@ class HyperSessionManager(
     }
 
     fun getToken(): String? = currentToken
-
     fun getCookieHeader(): String? {
         val t = currentToken ?: return null
         return "reese84=$t"
@@ -97,7 +93,7 @@ class HyperSessionManager(
         }
 
         val maskedKey = if (apiKey.length > 8) "${apiKey.take(4)}...${apiKey.takeLast(4)}" else "قصير جداً"
-        Log.d(TAG, "🔑 المفتاح المستخدم حالياً (بعد التنظيف): $maskedKey")
+        Log.d(TAG, "🔑 المفتاح المستخدم حالياً: $maskedKey")
 
         Log.d(TAG, "🔄 جاري حل/تجديد reese84...")
         try {
@@ -191,7 +187,6 @@ class HyperSessionManager(
     }
 
     private fun fetchEgressIp(): String {
-        // 👇 استخدام خدمة ipify المستقرة بدلاً من سيرفر Hyper
         val req = Request.Builder()
             .url(IP_FETCH_URL)
             .get()
@@ -199,8 +194,8 @@ class HyperSessionManager(
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
             if (!resp.isSuccessful) {
-                Log.e(TAG, "❌ فشل جلب IP. الكود: ${resp.code}")
-                throw IOException("فشل جلب IP: ${resp.code}")
+                Log.e(TAG, "❌ فشل جلب IP. الكود: ${resp.code}، الرد: $body")
+                throw IOException("فشل جلب IP: ${resp.code} - $body")
             }
             val ip = JSONObject(body).getString("ip")
             Log.d(TAG, "🌐 IP المستخدم: $ip")
@@ -217,7 +212,11 @@ class HyperSessionManager(
                 .build()
             client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string()
-                if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) body else null
+                if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) {
+                    body 
+                } else {
+                    null
+                }
             }
         } catch (e: Exception) {
             null
@@ -246,7 +245,7 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url("$HYPER_BASE/reese84")
             .post(body.toRequestBody("application/json".toMediaType()))
-            .header("x-api-key", apiKey) // نستخدم المفتاح النظيف هنا
+            .header("x-api-key", apiKey)
             .header("Content-Type", "application/json")
             .build()
 
