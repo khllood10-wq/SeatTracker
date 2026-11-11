@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -37,11 +39,9 @@ fun SessionKeeper(
     var showWebView by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pollCount by remember { mutableIntStateOf(0) }
-    var pageFinished by remember { mutableStateOf(false) }
     var staleSkipped by remember { mutableIntStateOf(0) }
-    var loadCount by remember { mutableIntStateOf(0) }
-    var storageCleared by remember { mutableStateOf(false) }
-    var lastDiagnostic by remember { mutableStateOf("") }
+    var lastDiag by remember { mutableStateOf("") }
+    var hooksInstalledPages by remember { mutableIntStateOf(0) }
 
     remember {
         android.util.Log.e("SessionKeeper", "🔥 COMPOSABLE RENDERED")
@@ -54,37 +54,36 @@ fun SessionKeeper(
         android.util.Log.e("SessionKeeper", "📱 WebView will show")
     }
 
+    // ⏱️ Timeout 90 ثانية (كافٍ حتى مع إعادة تحميل متعددة)
     LaunchedEffect(Unit) {
-        delay(60_000)
+        delay(90_000)
         if (!captured) {
-            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT after 60s — DIAG: $lastDiagnostic")
-            statusText = "⚠️ لم نلتقط توكن — $lastDiagnostic"
+            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT 90s — last: $lastDiag")
+            statusText = "⚠️ لم نلتقط — $lastDiag"
             onComplete()
         }
     }
 
-    LaunchedEffect(pageFinished, captured) {
-        if (!pageFinished || captured) {
-            android.util.Log.e("SessionKeeper", "Poll skip: pf=$pageFinished cap=$captured")
-            return@LaunchedEffect
-        }
-
-        android.util.Log.e("SessionKeeper", "⏳ Waiting 5s for Angular...")
-        delay(5000)  // ⭐ انتظر Angular
-
-        android.util.Log.e("SessionKeeper", "🔄 POLLING STARTED")
+    // ⭐⭐⭐ Polling مستمر — لا يعتمد على pageFinished ⭐⭐⭐
+    LaunchedEffect(showWebView, captured) {
+        if (!showWebView || captured) return@LaunchedEffect
+        android.util.Log.e("SessionKeeper", "🔄 POLLING STARTED (independent of page state)")
 
         while (isActive && !captured) {
             pollCount++
+            statusText = if (staleSkipped > 0)
+                "🔍 فحص ($pollCount): تجاهلنا $staleSkipped منتهي..."
+            else "🔍 فحص ($pollCount)..."
 
-            val js = """
+            webViewRef?.evaluateJavascript("""
                 (function() {
                     try {
                         var candidates = [
                             sessionStorage.getItem('saudia-access-token'),
                             localStorage.getItem('saudia-access-token'),
                             localStorage.getItem('authorization'),
-                            localStorage.getItem('token')
+                            localStorage.getItem('token'),
+                            localStorage.getItem('access_token')
                         ];
                         for (var i = 0; i < candidates.length; i++) {
                             var t = candidates[i];
@@ -99,29 +98,23 @@ fun SessionKeeper(
                         }
                         
                         var diag = {
-                            rs: document.readyState,
-                            url: location.href.substring(0, 80),
-                            ngVersion: (document.querySelector('[ng-version]') || {getAttribute: function(){return 'none'}}).getAttribute('ng-version') || 'none',
-                            hasNg: typeof window.ng !== 'undefined',
-                            hasAngularGlobal: typeof window.getAllAngularRootElements === 'function',
+                            rs: document.readyState || '?',
+                            url: (location.href || '').substring(0, 60),
+                            ngV: (document.querySelector('[ng-version]') || {getAttribute: function(){return 'none'}}).getAttribute('ng-version') || 'none',
+                            hasAppRoot: !!document.querySelector('app-root,saudia-web-app'),
                             ssLen: sessionStorage.length,
                             lsLen: localStorage.length,
-                            hasSaaToken: sessionStorage.getItem('saudia-access-token') ? 'YES' : 'no',
-                            hasAuth: localStorage.getItem('authorization') ? 'YES' : 'no',
-                            scriptCount: document.scripts.length,
-                            bodyLen: document.body ? document.body.innerHTML.length : 0,
-                            hasAppRoot: !!document.querySelector('app-root'),
-                            hasSaudiaApp: !!document.querySelector('saudia-web-app')
+                            scripts: document.scripts.length,
+                            bodyLen: document.body ? document.body.innerHTML.length : 0
                         };
                         SaudiaBridge.onPollResult(JSON.stringify(diag));
                     } catch(e) {
                         SaudiaBridge.onPollError(e.message);
                     }
                 })();
-            """.trimIndent()
+            """.trimIndent(), null)
 
-            webViewRef?.evaluateJavascript(js, null)
-            delay(1000)
+            delay(500)
         }
     }
 
@@ -158,7 +151,7 @@ fun SessionKeeper(
                 }
 
                 captured = true
-                statusText = "✅ تم التقاط توكن"
+                statusText = "✅ تم التقاط توكن صالح"
                 viewModel.saveTokens(token, "", "", "Mozilla/5.0 (Linux; Android 14)")
 
                 try {
@@ -180,8 +173,11 @@ fun SessionKeeper(
 
             @JavascriptInterface
             fun onPollResult(json: String) {
-                lastDiagnostic = json.take(200)
-                android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
+                lastDiag = json.take(150)
+                // سجل كل 5 ثوانٍ فقط (لتجنب spam)
+                if (pollCount % 10 == 1) {
+                    android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
+                }
             }
 
             @JavascriptInterface
@@ -217,6 +213,19 @@ fun SessionKeeper(
                             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                         addJavascriptInterface(bridge, "SaudiaBridge")
 
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
+                                msg?.let {
+                                    val lvl = it.messageLevel()
+                                    if (lvl >= ConsoleMessage.MessageLevel.WARNING) {
+                                        android.util.Log.e("SessionKeeper",
+                                            "📺 Console[${lvl}]: ${it.message().take(200)} @${it.sourceId()?.substringAfterLast('/') ?: ""}:${it.lineNumber()}")
+                                    }
+                                }
+                                return true
+                            }
+                        }
+
                         val cm = CookieManager.getInstance()
                         cm.setAcceptCookie(true)
                         cm.setAcceptThirdPartyCookies(this, true)
@@ -224,35 +233,17 @@ fun SessionKeeper(
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
-                                loadCount++
-                                android.util.Log.e("SessionKeeper", "🌐 PAGE STARTED #$loadCount: $url")
+                                android.util.Log.e("SessionKeeper", "🌐 PAGE STARTED: $url")
 
-                                // ⭐ امسح التخزين مرة واحدة فقط
-                                if (!storageCleared) {
-                                    storageCleared = true
-                                    view?.evaluateJavascript("""
-                                        (function() {
-                                            try {
-                                                sessionStorage.clear();
-                                                localStorage.clear();
-                                                SaudiaBridge.onLog('Storage cleared (once)');
-                                            } catch(e) {
-                                                SaudiaBridge.onLog('Clear fail: ' + e.message);
-                                            }
-                                        })();
-                                    """.trimIndent(), null)
-                                }
-
+                                // حقن الهوك في كل صفحة (قد لا يكون موجوداً بعد إعادة التحميل)
                                 view?.evaluateJavascript(SESSION_HOOK_JS, null)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED #$loadCount: $url")
-                                if (!pageFinished) {
-                                    pageFinished = true
-                                    statusText = "🔄 الصفحة محملة — انتظار Angular (5s)..."
-                                }
+                                hooksInstalledPages++
+                                android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED (#$hooksInstalledPages): $url")
+                                statusText = "🔄 جاهز — فحص مستمر..."
                             }
 
                             override fun onReceivedError(
@@ -310,11 +301,15 @@ private val SESSION_HOOK_JS = """
             for (var k in h) if (k.toLowerCase() === n.toLowerCase()) return h[k] || '';
             return '';
         }
-        var orig = window.fetch;
+
+        var origFetch = window.fetch;
         window.fetch = function(input, init) {
             var url = typeof input === 'string' ? input : (input && input.url) || '';
+            // سجل كل طلب dapi
+            if (url.indexOf('dapi.saudia') > -1 || url.indexOf('/session/auth') > -1) {
+                SaudiaBridge.onLog('fetch → ' + url.substring(0, 80));
+            }
             var isTok = url.indexOf('/session/auth/web/token/initialization') > -1;
-            if (isTok) SaudiaBridge.onLog('fetch → ' + url.substring(0, 70));
             if (isTok && init && init.headers) {
                 try {
                     var xd = getH(init.headers, 'x-d-token');
@@ -330,7 +325,7 @@ private val SESSION_HOOK_JS = """
                             try {
                                 var d = JSON.parse(t);
                                 if (d.access_token) SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
-                                else SaudiaBridge.onLog('No access_token: ' + t.substring(0, 100));
+                                else SaudiaBridge.onLog('No access_token: ' + t.substring(0, 150));
                             } catch(e) {}
                         });
                     } catch(e) {}
@@ -338,6 +333,7 @@ private val SESSION_HOOK_JS = """
             }
             return p;
         };
+
         var oO = XMLHttpRequest.prototype.open;
         var oS = XMLHttpRequest.prototype.send;
         var oH = XMLHttpRequest.prototype.setRequestHeader;
@@ -351,8 +347,10 @@ private val SESSION_HOOK_JS = """
         };
         XMLHttpRequest.prototype.send = function() {
             var self = this;
+            if (self.__u && (self.__u.indexOf('dapi.saudia') > -1 || self.__u.indexOf('/session/auth') > -1)) {
+                SaudiaBridge.onLog('XHR → ' + self.__u.substring(0, 80));
+            }
             if (self.__u && self.__u.indexOf('/session/auth/web/token/initialization') > -1) {
-                SaudiaBridge.onLog('XHR → ' + self.__u.substring(0, 70));
                 if (self.__h) {
                     for (var k in self.__h) {
                         if (k.toLowerCase() === 'x-d-token') SaudiaBridge.onXDTokenCaptured(self.__h[k]);
@@ -368,6 +366,7 @@ private val SESSION_HOOK_JS = """
             }
             return oS.apply(this, arguments);
         };
+
         SaudiaBridge.onLog('Hooks installed');
     })();
 """.trimIndent()
