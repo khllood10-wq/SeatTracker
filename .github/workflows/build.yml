@@ -18,14 +18,20 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+
+    # هذه الخطوة ستنشئ ملف gradlew تلقائياً لأن المستودع يفتقده
+    - name: Generate Gradle Wrapper
+      run: gradle wrapper
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
     - name: Build with Gradle
       env:
-        HYPER_API_KEY: ${{ secrets.HYPER_API_KEY }} # يمرر المفتاح هنا
+        HYPER_API_KEY: ${{ secrets.HYPER_API_KEY }}
       run: ./gradlew assembleDebug
 
     - name: Upload APK
