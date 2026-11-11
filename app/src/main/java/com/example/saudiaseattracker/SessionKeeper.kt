@@ -27,6 +27,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import org.json.JSONObject
+import kotlin.random.Random
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
@@ -37,13 +38,16 @@ fun SessionKeeper(
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
     var captured by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("جاري تحميل الجلسة...") }
+    var statusText by remember { mutableStateOf("جاري تحميل الصفحة...") }
     var showWebView by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pollCount by remember { mutableIntStateOf(0) }
     var staleSkipped by remember { mutableIntStateOf(0) }
     var lastBodyLen by remember { mutableIntStateOf(0) }
     var angularDetected by remember { mutableStateOf(false) }
+
+    // ⭐ الحالة الأساسية — لا يبدأ polling قبل pageFinished
+    var pageFinished by remember { mutableStateOf(false) }
 
     remember {
         android.util.Log.e("SessionKeeper", "🔥 COMPOSABLE RENDERED")
@@ -56,24 +60,35 @@ fun SessionKeeper(
         android.util.Log.e("SessionKeeper", "📱 WebView will show")
     }
 
+    // ⏱️ Timeout 150 ثانية — كافٍ
     LaunchedEffect(Unit) {
-        delay(90_000)
+        delay(150_000)
         if (!captured) {
-            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT 90s (bodyLen=$lastBodyLen)")
+            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT 150s (pageFinished=$pageFinished bodyLen=$lastBodyLen)")
             statusText = "⚠️ لم نلتقط (bodyLen=$lastBodyLen)"
             onComplete()
         }
     }
 
-    LaunchedEffect(showWebView, captured) {
-        if (!showWebView || captured) return@LaunchedEffect
-        android.util.Log.e("SessionKeeper", "🔄 POLLING STARTED")
+    // ⭐⭐⭐ Polling يبدأ فقط بعد pageFinished ⭐⭐⭐
+    LaunchedEffect(pageFinished, captured) {
+        if (!pageFinished || captured) return@LaunchedEffect
 
-        while (isActive && !captured) {
+        // ⏱️ انتظار أولي طبيعي — Angular يحتاج 8-15 ثانية
+        val initialWait = Random.nextLong(8000, 15000)
+        statusText = "⏳ انتظار Angular (${initialWait / 1000}s)..."
+        android.util.Log.e("SessionKeeper", "⏳ PAGE FINISHED — waiting ${initialWait}ms for Angular")
+        delay(initialWait)
+
+        if (captured) return@LaunchedEffect
+
+        android.util.Log.e("SessionKeeper", "🔍 SLOW POLLING STARTED (max 6 polls, 4-8s intervals)")
+
+        while (isActive && !captured && pollCount < 6) {
             pollCount++
 
-            val diagText = if (angularDetected) "✅ Angular يعمل" else "⏳ انتظار Angular"
-            statusText = "🔍 $diagText (${pollCount})"
+            val diagText = if (angularDetected) "✅ Angular يعمل" else "🔎 فحص"
+            statusText = "$diagText (${pollCount}/6)"
 
             webViewRef?.evaluateJavascript("""
                 (function() {
@@ -115,7 +130,7 @@ fun SessionKeeper(
                             appRoot: !!document.querySelector('app-root,saudia-web-app'),
                             bodyLen: document.body ? document.body.innerHTML.length : 0,
                             scripts: document.scripts.length,
-                            hasWvMarker: document.body ? document.body.innerHTML.indexOf('incapsula') > -1 || document.body.innerHTML.indexOf('Incapsula') > -1 : false
+                            hasWvMarker: document.body ? document.body.innerHTML.indexOf('incapsula') > -1 : false
                         };
                         SaudiaBridge.onPollResult(JSON.stringify(diag));
                     } catch(e) {
@@ -124,8 +139,12 @@ fun SessionKeeper(
                 })();
             """.trimIndent(), null)
 
-            delay(1000)
+            // ⭐ فاصل عشوائي 4-8 ثوانٍ
+            val nextWait = Random.nextLong(4000, 8001)
+            delay(nextWait)
         }
+
+        android.util.Log.e("SessionKeeper", "Polling finished: $pollCount polls, captured=$captured")
     }
 
     val bridge = remember {
@@ -194,12 +213,10 @@ fun SessionKeeper(
                         angularDetected = true
                     }
 
-                    if (pollCount % 5 == 1 || angularDetected) {
-                        android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
-                    }
+                    android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
 
-                    if (hasWvMarker && pollCount % 10 == 1) {
-                        android.util.Log.e("SessionKeeper", "⚠️ Incapsula detected in body — bot challenge")
+                    if (hasWvMarker) {
+                        android.util.Log.e("SessionKeeper", "⚠️ Incapsula in body — bot challenge")
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("SessionKeeper", "❌ Parse poll: ${e.message}")
@@ -233,14 +250,11 @@ fun SessionKeeper(
                 factory = { ctx ->
                     WebView(ctx).apply {
                         webViewRef = this
-
-                        // ⭐⭐⭐ User-Agent سطح المكتب — الفرق الحاسم ⭐⭐⭐
                         settings.userAgentString =
                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                             "AppleWebKit/537.36 (KHTML, like Gecko) " +
                             "Chrome/120.0.0.0 Safari/537.36"
 
-                        // إعدادات مشابهة لسطح المكتب
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.databaseEnabled = true
@@ -256,7 +270,6 @@ fun SessionKeeper(
                         settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
 
-                        // ⭐ إخفاء debugging (لا يظهر كـ WebView في DevTools)
                         WebView.setWebContentsDebuggingEnabled(false)
 
                         addJavascriptInterface(bridge, "SaudiaBridge")
@@ -264,8 +277,7 @@ fun SessionKeeper(
                         webChromeClient = object : WebChromeClient() {
                             override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
                                 msg?.let {
-                                    val lvl = it.messageLevel()
-                                    if (lvl >= ConsoleMessage.MessageLevel.ERROR) {
+                                    if (it.messageLevel() >= ConsoleMessage.MessageLevel.ERROR) {
                                         android.util.Log.e("SessionKeeper",
                                             "📺 ${it.message().take(200)} @${it.sourceId()?.substringAfterLast('/') ?: ""}:${it.lineNumber()}")
                                     }
@@ -274,21 +286,15 @@ fun SessionKeeper(
                             }
 
                             override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-                                android.util.Log.e("SessionKeeper", "🔔 JS Alert: $message")
-                                result?.confirm()
-                                return true
+                                result?.confirm(); return true
                             }
 
                             override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-                                android.util.Log.e("SessionKeeper", "🔔 JS Confirm: $message")
-                                result?.confirm()
-                                return true
+                                result?.confirm(); return true
                             }
 
                             override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: JsPromptResult?): Boolean {
-                                android.util.Log.e("SessionKeeper", "🔔 JS Prompt: $message")
-                                result?.confirm(defaultValue ?: "")
-                                return true
+                                result?.confirm(defaultValue ?: ""); return true
                             }
                         }
 
@@ -300,17 +306,22 @@ fun SessionKeeper(
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
                                 android.util.Log.e("SessionKeeper", "🌐 PAGE STARTED: $url")
-                                // ⭐ ابدأ بحقن anti-detection قبل أي شيء
                                 view?.evaluateJavascript(ANTI_DETECT_JS, null)
-                                // ثم hooks للتوكن
                                 view?.evaluateJavascript(SESSION_HOOK_JS, null)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
                                 android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED: $url")
-                                statusText = "🔄 الصفحة محملة — فحص..."
-                                // حقن مرة أخرى بعد تحميل Angular
+
+                                // ⭐ تحقق أن الصفحة الحقيقية (وليس صفحة خطأ)
+                                if (url != null && url.contains("saudia.com") && !url.contains("incident")) {
+                                    pageFinished = true
+                                    statusText = "✅ الصفحة محملة — انتظار Angular..."
+                                } else {
+                                    android.util.Log.e("SessionKeeper", "⚠️ PAGE FINISHED but URL suspicious: $url")
+                                }
+
                                 view?.evaluateJavascript(ANTI_DETECT_JS, null)
                             }
 
@@ -352,78 +363,36 @@ fun SessionKeeper(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// سكريبت إخفاء علامات WebView (Anti-Detection)
-// ══════════════════════════════════════════════════════════════
 private val ANTI_DETECT_JS = """
     (function() {
         if (window.__antiDetect) return;
         window.__antiDetect = true;
         try {
-            // 1. إخفاء navigator.webdriver
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-
-            // 2. إضافة window.chrome (مهم جداً لـ Imperva)
-            if (!window.chrome) {
-                window.chrome = { runtime: {} };
-            }
-
-            // 3. plugins وهمية (Chrome الحقيقي لديه 3-5)
+            if (!window.chrome) window.chrome = { runtime: {} };
             if (navigator.plugins.length === 0) {
                 const fakePlugins = [
                     { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
                     { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
                     { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
                 ];
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => fakePlugins
-                });
+                Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins });
             }
-
-            // 4. لغات كاملة
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['ar-SA', 'ar', 'en-US', 'en']
-            });
-
-            // 5. navigator.permissions.query صحيحة
-            if (navigator.permissions && navigator.permissions.query) {
-                const origQuery = navigator.permissions.query.bind(navigator.permissions);
-                navigator.permissions.query = (params) => {
-                    if (params && params.name === 'notifications') {
-                        return Promise.resolve({ state: 'granted' });
-                    }
-                    return origQuery(params);
-                };
-            }
-
-            // 6. navigator.vendor
-            Object.defineProperty(navigator, 'vendor', {
-                get: () => 'Google Inc.'
-            });
-
-            // 7. navigator.platform
-            Object.defineProperty(navigator, 'platform', {
-                get: () => 'Win32'
-            });
-
-            // 8. hardwareConcurrency (Chrome PC: 4-8)
+            Object.defineProperty(navigator, 'languages', { get: () => ['ar-SA', 'ar', 'en-US', 'en'] });
+            Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
             if (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4) {
                 Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
             }
-
-            // 9. screen properties
             try {
                 Object.defineProperty(screen, 'width', { get: () => 1920 });
                 Object.defineProperty(screen, 'height', { get: () => 1080 });
                 Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
                 Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
             } catch(e) {}
-
-            // 10. إخفاء Android من userAgentData
             if (navigator.userAgentData) {
                 Object.defineProperty(navigator, 'userAgentData', { get: () => undefined });
             }
-
             SaudiaBridge.onLog('Anti-detection installed');
         } catch(e) {
             SaudiaBridge.onLog('Anti-detect error: ' + e.message);
@@ -431,9 +400,6 @@ private val ANTI_DETECT_JS = """
     })();
 """.trimIndent()
 
-// ══════════════════════════════════════════════════════════════
-// Hooks لالتقاط التوكن
-// ══════════════════════════════════════════════════════════════
 private val SESSION_HOOK_JS = """
     (function() {
         if (window.__sk) return;
