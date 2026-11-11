@@ -39,56 +39,52 @@ fun SessionKeeper(
     var pollCount by remember { mutableIntStateOf(0) }
     var pageFinished by remember { mutableStateOf(false) }
     var staleSkipped by remember { mutableIntStateOf(0) }
+    var loadCount by remember { mutableIntStateOf(0) }
+    var storageCleared by remember { mutableStateOf(false) }
+    var lastDiagnostic by remember { mutableStateOf("") }
 
-    // ⭐ سجل مرة واحدة عند دخول composable
     remember {
-        android.util.Log.e("SessionKeeper", "🔥 SessionKeeper COMPOSABLE RENDERED")
+        android.util.Log.e("SessionKeeper", "🔥 COMPOSABLE RENDERED")
         true
     }
 
     LaunchedEffect(Unit) {
-        android.util.Log.e("SessionKeeper", "⏳ LaunchedEffect: waiting 300ms")
         delay(300)
         showWebView = true
-        android.util.Log.e("SessionKeeper", "📱 WebView will show NOW")
+        android.util.Log.e("SessionKeeper", "📱 WebView will show")
     }
 
     LaunchedEffect(Unit) {
-        delay(40_000)
+        delay(60_000)
         if (!captured) {
-            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT — no token after 40s")
-            statusText = "⚠️ لم نلتقط توكن صالح"
+            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT after 60s — DIAG: $lastDiagnostic")
+            statusText = "⚠️ لم نلتقط توكن — $lastDiagnostic"
             onComplete()
         }
     }
 
     LaunchedEffect(pageFinished, captured) {
         if (!pageFinished || captured) {
-            android.util.Log.e("SessionKeeper", "Polling SKIP: pageFinished=$pageFinished captured=$captured")
+            android.util.Log.e("SessionKeeper", "Poll skip: pf=$pageFinished cap=$captured")
             return@LaunchedEffect
         }
 
-        android.util.Log.e("SessionKeeper", "🔄 POLLING LOOP STARTED")
+        android.util.Log.e("SessionKeeper", "⏳ Waiting 5s for Angular...")
+        delay(5000)  // ⭐ انتظر Angular
+
+        android.util.Log.e("SessionKeeper", "🔄 POLLING STARTED")
 
         while (isActive && !captured) {
             pollCount++
-            statusText = if (staleSkipped > 0)
-                "🔍 فحص (${pollCount}): تجاهلنا $staleSkipped منتهي..."
-            else "🔍 فحص التخزين... ($pollCount)"
 
-            android.util.Log.e("SessionKeeper", "🔍 POLL #$pollCount")
-
-            webViewRef?.evaluateJavascript("""
+            val js = """
                 (function() {
                     try {
                         var candidates = [
                             sessionStorage.getItem('saudia-access-token'),
                             localStorage.getItem('saudia-access-token'),
                             localStorage.getItem('authorization'),
-                            localStorage.getItem('token'),
-                            localStorage.getItem('access_token'),
-                            sessionStorage.getItem('authorization'),
-                            sessionStorage.getItem('token')
+                            localStorage.getItem('token')
                         ];
                         for (var i = 0; i < candidates.length; i++) {
                             var t = candidates[i];
@@ -101,38 +97,31 @@ fun SessionKeeper(
                                 return;
                             }
                         }
-                        SaudiaBridge.onPollResult({
-                            readyState: document.readyState,
-                            hasSessionToken: !!sessionStorage.getItem('saudia-access-token'),
-                            hasLocalAuth: !!localStorage.getItem('authorization'),
+                        
+                        var diag = {
+                            rs: document.readyState,
+                            url: location.href.substring(0, 80),
+                            ngVersion: (document.querySelector('[ng-version]') || {getAttribute: function(){return 'none'}}).getAttribute('ng-version') || 'none',
+                            hasNg: typeof window.ng !== 'undefined',
+                            hasAngularGlobal: typeof window.getAllAngularRootElements === 'function',
                             ssLen: sessionStorage.length,
-                            lsLen: localStorage.length
-                        });
+                            lsLen: localStorage.length,
+                            hasSaaToken: sessionStorage.getItem('saudia-access-token') ? 'YES' : 'no',
+                            hasAuth: localStorage.getItem('authorization') ? 'YES' : 'no',
+                            scriptCount: document.scripts.length,
+                            bodyLen: document.body ? document.body.innerHTML.length : 0,
+                            hasAppRoot: !!document.querySelector('app-root'),
+                            hasSaudiaApp: !!document.querySelector('saudia-web-app')
+                        };
+                        SaudiaBridge.onPollResult(JSON.stringify(diag));
                     } catch(e) {
                         SaudiaBridge.onPollError(e.message);
                     }
                 })();
-            """.trimIndent(), null)
+            """.trimIndent()
 
-            if (pollCount in listOf(3, 6, 10, 15, 20, 25, 30)) {
-                android.util.Log.e("SessionKeeper", "👆 Trigger click #$pollCount")
-                webViewRef?.evaluateJavascript("""
-                    (function() {
-                        try {
-                            var els = document.querySelectorAll('button, a, [role="button"]');
-                            for (var i = 0; i < els.length; i++) {
-                                if (els[i].offsetParent !== null && els[i].innerText) {
-                                    els[i].click();
-                                    SaudiaBridge.onLog('Clicked: ' + els[i].innerText.substring(0, 30));
-                                    return;
-                                }
-                            }
-                        } catch(e) {}
-                    })();
-                """.trimIndent(), null)
-            }
-
-            delay(500)
+            webViewRef?.evaluateJavascript(js, null)
+            delay(1000)
         }
     }
 
@@ -141,9 +130,8 @@ fun SessionKeeper(
             @JavascriptInterface
             fun onJwtFound(token: String) {
                 if (captured) return
-
                 val cleanToken = token.removePrefix("Bearer ").trim()
-                android.util.Log.e("SessionKeeper", "🎯 onJwtFound called! tokenLen=${cleanToken.length}")
+                android.util.Log.e("SessionKeeper", "🎯 JWT found! len=${cleanToken.length}")
 
                 var exp = 0L
                 var iat = 0L
@@ -152,56 +140,38 @@ fun SessionKeeper(
                     if (parts.size >= 2) {
                         val part = parts[1]
                         val padded = part + "=".repeat((4 - part.length % 4) % 4)
-                        val payload = String(
-                            Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP)
-                        )
+                        val payload = String(Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP))
                         val json = JSONObject(payload)
                         exp = json.optLong("exp", 0)
                         iat = json.optLong("iat", 0)
-                        val now = System.currentTimeMillis() / 1000
-                        val remaining = exp - now
-
-                        android.util.Log.e("SessionKeeper", "JWT iat=$iat exp=$exp remaining=${remaining}s")
-
+                        val remaining = exp - System.currentTimeMillis() / 1000
+                        android.util.Log.e("SessionKeeper", "JWT exp=$exp remaining=${remaining}s")
                         if (exp > 0 && remaining < 300) {
                             staleSkipped++
-                            android.util.Log.e("SessionKeeper", "⏭️ SKIP stale JWT (${remaining}s left)")
+                            android.util.Log.e("SessionKeeper", "⏭️ SKIP stale")
                             return
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("SessionKeeper", "❌ JWT decode error: ${e.message}")
+                    android.util.Log.e("SessionKeeper", "JWT decode fail: ${e.message}")
                     return
                 }
 
                 captured = true
-                android.util.Log.e("SessionKeeper", "✅✅ FRESH JWT ACCEPTED! iat=$iat exp=$exp")
-                statusText = "✅ تم التقاط توكن صالح"
-
-                viewModel.saveTokens(token, "", "", "Mozilla/5.0 (Linux; Android 14; SM-S918B)")
-
-                prefs.edit()
-                    .putLong("jwt_iat", iat)
-                    .putLong("jwt_exp", exp)
-                    .apply()
+                statusText = "✅ تم التقاط توكن"
+                viewModel.saveTokens(token, "", "", "Mozilla/5.0 (Linux; Android 14)")
 
                 try {
                     val cm = CookieManager.getInstance()
                     val sau = cm.getCookie("https://www.saudia.com") ?: ""
                     val dapi = cm.getCookie("https://dapi.saudia.com") ?: ""
-                    val merged = listOf(sau, dapi)
-                        .filter { it.isNotBlank() }
-                        .joinToString("; ")
-                        .replace(Regex(";+"), ";")
-                        .trim()
-                        .trimStart(';', ' ')
+                    val merged = listOf(sau, dapi).filter { it.isNotBlank() }
+                        .joinToString("; ").replace(Regex(";+"), ";")
+                        .trim().trimStart(';', ' ')
                     if (merged.isNotBlank()) {
                         prefs.edit().putString("dynamic_cookies", merged).apply()
-                        android.util.Log.e("SessionKeeper", "🍪 Cookies saved: ${merged.length}ch")
                     }
-                } catch (e: Exception) {
-                    android.util.Log.e("SessionKeeper", "❌ Cookie save: ${e.message}")
-                }
+                } catch (e: Exception) {}
 
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     onComplete()
@@ -210,6 +180,7 @@ fun SessionKeeper(
 
             @JavascriptInterface
             fun onPollResult(json: String) {
+                lastDiagnostic = json.take(200)
                 android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
             }
 
@@ -221,7 +192,7 @@ fun SessionKeeper(
             @JavascriptInterface
             fun onXDTokenCaptured(xD: String) {
                 prefs.edit().putString("xd_token", xD).apply()
-                android.util.Log.e("SessionKeeper", "🎫 x-d-token captured (${xD.length}ch)")
+                android.util.Log.e("SessionKeeper", "🎫 x-d-token: ${xD.length}ch")
             }
 
             @JavascriptInterface
@@ -236,7 +207,6 @@ fun SessionKeeper(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    android.util.Log.e("SessionKeeper", "🏗️ Creating WebView...")
                     WebView(ctx).apply {
                         webViewRef = this
                         settings.javaScriptEnabled = true
@@ -250,39 +220,39 @@ fun SessionKeeper(
                         val cm = CookieManager.getInstance()
                         cm.setAcceptCookie(true)
                         cm.setAcceptThirdPartyCookies(this, true)
-                        prefs.getString("dynamic_cookies", "")?.takeIf { it.isNotBlank() }?.let { c ->
-                            listOf("https://www.saudia.com", "https://dapi.saudia.com").forEach { u ->
-                                cm.setCookie(u, c)
-                            }
-                            cm.flush()
-                            android.util.Log.e("SessionKeeper", "🍪 Injected saved cookies")
-                        }
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
-                                android.util.Log.e("SessionKeeper", "🌐 PAGE STARTED: $url")
+                                loadCount++
+                                android.util.Log.e("SessionKeeper", "🌐 PAGE STARTED #$loadCount: $url")
 
-                                view?.evaluateJavascript("""
-                                    (function() {
-                                        try {
-                                            sessionStorage.clear();
-                                            localStorage.clear();
-                                            SaudiaBridge.onLog('Cleared all storage');
-                                        } catch(e) {
-                                            SaudiaBridge.onLog('Clear failed: ' + e.message);
-                                        }
-                                    })();
-                                """.trimIndent(), null)
+                                // ⭐ امسح التخزين مرة واحدة فقط
+                                if (!storageCleared) {
+                                    storageCleared = true
+                                    view?.evaluateJavascript("""
+                                        (function() {
+                                            try {
+                                                sessionStorage.clear();
+                                                localStorage.clear();
+                                                SaudiaBridge.onLog('Storage cleared (once)');
+                                            } catch(e) {
+                                                SaudiaBridge.onLog('Clear fail: ' + e.message);
+                                            }
+                                        })();
+                                    """.trimIndent(), null)
+                                }
 
                                 view?.evaluateJavascript(SESSION_HOOK_JS, null)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED: $url")
-                                pageFinished = true
-                                statusText = "🔄 الصفحة محملة — بدء الفحص..."
+                                android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED #$loadCount: $url")
+                                if (!pageFinished) {
+                                    pageFinished = true
+                                    statusText = "🔄 الصفحة محملة — انتظار Angular (5s)..."
+                                }
                             }
 
                             override fun onReceivedError(
@@ -291,11 +261,10 @@ fun SessionKeeper(
                                 error: android.webkit.WebResourceError?
                             ) {
                                 super.onReceivedError(view, request, error)
-                                android.util.Log.e("SessionKeeper", "❌ WEBVIEW ERROR: ${error?.description} for ${request?.url}")
+                                android.util.Log.e("SessionKeeper", "❌ WEB ERR: ${error?.description}")
                             }
                         }
 
-                        android.util.Log.e("SessionKeeper", "🚀 loadUrl(saudia.com/ar-SA)")
                         loadUrl("https://www.saudia.com/ar-SA")
                     }
                 }
@@ -303,9 +272,7 @@ fun SessionKeeper(
         }
 
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.85f)),
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -321,9 +288,6 @@ fun SessionKeeper(
                 Text(statusText,
                     color = Color(0xFFAAAAAA), fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 24.dp))
-                Spacer(Modifier.height(8.dp))
-                Text("يعمل في الخلفية",
-                    color = Color(0xFF666666), fontSize = 11.sp)
             }
         }
     }
@@ -333,6 +297,13 @@ private val SESSION_HOOK_JS = """
     (function() {
         if (window.__sk) return;
         window.__sk = true;
+
+        window.addEventListener('error', function(e) {
+            try {
+                SaudiaBridge.onLog('JS ERR: ' + (e.message || '?') + ' @' + (e.filename || '?').split('/').pop() + ':' + (e.lineno || 0));
+            } catch(x) {}
+        });
+
         function getH(h, n) {
             if (!h) return '';
             if (typeof h.get === 'function') return h.get(n) || h.get(n.toLowerCase()) || '';
@@ -343,7 +314,7 @@ private val SESSION_HOOK_JS = """
         window.fetch = function(input, init) {
             var url = typeof input === 'string' ? input : (input && input.url) || '';
             var isTok = url.indexOf('/session/auth/web/token/initialization') > -1;
-            if (isTok) SaudiaBridge.onLog('fetch → ' + url.substring(0, 60));
+            if (isTok) SaudiaBridge.onLog('fetch → ' + url.substring(0, 70));
             if (isTok && init && init.headers) {
                 try {
                     var xd = getH(init.headers, 'x-d-token');
@@ -358,14 +329,9 @@ private val SESSION_HOOK_JS = """
                         r.clone().text().then(function(t) {
                             try {
                                 var d = JSON.parse(t);
-                                if (d.access_token) {
-                                    SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
-                                } else {
-                                    SaudiaBridge.onLog('Response no access_token: ' + t.substring(0, 100));
-                                }
-                            } catch(e) {
-                                SaudiaBridge.onLog('Parse fail: ' + e.message);
-                            }
+                                if (d.access_token) SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
+                                else SaudiaBridge.onLog('No access_token: ' + t.substring(0, 100));
+                            } catch(e) {}
                         });
                     } catch(e) {}
                 });
@@ -386,21 +352,17 @@ private val SESSION_HOOK_JS = """
         XMLHttpRequest.prototype.send = function() {
             var self = this;
             if (self.__u && self.__u.indexOf('/session/auth/web/token/initialization') > -1) {
-                SaudiaBridge.onLog('XHR → ' + self.__u.substring(0, 60));
+                SaudiaBridge.onLog('XHR → ' + self.__u.substring(0, 70));
                 if (self.__h) {
                     for (var k in self.__h) {
-                        if (k.toLowerCase() === 'x-d-token') {
-                            SaudiaBridge.onXDTokenCaptured(self.__h[k]);
-                        }
+                        if (k.toLowerCase() === 'x-d-token') SaudiaBridge.onXDTokenCaptured(self.__h[k]);
                     }
                 }
                 self.addEventListener('load', function() {
                     SaudiaBridge.onLog('XHR ← HTTP ' + self.status);
                     try {
                         var d = JSON.parse(self.responseText);
-                        if (d.access_token) {
-                            SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
-                        }
+                        if (d.access_token) SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
                     } catch(e) {}
                 });
             }
