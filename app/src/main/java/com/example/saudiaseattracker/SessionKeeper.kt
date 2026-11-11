@@ -10,6 +10,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.WebChromeClient
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -45,8 +46,6 @@ fun SessionKeeper(
     var staleSkipped by remember { mutableIntStateOf(0) }
     var lastBodyLen by remember { mutableIntStateOf(0) }
     var angularDetected by remember { mutableStateOf(false) }
-
-    // ⭐ الحالة الأساسية — لا يبدأ polling قبل pageFinished
     var pageFinished by remember { mutableStateOf(false) }
 
     remember {
@@ -60,33 +59,30 @@ fun SessionKeeper(
         android.util.Log.e("SessionKeeper", "📱 WebView will show")
     }
 
-    // ⏱️ Timeout 150 ثانية — كافٍ
     LaunchedEffect(Unit) {
         delay(150_000)
         if (!captured) {
-            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT 150s (pageFinished=$pageFinished bodyLen=$lastBodyLen)")
+            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT 150s (bodyLen=$lastBodyLen)")
             statusText = "⚠️ لم نلتقط (bodyLen=$lastBodyLen)"
             onComplete()
         }
     }
 
-    // ⭐⭐⭐ Polling يبدأ فقط بعد pageFinished ⭐⭐⭐
+    // ⭐ Polling بعد pageFinished فقط، بفواصل عشوائية
     LaunchedEffect(pageFinished, captured) {
         if (!pageFinished || captured) return@LaunchedEffect
 
-        // ⏱️ انتظار أولي طبيعي — Angular يحتاج 8-15 ثانية
         val initialWait = Random.nextLong(8000, 15000)
         statusText = "⏳ انتظار Angular (${initialWait / 1000}s)..."
-        android.util.Log.e("SessionKeeper", "⏳ PAGE FINISHED — waiting ${initialWait}ms for Angular")
+        android.util.Log.e("SessionKeeper", "⏳ Waiting ${initialWait}ms for Angular")
         delay(initialWait)
 
         if (captured) return@LaunchedEffect
 
-        android.util.Log.e("SessionKeeper", "🔍 SLOW POLLING STARTED (max 6 polls, 4-8s intervals)")
+        android.util.Log.e("SessionKeeper", "🔍 SLOW POLLING STARTED (max 6 polls)")
 
         while (isActive && !captured && pollCount < 6) {
             pollCount++
-
             val diagText = if (angularDetected) "✅ Angular يعمل" else "🔎 فحص"
             statusText = "$diagText (${pollCount}/6)"
 
@@ -124,13 +120,18 @@ fun SessionKeeper(
                             if (ngEl) ngV = ngEl.getAttribute('ng-version') || 'empty';
                         } catch(e) {}
 
+                        // ⭐ تشخيص إضافي
                         var diag = {
                             rs: document.readyState || '?',
                             ngV: ngV,
                             appRoot: !!document.querySelector('app-root,saudia-web-app'),
                             bodyLen: document.body ? document.body.innerHTML.length : 0,
                             scripts: document.scripts.length,
-                            hasWvMarker: document.body ? document.body.innerHTML.indexOf('incapsula') > -1 : false
+                            hasWvMarker: document.body ? document.body.innerHTML.indexOf('incapsula') > -1 : false,
+                            hasReese: document.cookie.indexOf('reese84') > -1,
+                            uaBrands: (navigator.userAgentData && navigator.userAgentData.brands) ? navigator.userAgentData.brands.map(function(b){return b.brand;}).join(',') : 'none',
+                            ua: (navigator.userAgent || '').substring(0, 100),
+                            challengeDetected: document.body ? (document.body.innerHTML.indexOf('Checking') > -1 || document.body.innerHTML.indexOf('robot') > -1 || document.body.innerHTML.indexOf('verify') > -1) : false
                         };
                         SaudiaBridge.onPollResult(JSON.stringify(diag));
                     } catch(e) {
@@ -139,12 +140,11 @@ fun SessionKeeper(
                 })();
             """.trimIndent(), null)
 
-            // ⭐ فاصل عشوائي 4-8 ثوانٍ
             val nextWait = Random.nextLong(4000, 8001)
             delay(nextWait)
         }
 
-        android.util.Log.e("SessionKeeper", "Polling finished: $pollCount polls, captured=$captured")
+        android.util.Log.e("SessionKeeper", "Polling finished: captured=$captured")
     }
 
     val bridge = remember {
@@ -170,12 +170,10 @@ fun SessionKeeper(
                         android.util.Log.e("SessionKeeper", "JWT exp=$exp remaining=${remaining}s")
                         if (exp > 0 && remaining < 300) {
                             staleSkipped++
-                            android.util.Log.e("SessionKeeper", "⏭️ SKIP stale")
                             return
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("SessionKeeper", "❌ JWT decode fail: ${e.message}")
                     return
                 }
 
@@ -204,20 +202,12 @@ fun SessionKeeper(
             fun onPollResult(json: String) {
                 try {
                     val obj = JSONObject(json)
-                    val bodyLen = obj.optInt("bodyLen", 0)
+                    lastBodyLen = obj.optInt("bodyLen", 0)
                     val ngV = obj.optString("ngV", "none")
-                    val hasWvMarker = obj.optBoolean("hasWvMarker", false)
-                    lastBodyLen = bodyLen
-
-                    if (bodyLen > 10000 || (ngV != "none" && ngV != "empty")) {
+                    if (lastBodyLen > 10000 || (ngV != "none" && ngV != "empty")) {
                         angularDetected = true
                     }
-
                     android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
-
-                    if (hasWvMarker) {
-                        android.util.Log.e("SessionKeeper", "⚠️ Incapsula in body — bot challenge")
-                    }
                 } catch (e: Exception) {
                     android.util.Log.e("SessionKeeper", "❌ Parse poll: ${e.message}")
                 }
@@ -250,6 +240,18 @@ fun SessionKeeper(
                 factory = { ctx ->
                     WebView(ctx).apply {
                         webViewRef = this
+
+                        // ⭐⭐⭐ مسح كامل لبيانات WebView (reese84 مسموم)
+                        clearCache(true)
+                        clearHistory()
+                        clearFormData()
+                        val cm = CookieManager.getInstance()
+                        cm.removeAllCookies(null)
+                        cm.flush()
+                        WebStorage.getInstance().deleteAllData()
+                        android.util.Log.e("SessionKeeper", "🧹 WebView data cleared (cookies + storage)")
+
+                        // UA سطح المكتب
                         settings.userAgentString =
                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                             "AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -262,11 +264,6 @@ fun SessionKeeper(
                         settings.loadWithOverviewMode = true
                         settings.javaScriptCanOpenWindowsAutomatically = true
                         settings.mediaPlaybackRequiresUserGesture = false
-                        settings.setSupportMultipleWindows(false)
-                        settings.builtInZoomControls = false
-                        settings.displayZoomControls = false
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = true
                         settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
 
@@ -279,33 +276,21 @@ fun SessionKeeper(
                                 msg?.let {
                                     if (it.messageLevel() >= ConsoleMessage.MessageLevel.ERROR) {
                                         android.util.Log.e("SessionKeeper",
-                                            "📺 ${it.message().take(200)} @${it.sourceId()?.substringAfterLast('/') ?: ""}:${it.lineNumber()}")
+                                            "📺 ${it.message().take(200)} @${it.sourceId()?.substringAfterLast('/') ?: ""}")
                                     }
                                 }
                                 return true
                             }
-
-                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-                                result?.confirm(); return true
-                            }
-
-                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-                                result?.confirm(); return true
-                            }
-
-                            override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: JsPromptResult?): Boolean {
-                                result?.confirm(defaultValue ?: ""); return true
-                            }
+                            override fun onJsAlert(v: WebView?, u: String?, m: String?, r: JsResult?): Boolean { r?.confirm(); return true }
+                            override fun onJsConfirm(v: WebView?, u: String?, m: String?, r: JsResult?): Boolean { r?.confirm(); return true }
+                            override fun onJsPrompt(v: WebView?, u: String?, m: String?, d: String?, r: JsPromptResult?): Boolean { r?.confirm(d ?: ""); return true }
                         }
-
-                        val cm = CookieManager.getInstance()
-                        cm.setAcceptCookie(true)
-                        cm.setAcceptThirdPartyCookies(this, true)
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
                                 android.util.Log.e("SessionKeeper", "🌐 PAGE STARTED: $url")
+                                // ⭐⭐⭐ anti-detect أولاً قبل أي شيء آخر ⭐⭐⭐
                                 view?.evaluateJavascript(ANTI_DETECT_JS, null)
                                 view?.evaluateJavascript(SESSION_HOOK_JS, null)
                             }
@@ -313,15 +298,11 @@ fun SessionKeeper(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
                                 android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED: $url")
-
-                                // ⭐ تحقق أن الصفحة الحقيقية (وليس صفحة خطأ)
                                 if (url != null && url.contains("saudia.com") && !url.contains("incident")) {
                                     pageFinished = true
                                     statusText = "✅ الصفحة محملة — انتظار Angular..."
-                                } else {
-                                    android.util.Log.e("SessionKeeper", "⚠️ PAGE FINISHED but URL suspicious: $url")
                                 }
-
+                                // حقن anti-detect مرة أخرى بعد التحميل
                                 view?.evaluateJavascript(ANTI_DETECT_JS, null)
                             }
 
@@ -363,13 +344,46 @@ fun SessionKeeper(
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Anti-detection — إخفاء WebView عن Imperva
+// ══════════════════════════════════════════════════════════════
 private val ANTI_DETECT_JS = """
     (function() {
         if (window.__antiDetect) return;
         window.__antiDetect = true;
         try {
+            // 1. إخفاء webdriver
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            if (!window.chrome) window.chrome = { runtime: {} };
+
+            // 2. ⭐⭐⭐ الأهم: إخفاء "Android WebView" من brands ⭐⭐⭐
+            if (navigator.userAgentData) {
+                try {
+                    Object.defineProperty(navigator.userAgentData, 'brands', {
+                        get: () => [
+                            { brand: 'Chromium', version: '120' },
+                            { brand: 'Google Chrome', version: '120' },
+                            { brand: 'Not-A.Brand', version: '99' }
+                        ]
+                    });
+                    Object.defineProperty(navigator.userAgentData, 'mobile', { get: () => false });
+                    Object.defineProperty(navigator.userAgentData, 'platform', { get: () => 'Windows' });
+                } catch(e) {
+                    // إذا فشل، احذف userAgentData كلياً
+                    Object.defineProperty(navigator, 'userAgentData', { get: () => undefined });
+                }
+            }
+
+            // 3. window.chrome (Chrome الحقيقي لديه هذا)
+            if (!window.chrome) {
+                window.chrome = {
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {}
+                };
+            }
+
+            // 4. plugins (Chrome الحقيقي: 3-5)
             if (navigator.plugins.length === 0) {
                 const fakePlugins = [
                     { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
@@ -378,21 +392,70 @@ private val ANTI_DETECT_JS = """
                 ];
                 Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins });
             }
+
+            // 5. languages
             Object.defineProperty(navigator, 'languages', { get: () => ['ar-SA', 'ar', 'en-US', 'en'] });
+
+            // 6. vendor
             Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+
+            // 7. platform (Win32 لسطح المكتب)
             Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+
+            // 8. hardwareConcurrency
             if (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4) {
                 Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
             }
+
+            // 9. screen (سطح مكتب)
             try {
                 Object.defineProperty(screen, 'width', { get: () => 1920 });
                 Object.defineProperty(screen, 'height', { get: () => 1080 });
                 Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
                 Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+                Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
             } catch(e) {}
-            if (navigator.userAgentData) {
-                Object.defineProperty(navigator, 'userAgentData', { get: () => undefined });
+
+            // 10. devicePixelRatio
+            try {
+                Object.defineProperty(window, 'devicePixelRatio', { get: () => 1 });
+            } catch(e) {}
+
+            // 11. WebGL vendor/renderer
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (ext) {
+                        const origGetParam = gl.getParameter.bind(gl);
+                        gl.getParameter = function(p) {
+                            if (p === ext.UNMASKED_VENDOR_WEBGL) return 'Google Inc. (Intel)';
+                            if (p === ext.UNMASKED_RENDERER_WEBGL) return 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                            return origGetParam(p);
+                        };
+                    }
+                }
+            } catch(e) {}
+
+            // 12. permissions
+            if (navigator.permissions && navigator.permissions.query) {
+                const origQuery = navigator.permissions.query.bind(navigator.permissions);
+                navigator.permissions.query = (params) => {
+                    if (params && params.name === 'notifications') {
+                        return Promise.resolve({ state: 'granted' });
+                    }
+                    return origQuery(params);
+                };
             }
+
+            // 13. إخفاء علامات WebView في CSS
+            try {
+                const style = document.createElement('style');
+                style.textContent = '::-webkit-scrollbar { width: 8px; }';
+                document.head.appendChild(style);
+            } catch(e) {}
+
             SaudiaBridge.onLog('Anti-detection installed');
         } catch(e) {
             SaudiaBridge.onLog('Anti-detect error: ' + e.message);
@@ -400,6 +463,9 @@ private val ANTI_DETECT_JS = """
     })();
 """.trimIndent()
 
+// ══════════════════════════════════════════════════════════════
+// Token hooks
+// ══════════════════════════════════════════════════════════════
 private val SESSION_HOOK_JS = """
     (function() {
         if (window.__sk) return;
