@@ -2,7 +2,6 @@ package com.example.saudiaseattracker
 
 import android.app.Application
 import android.content.Context
-import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -122,7 +121,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     init {
         viewModelScope.launch {
             try {
-                // 👇 فحص المفتاح
                 if (BuildConfig.HYPER_API_KEY.isBlank()) {
                     addLog("❌ مفتاح Hyper فارغ! تأكد من إضافته في GitHub Secrets وملف build.gradle")
                     _sessionStatus.value = "❌ مفتاح API فارغ"
