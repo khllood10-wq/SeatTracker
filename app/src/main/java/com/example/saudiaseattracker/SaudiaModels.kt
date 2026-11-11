@@ -2,8 +2,6 @@ package com.example.saudiaseattracker
 
 import com.google.gson.annotations.SerializedName
 
-// ═══════════════ REQUEST MODELS ═══════════════
-
 data class SaudiaSearchRequest(
     @SerializedName("region") val region: String = "KSA",
     @SerializedName("fromRegion") val fromRegion: String = "KSA",
@@ -37,67 +35,15 @@ data class SearchPreferences(
 )
 
 data class OfferCodeAvailabilityInput(
-    @SerializedName("channel") val channel: String = "MOBILE_WEB",
+    @SerializedName("channel") val channel: String = "WEB", // 👈 تم التعديل
     @SerializedName("pointOfSale") val pointOfSale: String = "SA",
     @SerializedName("currencyCode") val currencyCode: String = "SAR",
     @SerializedName("language") val language: String = "AR",
     @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
 )
 
-// ═══════════════ GACA MANDATE MODELS ═══════════════
-
-data class GacaMandateRequest(
-    @SerializedName("bounds") val bounds: List<GacaBound> = listOf(GacaBound())
-)
-
-data class GacaBound(
-    @SerializedName("originCountryCode") val originCountryCode: String = "SA",
-    @SerializedName("destinationCountryCode") val destinationCountryCode: String = "SA",
-    @SerializedName("stopOverCountryCodes") val stopOverCountryCodes: List<String> = emptyList()
-)
-
-// ═══════════════ PASSENGER CONFIRMATION MODELS ═══════════════
-
-data class ElmVerifyRequest(
-    @SerializedName("documentType") val documentType: String = "I",
-    @SerializedName("documentNumber") val documentNumber: String,
-    @SerializedName("nationality") val nationality: String = "SA",
-    @SerializedName("dateOfBirth") val dateOfBirth: String
-)
-
-data class CartExtensionRequest(
-    @SerializedName("content") val content: String,
-    @SerializedName("travelerId") val travelerId: String,
-    @SerializedName("extensionType") val extensionType: String = "TextExtension",
-    @SerializedName("name") val name: String = "YQENSTATUS"
-)
-
-// 🔥 التعديل الجديد: givenName + surname + documents array
-data class TravelerUpdateRequest(
-    @SerializedName("passengerTypeCode") val passengerTypeCode: String = "ADT",
-    @SerializedName("givenName") val givenName: String,
-    @SerializedName("surname") val surname: String,
-    @SerializedName("gender") val gender: String = "male",
-    @SerializedName("dateOfBirth") val dateOfBirth: String,
-    @SerializedName("nationality") val nationality: String = "SA",
-    @SerializedName("documents") val documents: List<TravelerDocument>
-)
-
-data class TravelerDocument(
-    @SerializedName("type") val type: String = "NATIONAL_ID",
-    @SerializedName("number") val number: String,
-    @SerializedName("countryOfIssuance") val countryOfIssuance: String = "SA"
-)
-
-// ═══════════════ RESPONSE MODELS ═══════════════
-
-data class SaudiaResponse(
-    @SerializedName("data") val data: SaudiaData?
-)
-
-data class SaudiaData(
-    @SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?
-)
+data class SaudiaResponse(@SerializedName("data") val data: SaudiaData?)
+data class SaudiaData(@SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?)
 
 data class AirBoundGroup(
     @SerializedName("boundDetails") val boundDetails: BoundDetails?,
@@ -110,9 +56,7 @@ data class BoundDetails(
     @SerializedName("segments") val segments: List<Segment>?
 )
 
-data class Segment(
-    @SerializedName("flightId") val flightId: String?
-)
+data class Segment(@SerializedName("flightId") val flightId: String?)
 
 data class AirBound(
     @SerializedName("airBoundId") val airBoundId: String?,
@@ -121,14 +65,8 @@ data class AirBound(
     @SerializedName("airOffer") val airOffer: AirOffer?
 )
 
-data class FlightStatus(
-    @SerializedName("value") val value: String?
-)
-
-data class AirOffer(
-    @SerializedName("totalPrice") val totalPrice: TotalPrice?
-)
-
+data class FlightStatus(@SerializedName("value") val value: String?)
+data class AirOffer(@SerializedName("totalPrice") val totalPrice: TotalPrice?)
 data class TotalPrice(
     @SerializedName("value") val value: Double?,
     @SerializedName("currencyCode") val currencyCode: String?
