@@ -27,7 +27,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             SaudiaSeatTrackerTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     AppNavigation()
                 }
             }
@@ -59,7 +62,9 @@ fun AppNavigation() {
             if (showBottomBar) {
                 NavigationBar {
                     tabs.forEach { tab ->
-                        val selected = currentDest?.hierarchy?.any { it.route == tab.screen.route } == true
+                        val selected = currentDest?.hierarchy?.any {
+                            it.route == tab.screen.route
+                        } == true
                         NavigationBarItem(
                             selected = selected,
                             onClick = {
@@ -92,6 +97,9 @@ fun AppNavigation() {
             }
             composable(Screen.Flight.route) {
                 FlightDataScreen(navController, viewModel)
+            }
+            composable(Screen.TokenChallenge.route) {
+                TokenChallengeScreen(navController, viewModel)
             }
         }
     }
