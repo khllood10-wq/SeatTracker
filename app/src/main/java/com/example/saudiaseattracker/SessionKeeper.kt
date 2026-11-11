@@ -7,6 +7,8 @@ import android.util.Base64
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -40,8 +42,9 @@ fun SessionKeeper(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pollCount by remember { mutableIntStateOf(0) }
     var staleSkipped by remember { mutableIntStateOf(0) }
-    var lastDiag by remember { mutableStateOf("") }
-    var hooksInstalledPages by remember { mutableIntStateOf(0) }
+    var lastBodyLen by remember { mutableIntStateOf(0) }
+    var reloadedOnce by remember { mutableStateOf(false) }
+    var angularDetected by remember { mutableStateOf(false) }
 
     remember {
         android.util.Log.e("SessionKeeper", "🔥 COMPOSABLE RENDERED")
@@ -49,42 +52,49 @@ fun SessionKeeper(
     }
 
     LaunchedEffect(Unit) {
-        delay(300)
+        delay(500)
         showWebView = true
         android.util.Log.e("SessionKeeper", "📱 WebView will show")
     }
 
-    // ⏱️ Timeout 90 ثانية (كافٍ حتى مع إعادة تحميل متعددة)
+    // ⏱️ Timeout 120 ثانية
     LaunchedEffect(Unit) {
-        delay(90_000)
+        delay(120_000)
         if (!captured) {
-            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT 90s — last: $lastDiag")
-            statusText = "⚠️ لم نلتقط — $lastDiag"
+            android.util.Log.e("SessionKeeper", "⏱️ TIMEOUT 120s (bodyLen=$lastBodyLen)")
+            statusText = "⚠️ لم نلتقط (bodyLen=$lastBodyLen)"
             onComplete()
         }
     }
 
-    // ⭐⭐⭐ Polling مستمر — لا يعتمد على pageFinished ⭐⭐⭐
+    // Polling مستقل
     LaunchedEffect(showWebView, captured) {
         if (!showWebView || captured) return@LaunchedEffect
-        android.util.Log.e("SessionKeeper", "🔄 POLLING STARTED (independent of page state)")
+        android.util.Log.e("SessionKeeper", "🔄 POLLING STARTED")
 
         while (isActive && !captured) {
             pollCount++
-            statusText = if (staleSkipped > 0)
-                "🔍 فحص ($pollCount): تجاهلنا $staleSkipped منتهي..."
-            else "🔍 فحص ($pollCount)..."
+
+            val diagText = if (angularDetected) "✅ Angular يعمل" else "⏳ انتظار Angular"
+            statusText = "🔍 $diagText (${pollCount})"
 
             webViewRef?.evaluateJavascript("""
                 (function() {
                     try {
-                        var candidates = [
-                            sessionStorage.getItem('saudia-access-token'),
-                            localStorage.getItem('saudia-access-token'),
-                            localStorage.getItem('authorization'),
-                            localStorage.getItem('token'),
-                            localStorage.getItem('access_token')
-                        ];
+                        // فحص storage بأمان (try/catch داخلي)
+                        var candidates = [];
+                        try {
+                            candidates.push(sessionStorage.getItem('saudia-access-token'));
+                            candidates.push(sessionStorage.getItem('authorization'));
+                            candidates.push(sessionStorage.getItem('token'));
+                        } catch(e) {}
+                        try {
+                            candidates.push(localStorage.getItem('saudia-access-token'));
+                            candidates.push(localStorage.getItem('authorization'));
+                            candidates.push(localStorage.getItem('token'));
+                            candidates.push(localStorage.getItem('access_token'));
+                        } catch(e) {}
+                        
                         for (var i = 0; i < candidates.length; i++) {
                             var t = candidates[i];
                             if (t && t.indexOf('eyJ') === 0) {
@@ -97,15 +107,18 @@ fun SessionKeeper(
                             }
                         }
                         
+                        var ngV = 'none';
+                        try {
+                            var ngEl = document.querySelector('[ng-version]');
+                            if (ngEl) ngV = ngEl.getAttribute('ng-version') || 'empty';
+                        } catch(e) {}
+                        
                         var diag = {
                             rs: document.readyState || '?',
-                            url: (location.href || '').substring(0, 60),
-                            ngV: (document.querySelector('[ng-version]') || {getAttribute: function(){return 'none'}}).getAttribute('ng-version') || 'none',
-                            hasAppRoot: !!document.querySelector('app-root,saudia-web-app'),
-                            ssLen: sessionStorage.length,
-                            lsLen: localStorage.length,
-                            scripts: document.scripts.length,
-                            bodyLen: document.body ? document.body.innerHTML.length : 0
+                            ngV: ngV,
+                            appRoot: !!document.querySelector('app-root,saudia-web-app'),
+                            bodyLen: document.body ? document.body.innerHTML.length : 0,
+                            scripts: document.scripts.length
                         };
                         SaudiaBridge.onPollResult(JSON.stringify(diag));
                     } catch(e) {
@@ -114,7 +127,7 @@ fun SessionKeeper(
                 })();
             """.trimIndent(), null)
 
-            delay(500)
+            delay(1000)
         }
     }
 
@@ -124,7 +137,7 @@ fun SessionKeeper(
             fun onJwtFound(token: String) {
                 if (captured) return
                 val cleanToken = token.removePrefix("Bearer ").trim()
-                android.util.Log.e("SessionKeeper", "🎯 JWT found! len=${cleanToken.length}")
+                android.util.Log.e("SessionKeeper", "🎯 JWT FOUND! len=${cleanToken.length}")
 
                 var exp = 0L
                 var iat = 0L
@@ -146,13 +159,13 @@ fun SessionKeeper(
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("SessionKeeper", "JWT decode fail: ${e.message}")
+                    android.util.Log.e("SessionKeeper", "❌ JWT decode fail: ${e.message}")
                     return
                 }
 
                 captured = true
                 statusText = "✅ تم التقاط توكن صالح"
-                viewModel.saveTokens(token, "", "", "Mozilla/5.0 (Linux; Android 14)")
+                viewModel.saveTokens(token, "", "", "Mozilla/5.0 (Linux; Android 14; SM-S918B)")
 
                 try {
                     val cm = CookieManager.getInstance()
@@ -173,16 +186,38 @@ fun SessionKeeper(
 
             @JavascriptInterface
             fun onPollResult(json: String) {
-                lastDiag = json.take(150)
-                // سجل كل 5 ثوانٍ فقط (لتجنب spam)
-                if (pollCount % 10 == 1) {
-                    android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
+                try {
+                    val obj = JSONObject(json)
+                    val bodyLen = obj.optInt("bodyLen", 0)
+                    val ngV = obj.optString("ngV", "none")
+                    lastBodyLen = bodyLen
+
+                    if (bodyLen > 10000 || ngV != "none" && ngV != "empty") {
+                        angularDetected = true
+                    }
+
+                    if (pollCount % 10 == 1 || angularDetected) {
+                        android.util.Log.e("SessionKeeper", "📊 Poll $pollCount: $json")
+                    }
+
+                    // ⭐ إذا bodyLen صغير جداً (<3000) بعد 15 محاولة → reload مرة واحدة
+                    if (!reloadedOnce && pollCount == 15 && bodyLen < 3000) {
+                        reloadedOnce = true
+                        android.util.Log.e("SessionKeeper", "🔄 Body too small ($bodyLen) → reloading once")
+                        webViewRef?.post {
+                            webViewRef?.reload()
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("SessionKeeper", "❌ Parse poll: ${e.message}")
                 }
             }
 
             @JavascriptInterface
             fun onPollError(msg: String) {
-                android.util.Log.e("SessionKeeper", "❌ Poll err: $msg")
+                if (!msg.contains("sessionStorage") && !msg.contains("localStorage")) {
+                    android.util.Log.e("SessionKeeper", "❌ Poll err: $msg")
+                }
             }
 
             @JavascriptInterface
@@ -208,6 +243,9 @@ fun SessionKeeper(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.databaseEnabled = true
+                        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.javaScriptCanOpenWindowsAutomatically = true
+                        settings.mediaPlaybackRequiresUserGesture = false
                         settings.userAgentString =
                             "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 " +
                             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -217,11 +255,30 @@ fun SessionKeeper(
                             override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
                                 msg?.let {
                                     val lvl = it.messageLevel()
-                                    if (lvl >= ConsoleMessage.MessageLevel.WARNING) {
+                                    if (lvl >= ConsoleMessage.MessageLevel.ERROR) {
                                         android.util.Log.e("SessionKeeper",
-                                            "📺 Console[${lvl}]: ${it.message().take(200)} @${it.sourceId()?.substringAfterLast('/') ?: ""}:${it.lineNumber()}")
+                                            "📺 ${it.message().take(200)} @${it.sourceId()?.substringAfterLast('/') ?: ""}:${it.lineNumber()}")
                                     }
                                 }
+                                return true
+                            }
+
+                            // ⭐ الرد على alerts التي قد يطلقها Angular
+                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                android.util.Log.e("SessionKeeper", "🔔 JS Alert: $message")
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                android.util.Log.e("SessionKeeper", "🔔 JS Confirm: $message")
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: JsPromptResult?): Boolean {
+                                android.util.Log.e("SessionKeeper", "🔔 JS Prompt: $message")
+                                result?.confirm(defaultValue ?: "")
                                 return true
                             }
                         }
@@ -234,16 +291,14 @@ fun SessionKeeper(
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
                                 android.util.Log.e("SessionKeeper", "🌐 PAGE STARTED: $url")
-
-                                // حقن الهوك في كل صفحة (قد لا يكون موجوداً بعد إعادة التحميل)
+                                // ❌ لا نمسح storage — سلوك طبيعي
                                 view?.evaluateJavascript(SESSION_HOOK_JS, null)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                hooksInstalledPages++
-                                android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED (#$hooksInstalledPages): $url")
-                                statusText = "🔄 جاهز — فحص مستمر..."
+                                android.util.Log.e("SessionKeeper", "✅ PAGE FINISHED: $url")
+                                statusText = "🔄 الصفحة محملة — فحص..."
                             }
 
                             override fun onReceivedError(
@@ -252,7 +307,7 @@ fun SessionKeeper(
                                 error: android.webkit.WebResourceError?
                             ) {
                                 super.onReceivedError(view, request, error)
-                                android.util.Log.e("SessionKeeper", "❌ WEB ERR: ${error?.description}")
+                                android.util.Log.e("SessionKeeper", "❌ WEB ERR: ${error?.description} @${request?.url}")
                             }
                         }
 
@@ -305,7 +360,6 @@ private val SESSION_HOOK_JS = """
         var origFetch = window.fetch;
         window.fetch = function(input, init) {
             var url = typeof input === 'string' ? input : (input && input.url) || '';
-            // سجل كل طلب dapi
             if (url.indexOf('dapi.saudia') > -1 || url.indexOf('/session/auth') > -1) {
                 SaudiaBridge.onLog('fetch → ' + url.substring(0, 80));
             }
@@ -360,7 +414,7 @@ private val SESSION_HOOK_JS = """
                     SaudiaBridge.onLog('XHR ← HTTP ' + self.status);
                     try {
                         var d = JSON.parse(self.responseText);
-                        if (d.access_token) SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
+                        if (d.access_token) SaudiaJwtFound('Bearer ' + d.access_token);
                     } catch(e) {}
                 });
             }
