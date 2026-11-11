@@ -14,7 +14,6 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface SaudiaApi {
-
     @POST("airsearch/search/air-bounds")
     suspend fun searchAirBounds(
         @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
@@ -97,7 +96,6 @@ interface SaudiaApi {
         @Body request: RequestBody
     ): Response<ResponseBody>
 
-    // ⭐ الدالة المفقودة: إنشاء الطلب بدون /web
     @POST("purchase/orders")
     suspend fun createOrderRaw(
         @Query("cartId") cartId: String,
@@ -105,6 +103,32 @@ interface SaudiaApi {
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
+    ): Response<ResponseBody>
+
+    // ⭐⭐ جديد: الدفع (SADAD) — بدون تشفير
+    @POST("checkout/payment/orders/{orderId}/payment-records")
+    suspend fun submitPayment(
+        @Path("orderId") orderId: String,
+        @Query("lastName") lastName: String,
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>,
+        @Body request: RequestBody
+    ): Response<ResponseBody>
+
+    // ⭐⭐ جديد: فحص حالة الطلب
+    @GET("purchase/orders/{orderId}")
+    suspend fun getOrder(
+        @Path("orderId") orderId: String,
+        @Query("lastName") lastName: String,
+        @Query("mcpCache") mcpCache: String = "true",
+        @Query("showPlusgrade") showPlusgrade: String = "false",
+        @Query("showOrderEligibilities") showOrderEligibilities: String = "true",
+        @Query("pointOfSale") pointOfSale: String = "SA",
+        @Query("flow") flow: String = "booking",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("lang") lang: String = "ar-SA",
+        @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
 }
 
