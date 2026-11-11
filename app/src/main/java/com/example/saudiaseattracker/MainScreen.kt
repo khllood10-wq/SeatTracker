@@ -42,12 +42,20 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     var needRefresh by remember { mutableStateOf(false) }
 
-    // ⭐⭐⭐ إجبار التحديث عند فتح التطبيق — لا نثق بالتوكن القديم أبداً
+    // ✅ فحص فعلي فقط — لا force refresh
     LaunchedEffect(Unit) {
-        android.util.Log.e("SessionKeeper", "=== FORCE REFRESH ON APP OPEN ===")
-        viewModel.clearSession()
-        viewModel.markSessionPreparing()
-        needRefresh = true
+        val isValid = viewModel.hasToken()
+        android.util.Log.e("SessionKeeper", "=== APP OPEN: tokenValid=$isValid ===")
+
+        if (isValid) {
+            viewModel.markSessionReady()
+            android.util.Log.e("SessionKeeper", "✅ Token still valid — no WebView")
+        } else {
+            android.util.Log.e("SessionKeeper", "❌ Token expired — starting SessionKeeper")
+            viewModel.clearSession()
+            viewModel.markSessionPreparing()
+            needRefresh = true
+        }
     }
 
     val paymentStep = steps.find { it.id == "payment" }
@@ -63,7 +71,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         ) {
             Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
-            // بانر الجلسة
             if (!sessionReady) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -83,7 +90,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // أزرار التحديث
             if (sessionReady) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -113,7 +119,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // وضع المراقبة
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -154,7 +159,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ملخص المسافر
             SummaryCard(
                 title = "👤 المسافر",
                 lines = listOf(
@@ -166,7 +170,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 onEdit = { navController.navigate(Screen.Passenger.route) }
             )
 
-            // ملخص الرحلة
             SummaryCard(
                 title = "✈️ الرحلة",
                 lines = listOf(
@@ -177,7 +180,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 onEdit = { navController.navigate(Screen.Flight.route) }
             )
 
-            // زر البدء
             Button(
                 onClick = { viewModel.runFullBooking() },
                 enabled = !isRunning && sessionReady &&
@@ -205,27 +207,23 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // زر التحدي
             OutlinedButton(
                 onClick = { navController.navigate(Screen.TokenChallenge.route) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) { Text("🎯 تحدي: التقاط التوكن", fontSize = 12.sp) }
 
-            // زر الاختبار
             OutlinedButton(
                 onClick = { navController.navigate(Screen.TokenInitTester.route) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
             ) { Text("🔬 اختبار token/initialization", fontSize = 12.sp) }
 
-            // مراحل الحجز
             if (steps.any { it.status != StepStatus.PENDING }) {
                 Text("مراحل الحجز:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 steps.forEach { step -> StepRow(step) }
             }
 
-            // النتيجة
             if (pnr.isNotEmpty()) {
                 when (paymentStatus) {
                     StepStatus.SUCCESS -> ResultCard("🎉 تم الحجز!", Color(0xFF00C853),
@@ -246,7 +244,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // السجل
             if (logs.isNotEmpty()) {
                 Text("📝 السجل:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -261,7 +258,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ⭐ SessionKeeper — شاشة سوداء تظهر عند الحاجة
         if (!sessionReady && needRefresh) {
             SessionKeeper(
                 viewModel = viewModel,
