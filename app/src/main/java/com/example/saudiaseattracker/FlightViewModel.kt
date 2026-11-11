@@ -122,13 +122,27 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     init {
         viewModelScope.launch {
             try {
+                // 👇 فحص المفتاح
+                if (BuildConfig.HYPER_API_KEY.isBlank()) {
+                    addLog("❌ مفتاح Hyper فارغ! تأكد من إضافته في GitHub Secrets وملف build.gradle")
+                    _sessionStatus.value = "❌ مفتاح API فارغ"
+                    _sessionReady.value = false
+                    return@launch
+                }
+
                 addLog("🔄 تهيئة جلسة Hyper...")
                 hyperSession.ensureFreshToken()
-                markSessionReady()
-                addLog("✅ جلسة Hyper جاهزة — reese84 يُجدد تلقائياً")
+                
+                if (hyperSession.hasFreshToken()) {
+                    markSessionReady()
+                    addLog("✅ جلسة Hyper جاهزة — reese84 يُجدد تلقائياً")
+                } else {
+                    _sessionStatus.value = "⚠️ فشل التجهيز، اضغط للبدء للمحاولة"
+                    addLog("⚠️ لم يتم الحصول على التوكن")
+                }
             } catch (e: Exception) {
                 _sessionStatus.value = "⚠️ تعذر التجهيز: ${e.message}"
-                addLog("⚠️ فشل Hyper: ${e.message}")
+                addLog("❌ فشل Hyper: ${e.message}")
             }
         }
     }
