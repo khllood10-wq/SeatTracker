@@ -36,7 +36,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
 
-    // عداد تنازلي لصلاحية reese84
     var remainingMs by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -55,9 +54,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = when {
-                    sessionReady && remainingMs > 60_000 -> Color(0xFFE8F5E9)
-                    sessionReady -> Color(0xFFFFF3E0)
-                    else -> MaterialTheme.colorScheme.errorContainer
+                    sessionReady && remainingMs > 60_000 -> Color(0xFFE8F5E9) // أخضر
+                    sessionReady -> Color(0xFFFFF3E0) // برتقالي
+                    else -> MaterialTheme.colorScheme.errorContainer // أحمر
                 }
             )
         ) {
@@ -82,12 +81,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                         val mins = remainingMs / 60_000
                         val secs = ((remainingMs % 60_000) / 1000).toInt()
                         Text(
-                            "⏱️ reese84 صالح لـ $mins:${secs.toString().padStart(2, '0')} — يُجدد تلقائياً",
-                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else if (sessionReady) {
-                        Text(
-                            "⏱️ سيُجدد تلقائياً قبل انتهائه",
+                            "⏱️ reese84 صالح لـ $mins:${secs.toString().padStart(2, '0')}",
                             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -101,10 +95,10 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // زر البدء
+        // زر البدء: تم تعديل enabled ليسمح بالضغط حتى لو كانت الجلسة حمراء
         Button(
             onClick = { viewModel.runFullBooking() },
-            enabled = !isRunning && sessionReady,
+            enabled = !isRunning, // 👈 التعديل هنا
             modifier = Modifier.fillMaxWidth().height(64.dp)
         ) {
             if (isRunning) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
@@ -128,15 +122,12 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // اختبارات
         OutlinedButton({ navController.navigate(Screen.GetTest.route) }, Modifier.fillMaxWidth()) {
             Text("🧪 اختبار GET", fontSize = 12.sp)
         }
         OutlinedButton({ navController.navigate(Screen.TokenInitTester.route) }, Modifier.fillMaxWidth()) {
             Text("🔬 اختبار token/init", fontSize = 12.sp)
         }
-
-        // بيانات المسافر والرحلة
         OutlinedButton({ navController.navigate(Screen.Passenger.route) }, Modifier.fillMaxWidth()) {
             Text("👤 ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}", fontSize = 12.sp)
         }
@@ -144,13 +135,11 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("✈️ ${viewModel.flightData.from} → ${viewModel.flightData.to}", fontSize = 12.sp)
         }
 
-        // المراحل
         if (steps.any { it.status != StepStatus.PENDING }) {
             Text("المراحل:", fontWeight = FontWeight.Bold)
             steps.forEach { s -> StepRow(s) }
         }
 
-        // PNR / SADAD
         if (pnr.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(
@@ -163,16 +152,14 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     if (sadad.isNotEmpty()) {
                         Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Button(
-                            { clipboard.setText(AnnotatedString(sadad)) },
-                            Modifier.fillMaxWidth()
-                        ) { Text("📋 نسخ SADAD") }
+                        Button({ clipboard.setText(AnnotatedString(sadad)) }, Modifier.fillMaxWidth()) {
+                            Text("📋 نسخ SADAD")
+                        }
                     }
                 }
             }
         }
 
-        // السجل
         if (logs.isNotEmpty()) {
             Text("📝 السجل:", fontWeight = FontWeight.Bold)
             Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
