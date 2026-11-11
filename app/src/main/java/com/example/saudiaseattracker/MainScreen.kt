@@ -1,5 +1,12 @@
 package com.example.saudiaseattracker
 
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Bitmap
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,17 +20,18 @@ import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 
@@ -35,240 +43,411 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val logs by viewModel.searchLogs.collectAsStateWithLifecycle()
     val pnr by viewModel.finalPnr.collectAsStateWithLifecycle()
     val sadad by viewModel.finalSadad.collectAsStateWithLifecycle()
+    val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
+    val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
+
+    // ⭐ التجهيز التلقائي للجلسة عند فتح الرئيسية
+    LaunchedEffect(Unit) {
+        if (viewModel.hasToken()) {
+            viewModel.markSessionReady()
+        } else {
+            viewModel.markSessionPreparing()
+        }
+    }
 
     val paymentStep = steps.find { it.id == "payment" }
     val paymentStatus = paymentStep?.status ?: StepStatus.PENDING
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-
-        // ⭐⭐ وضع المراقبة Toggle ⭐⭐
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = if (viewModel.monitoringMode)
-                    MaterialTheme.colorScheme.tertiaryContainer
-                else MaterialTheme.colorScheme.surfaceVariant
-            ),
-            border = if (viewModel.monitoringMode)
-                BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary)
-            else null
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                Modifier.padding(12.dp).fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+
+            // ── بانر الجلسة (يظهر فقط أثناء التجهيز) ──
+            if (!sessionReady) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                ) {
+                    Row(
+                        Modifier.padding(10.dp).fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("⏳ تجهيز الجلسة", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(sessionStatus, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        }
+                    }
+                }
+            }
+
+            // ── وضع المراقبة Toggle ──
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (viewModel.monitoringMode)
+                        MaterialTheme.colorScheme.tertiaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant
+                ),
+                border = if (viewModel.monitoringMode)
+                    BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary)
+                else null
             ) {
-                Icon(
-                    imageVector = if (viewModel.monitoringMode)
-                        Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                    contentDescription = null,
-                    tint = if (viewModel.monitoringMode)
-                        MaterialTheme.colorScheme.tertiary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "👁️ وضع المراقبة",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                Row(
+                    Modifier.padding(12.dp).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (viewModel.monitoringMode)
+                            Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        contentDescription = null,
+                        tint = if (viewModel.monitoringMode)
+                            MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        if (viewModel.monitoringMode)
-                            "✅ مفعّل: يصل لمرحلة الدفع (PNR + SADAD) بدون إتمام"
-                        else
-                            "معطّل: حجز كامل (طلب + دفع + إيميل)",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("👁️ وضع المراقبة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(
+                            if (viewModel.monitoringMode)
+                                "✅ مفعّل: يصل للدفع بدون إتمام"
+                            else
+                                "معطّل: حجز كامل",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = viewModel.monitoringMode,
+                        onCheckedChange = {
+                            viewModel.monitoringMode = it
+                            if (!viewModel.isRunning.value) viewModel.clearResults()
+                        },
+                        enabled = !isRunning
                     )
                 }
-                Switch(
-                    checked = viewModel.monitoringMode,
-                    onCheckedChange = {
-                        viewModel.monitoringMode = it
-                        if (!viewModel.isRunning.value) viewModel.clearResults()
-                    },
-                    enabled = !isRunning
-                )
             }
-        }
 
-        // ── ملخص بيانات المسافر ──
-        SummaryCard(
-            title = "👤 المسافر",
-            lines = listOf(
-                "${viewModel.passengerData.title} ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}",
-                "الهوية: ${viewModel.passengerData.nationalId}",
-                "الميلاد: ${viewModel.passengerData.dateOfBirth}",
-                viewModel.passengerData.email
-            ),
-            onEdit = { navController.navigate(Screen.Passenger.route) }
-        )
-
-        // ── ملخص بيانات الرحلة ──
-        SummaryCard(
-            title = "✈️ الرحلة",
-            lines = listOf(
-                "${viewModel.flightData.from} ← ${viewModel.flightData.to}",
-                "التاريخ: ${viewModel.flightData.date}",
-                "الرحلة: ${viewModel.flightData.flightNumber}"
-            ),
-            onEdit = { navController.navigate(Screen.Flight.route) }
-        )
-
-        // ── زر البدء ──
-        Button(
-            onClick = { viewModel.runFullBooking() },
-            enabled = !isRunning && viewModel.passengerData.isValid() && viewModel.flightData.isValid(),
-            modifier = Modifier.fillMaxWidth().height(64.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (viewModel.monitoringMode)
-                    MaterialTheme.colorScheme.tertiary
-                else MaterialTheme.colorScheme.primary
+            // ── ملخص المسافر ──
+            SummaryCard(
+                title = "👤 المسافر",
+                lines = listOf(
+                    "${viewModel.passengerData.title} ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}",
+                    "الهوية: ${viewModel.passengerData.nationalId}",
+                    "الميلاد: ${viewModel.passengerData.dateOfBirth}",
+                    viewModel.passengerData.email
+                ),
+                onEdit = { navController.navigate(Screen.Passenger.route) }
             )
-        ) {
-            if (isRunning) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(22.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
+
+            // ── ملخص الرحلة ──
+            SummaryCard(
+                title = "✈️ الرحلة",
+                lines = listOf(
+                    "${viewModel.flightData.from} ← ${viewModel.flightData.to}",
+                    "التاريخ: ${viewModel.flightData.date}",
+                    "الرحلة: ${viewModel.flightData.flightNumber}"
+                ),
+                onEdit = { navController.navigate(Screen.Flight.route) }
+            )
+
+            // ── زر البدء ──
+            Button(
+                onClick = { viewModel.runFullBooking() },
+                enabled = !isRunning && sessionReady &&
+                        viewModel.passengerData.isValid() && viewModel.flightData.isValid(),
+                modifier = Modifier.fillMaxWidth().height(64.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (viewModel.monitoringMode)
+                        MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.primary
                 )
-                Spacer(Modifier.width(12.dp))
-                Text("جاري التنفيذ...", fontWeight = FontWeight.Bold)
-            } else {
-                Text(
-                    if (viewModel.monitoringMode)
-                        "👁️ بدء المراقبة"
-                    else
-                        "🚀 بدء الحجز التلقائي",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
+            ) {
+                if (isRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text("جاري التنفيذ...", fontWeight = FontWeight.Bold)
+                } else if (!sessionReady) {
+                    Text("⏳ انتظر تجهيز الجلسة...", fontWeight = FontWeight.Bold)
+                } else {
+                    Text(
+                        if (viewModel.monitoringMode) "👁️ بدء المراقبة"
+                        else "🚀 بدء الحجز التلقائي",
+                        fontWeight = FontWeight.Bold, fontSize = 16.sp
+                    )
+                }
             }
-        }
 
-        // ── Stepper ──
-        Text("مراحل الحجز:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        steps.forEach { step -> StepRow(step) }
+            // ── Stepper ──
+            if (steps.any { it.status != StepStatus.PENDING }) {
+                Text("مراحل الحجز:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                steps.forEach { step -> StepRow(step) }
+            }
 
-        // ── Result Card ──
-        if (pnr.isNotEmpty()) {
-            when (paymentStatus) {
-                StepStatus.SUCCESS -> {
-                    // Full booking success
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                        border = BorderStroke(3.dp, Color(0xFF00C853))
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text("🎉 تم الحجز الكامل!", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00C853))
-                            Spacer(Modifier.height(8.dp))
-                            PnrSadadInfo(pnr, sadad, clipboard)
-                            Spacer(Modifier.height(10.dp))
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                                Column(Modifier.padding(10.dp)) {
-                                    Text("⚠️ اذهب للبنك الآن", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    Text("ادفع رقم SADAD. بعد الدفع يصلك الإيميل + التذكرة تلقائياً.", fontSize = 11.sp)
-                                }
+            // ── النتيجة ──
+            if (pnr.isNotEmpty()) {
+                when (paymentStatus) {
+                    StepStatus.SUCCESS -> {
+                        ResultCard(
+                            title = "🎉 تم الحجز الكامل!",
+                            titleColor = Color(0xFF00C853),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            borderColor = Color(0xFF00C853),
+                            pnr = pnr, sadad = sadad, clipboard = clipboard,
+                            note = "ادفع رقم SADAD في البنك — يصلك الإيميل + التذكرة تلقائياً"
+                        )
+                    }
+                    StepStatus.SKIPPED -> {
+                        ResultCard(
+                            title = "👁️ وضع المراقبة — وصلنا للدفع",
+                            titleColor = MaterialTheme.colorScheme.tertiary,
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            borderColor = MaterialTheme.colorScheme.tertiary,
+                            pnr = pnr, sadad = sadad, clipboard = clipboard,
+                            note = "لم يُرسل الدفع — PNR يلغى تلقائياً بعد ~5 ساعات"
+                        )
+                    }
+                    StepStatus.FAILED -> {
+                        ResultCard(
+                            title = "⚠️ فشل الدفع",
+                            titleColor = MaterialTheme.colorScheme.error,
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            borderColor = MaterialTheme.colorScheme.error,
+                            pnr = pnr, sadad = sadad, clipboard = clipboard,
+                            note = "قد يكون لديك حجز سابق معلق — ادفعه أو انتظر انتهاء المهلة"
+                        )
+                    }
+                    else -> {
+                        Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                if (sadad.isNotEmpty()) Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                         }
                     }
                 }
-                StepStatus.SKIPPED -> {
-                    // Monitoring mode
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
-                        border = BorderStroke(3.dp, MaterialTheme.colorScheme.tertiary)
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text("👁️ وضع المراقبة — وصلنا لمرحلة الدفع", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
-                            Spacer(Modifier.height(8.dp))
-                            PnrSadadInfo(pnr, sadad, clipboard)
-                            Spacer(Modifier.height(10.dp))
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                                Column(Modifier.padding(10.dp)) {
-                                    Text("⚠️ لم يتم إرسال الدفع", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                    Text("• الطلب موجود (PNR) لكنه غير مدفوع", fontSize = 11.sp)
-                                    Text("• سيلغى تلقائياً بعد ~5 ساعات", fontSize = 11.sp)
-                                    Text("• لإتمامه: أوقف المراقبة وأعد التشغيل", fontSize = 11.sp)
-                                }
+            }
+
+            // ── السجل ──
+            if (logs.isNotEmpty()) {
+                Text("📝 السجل:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                    SelectionContainer {
+                        Column(Modifier.padding(10.dp)) {
+                            logs.take(20).forEach {
+                                Text(it, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
                             }
-                        }
-                    }
-                }
-                StepStatus.FAILED -> {
-                    // Payment failed
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                        border = BorderStroke(3.dp, MaterialTheme.colorScheme.error)
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text("⚠️ فشل الدفع", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
-                            Spacer(Modifier.height(8.dp))
-                            PnrSadadInfo(pnr, sadad, clipboard)
-                            Spacer(Modifier.height(8.dp))
-                            Text("قد يكون لديك حجز سابق معلق. ادفعه أو انتظر انتهاء المهلة.", fontSize = 11.sp)
-                        }
-                    }
-                }
-                else -> {
-                    // PNR exists but payment pending
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            if (sadad.isNotEmpty()) Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
                 }
             }
         }
 
-        // ── Logs ──
-        if (logs.isNotEmpty()) {
-            Text("📝 السجل:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-                SelectionContainer {
-                    Column(Modifier.padding(10.dp)) {
-                        logs.take(25).forEach {
-                            Text(it, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-                        }
-                    }
-                }
-            }
+        // ⭐ WebView مخفي (1×1 px) — يعمل في الخلفية لتجهيز الجلسة
+        if (!sessionReady) {
+            HiddenSessionWebView(viewModel = viewModel)
         }
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// WebView مخفي — يجلب التوكن + الكوكيز من saudia.com
+// ══════════════════════════════════════════════════════════════
+@SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
-private fun PnrSadadInfo(pnr: String, sadad: String, clipboard: androidx.compose.ui.platform.ClipboardManager) {
-    Row {
-        Text("PNR: ", fontWeight = FontWeight.Bold)
-        Text(pnr, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = Color(0xFF00C853))
-    }
-    if (sadad.isNotEmpty()) {
-        Spacer(Modifier.height(6.dp))
-        Row {
-            Text("SADAD: ", fontWeight = FontWeight.Bold)
-            Text(sadad, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = Color(0xFF00C853))
+private fun HiddenSessionWebView(viewModel: FlightViewModel) {
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+    var captured by remember { mutableStateOf(false) }
+
+    val bridge = remember {
+        object {
+            @JavascriptInterface
+            fun onTokenCaptured(auth: String, xD: String, sid: String, ua: String) {
+                if (captured) return
+                captured = true
+                viewModel.saveTokens(auth, xD, sid, ua)
+                // حفظ كوكيز WebView
+                try {
+                    val cm = CookieManager.getInstance()
+                    val sau = cm.getCookie("https://www.saudia.com") ?: ""
+                    val dapi = cm.getCookie("https://dapi.saudia.com") ?: ""
+                    val merged = listOf(sau, dapi)
+                        .filter { it.isNotBlank() }
+                        .joinToString("; ")
+                        .replace(Regex(";+"), ";")
+                        .trim()
+                        .trimStart(';', ' ')
+                    if (merged.isNotBlank()) {
+                        prefs.edit().putString("dynamic_cookies", merged).apply()
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("Session", "Cookie save: ${e.message}")
+                }
+                viewModel.markSessionReady()
+            }
+            @JavascriptInterface
+            fun onLog(msg: String) { android.util.Log.d("Session", msg) }
         }
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = { clipboard.setText(AnnotatedString(sadad)) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("📋 نسخ SADAD") }
+    }
+
+    AndroidView(
+        modifier = Modifier.size(1.dp),
+        factory = { ctx ->
+            WebView(ctx).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.databaseEnabled = true
+                settings.userAgentString =
+                    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                addJavascriptInterface(bridge, "SaudiaBridge")
+
+                val cm = CookieManager.getInstance()
+                cm.setAcceptCookie(true)
+                cm.setAcceptThirdPartyCookies(this, true)
+                prefs.getString("dynamic_cookies", "")?.takeIf { it.isNotBlank() }?.let { c ->
+                    listOf("https://www.saudia.com", "https://dapi.saudia.com").forEach { u ->
+                        cm.setCookie(u, c)
+                    }
+                    cm.flush()
+                }
+
+                webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                        super.onPageStarted(view, url, favicon)
+                        view?.evaluateJavascript(getSessionHookJS(), null)
+                    }
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        view?.evaluateJavascript("""
+                            setTimeout(function() {
+                                try {
+                                    var auth = localStorage.getItem('authorization') ||
+                                               localStorage.getItem('token');
+                                    var xD = localStorage.getItem('x-d-token') || '';
+                                    var sid = localStorage.getItem('saa-session-id') || '';
+                                    if (auth && auth.indexOf('Bearer') > -1) {
+                                        SaudiaBridge.onTokenCaptured(auth, xD, sid, navigator.userAgent);
+                                    }
+                                } catch(e) {}
+                            }, 2500);
+                        """.trimIndent(), null)
+                    }
+                }
+
+                loadUrl("https://www.saudia.com/ar-SA")
+            }
+        }
+    )
+}
+
+private fun getSessionHookJS(): String = """
+    (function() {
+        if (window.__sessionHooked) return;
+        window.__sessionHooked = true;
+        function getHeader(h, name) {
+            if (!h) return '';
+            if (typeof h.get === 'function') return h.get(name) || h.get(name.toLowerCase()) || '';
+            for (var k in h) if (k.toLowerCase() === name.toLowerCase()) return h[k] || '';
+            return '';
+        }
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+            try {
+                init = init || {};
+                var h = init.headers || (input && input.headers);
+                var auth = getHeader(h, 'Authorization');
+                if (auth && auth.indexOf('Bearer') > -1) {
+                    SaudiaBridge.onTokenCaptured(
+                        auth,
+                        getHeader(h, 'x-d-token'),
+                        getHeader(h, 'saa-session-id'),
+                        navigator.userAgent
+                    );
+                }
+            } catch(e) {}
+            return origFetch.apply(this, arguments);
+        };
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSet = XMLHttpRequest.prototype.setRequestHeader;
+        XMLHttpRequest.prototype.open = function() {
+            this.__h = {};
+            return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.setRequestHeader = function(k, v) {
+            try {
+                if (!this.__h) this.__h = {};
+                this.__h[k.toLowerCase()] = v;
+                if (k.toLowerCase() === 'authorization' && v && v.indexOf('Bearer') > -1) {
+                    SaudiaBridge.onTokenCaptured(
+                        v,
+                        this.__h['x-d-token'] || '',
+                        this.__h['saa-session-id'] || '',
+                        navigator.userAgent
+                    );
+                }
+            } catch(e) {}
+            return origSet.apply(this, arguments);
+        };
+    })();
+""".trimIndent()
+
+// ══════════════════════════════════════════════════════════════
+// عناصر الواجهة المساعدة
+// ══════════════════════════════════════════════════════════════
+@Composable
+private fun ResultCard(
+    title: String,
+    titleColor: Color,
+    containerColor: Color,
+    borderColor: Color,
+    pnr: String,
+    sadad: String,
+    clipboard: androidx.compose.ui.platform.ClipboardManager,
+    note: String
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        border = BorderStroke(3.dp, borderColor)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = titleColor)
+            Spacer(Modifier.height(8.dp))
+            Row {
+                Text("PNR: ", fontWeight = FontWeight.Bold)
+                Text(pnr, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = titleColor)
+            }
+            if (sadad.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Row {
+                    Text("SADAD: ", fontWeight = FontWeight.Bold)
+                    Text(sadad, fontFamily = FontFamily.Monospace, fontSize = 18.sp, color = titleColor)
+                }
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { clipboard.setText(AnnotatedString(sadad)) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("📋 نسخ SADAD") }
+            }
+            Spacer(Modifier.height(10.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Text(note, modifier = Modifier.padding(10.dp), fontSize = 11.sp)
+            }
+        }
     }
 }
 
@@ -310,7 +489,7 @@ private fun StepRow(step: BookingStep) {
                     StepStatus.SUCCESS -> Icons.Default.CheckCircle
                     StepStatus.FAILED -> Icons.Default.Error
                     StepStatus.SKIPPED -> Icons.Default.RemoveCircleOutline
-                    StepStatus.RUNNING, StepStatus.PENDING -> Icons.Default.RadioButtonUnchecked
+                    else -> Icons.Default.RadioButtonUnchecked
                 },
                 contentDescription = null,
                 tint = when (step.status) {
@@ -318,7 +497,7 @@ private fun StepRow(step: BookingStep) {
                     StepStatus.FAILED -> Color(0xFFD32F2F)
                     StepStatus.SKIPPED -> MaterialTheme.colorScheme.tertiary
                     StepStatus.RUNNING -> MaterialTheme.colorScheme.primary
-                    StepStatus.PENDING -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
             Spacer(Modifier.width(10.dp))
