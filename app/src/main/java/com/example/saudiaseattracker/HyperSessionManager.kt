@@ -17,7 +17,6 @@ class HyperSessionManager(
     private val userAgent: String = DEFAULT_UA,
     private val acceptLanguage: String = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
 ) {
-    // تنظيف المفتاح من أي مسافات أو أسطر جديدة
     private val apiKey = rawApiKey.trim()
 
     companion object {
@@ -35,31 +34,12 @@ class HyperSessionManager(
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    // OkHttpClient بسيط جداً، بدون أي اعتراضات أو تعديلات، ليتطابق مع curl
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
-        .addInterceptor { chain ->
-            val original = chain.request()
-            val builder = original.newBuilder()
-                .header("User-Agent", userAgent)
-                .header("Accept-Language", acceptLanguage)
-            
-            // إضافة هيدرات المتصفح فقط لطلبات السعودية
-            if (original.url.host.contains("saudia.com")) {
-                builder.header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
-                builder.header("sec-ch-ua-mobile", "?0")
-                builder.header("sec-ch-ua-platform", "\"Windows\"")
-            }
-            chain.proceed(builder.build())
-        }
-        .connectionSpecs(listOf(
-            ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
-                .build(),
-            ConnectionSpec.CLEARTEXT
-        ))
         .build()
 
     @Volatile private var currentToken: String? = prefs.getString(KEY_TOKEN, null)
@@ -143,11 +123,8 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(SAUDIA_URL)
             .get()
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-            .header("Sec-Fetch-Dest", "document")
-            .header("Sec-Fetch-Mode", "navigate")
-            .header("Sec-Fetch-Site", "none")
-            .header("Sec-Fetch-User", "?1")
+            .header("User-Agent", userAgent)
+            .header("Accept-Language", acceptLanguage)
             .build()
 
         client.newCall(req).execute().use { resp ->
@@ -175,10 +152,7 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(url)
             .get()
-            .header("Accept", "*/*")
-            .header("Sec-Fetch-Dest", "script")
-            .header("Sec-Fetch-Mode", "no-cors")
-            .header("Sec-Fetch-Site", "same-origin")
+            .header("User-Agent", userAgent)
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("فشل جلب السكريبت: ${resp.code}")
@@ -190,6 +164,7 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(IP_FETCH_URL)
             .get()
+            .header("x-api-key", apiKey)
             .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
@@ -208,6 +183,7 @@ class HyperSessionManager(
             val req = Request.Builder()
                 .url("https://$SAUDIA_HOST${sensorPath!!}")
                 .post("{\"f\":\"gpc\"}".toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                .header("User-Agent", userAgent)
                 .header("Content-Type", "text/plain; charset=utf-8")
                 .build()
             client.newCall(req).execute().use { resp ->
@@ -267,7 +243,7 @@ class HyperSessionManager(
             .url(url)
             .post(payload.toRequestBody("text/plain; charset=utf-8".toMediaType()))
             .header("Content-Type", "text/plain; charset=utf-8")
-            .header("Accept", "*/*")
+            .header("User-Agent", userAgent)
             .build()
 
         client.newCall(req).execute().use { resp ->
