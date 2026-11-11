@@ -46,7 +46,7 @@ fun SessionKeeper(
     }
 
     LaunchedEffect(Unit) {
-        delay(30_000)
+        delay(40_000)
         if (!captured) {
             android.util.Log.w("SessionKeeper", "Timeout — no fresh token")
             statusText = "⚠️ لم نلتقط توكن صالح"
@@ -54,7 +54,6 @@ fun SessionKeeper(
         }
     }
 
-    // ⭐ Polling على Storage — يرفض التوكنات المنتهية
     LaunchedEffect(pageFinished, captured) {
         if (!pageFinished || captured) return@LaunchedEffect
 
@@ -98,8 +97,7 @@ fun SessionKeeper(
                 })();
             """.trimIndent(), null)
 
-            // ⭐ محاولات تفاعل لإيقاظ Angular إذا كان خاملاً
-            if (pollCount in listOf(3, 6, 10, 15, 20)) {
+            if (pollCount in listOf(3, 6, 10, 15, 20, 25, 30)) {
                 android.util.Log.d("SessionKeeper", "Trigger click #$pollCount")
                 webViewRef?.evaluateJavascript("""
                     (function() {
@@ -129,14 +127,15 @@ fun SessionKeeper(
 
                 val cleanToken = token.removePrefix("Bearer ").trim()
 
-                // ⭐ فحص JWT exp — رفض التوكنات المنتهية
                 var exp = 0L
                 var iat = 0L
                 try {
                     val parts = cleanToken.split(".")
                     if (parts.size >= 2) {
+                        val part = parts[1]
+                        val padded = part + "=".repeat((4 - part.length % 4) % 4)
                         val payload = String(
-                            Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+                            Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP)
                         )
                         val json = JSONObject(payload)
                         exp = json.optLong("exp", 0)
@@ -147,7 +146,6 @@ fun SessionKeeper(
                         android.util.Log.d("SessionKeeper", "JWT iat=$iat exp=$exp remaining=${remaining}s")
 
                         if (exp > 0 && remaining < 300) {
-                            // التوكن منتهي أو يقترب من الانتهاء — تجاهله
                             staleSkipped++
                             android.util.Log.w("SessionKeeper", "⏭️ Skip stale JWT (${remaining}s left)")
                             return
@@ -155,24 +153,20 @@ fun SessionKeeper(
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("SessionKeeper", "JWT decode: ${e.message}")
-                    // إذا فشل فك التشفير، نرفضه أيضاً (احتياطاً)
                     return
                 }
 
-                // ⭐ التوكن صالح — احفظه
                 captured = true
                 android.util.Log.d("SessionKeeper", "✅ Fresh JWT accepted (iat=$iat, exp=$exp)")
                 statusText = "✅ تم التقاط توكن صالح جديد"
 
                 viewModel.saveTokens(token, "", "", "Mozilla/5.0 (Linux; Android 14; SM-S918B)")
 
-                // حفظ exp للفحص المستقبلي
                 prefs.edit()
                     .putLong("jwt_iat", iat)
                     .putLong("jwt_exp", exp)
                     .apply()
 
-                // حفظ الكوكيز
                 try {
                     val cm = CookieManager.getInstance()
                     val sau = cm.getCookie("https://www.saudia.com") ?: ""
@@ -247,29 +241,19 @@ fun SessionKeeper(
                                 super.onPageStarted(view, url, favicon)
                                 android.util.Log.d("SessionKeeper", "Page loading: $url")
 
-                                // ⭐⭐⭐ امسح التوكنات القديمة قبل تحميل الصفحة
+                                // ⭐ امسح كل التخزين لفرض جلب توكن جديد
                                 view?.evaluateJavascript("""
                                     (function() {
                                         try {
-                                            var keys = [
-                                                'saudia-access-token',
-                                                'saudia-refresh-token',
-                                                'authorization',
-                                                'token',
-                                                'access_token',
-                                                'refresh_token',
-                                                'jwt'
-                                            ];
-                                            keys.forEach(function(k) {
-                                                try { sessionStorage.removeItem(k); } catch(e) {}
-                                                try { localStorage.removeItem(k); } catch(e) {}
-                                            });
-                                            SaudiaBridge.onLog('Cleared old tokens from storage');
-                                        } catch(e) {}
+                                            sessionStorage.clear();
+                                            localStorage.clear();
+                                            SaudiaBridge.onLog('Cleared all storage');
+                                        } catch(e) {
+                                            SaudiaBridge.onLog('Clear failed: ' + e.message);
+                                        }
                                     })();
                                 """.trimIndent(), null)
 
-                                // ثبت الـ hook
                                 view?.evaluateJavascript(SESSION_HOOK_JS, null)
                             }
 
@@ -278,18 +262,6 @@ fun SessionKeeper(
                                 android.util.Log.d("SessionKeeper", "Page finished: $url")
                                 pageFinished = true
                                 statusText = "🔄 الصفحة محملة — بدء الفحص..."
-
-                                // ⭐ امسح مرة أخرى بعد التحميل (احتياطاً)
-                                view?.evaluateJavascript("""
-                                    (function() {
-                                        try {
-                                            sessionStorage.removeItem('saudia-access-token');
-                                            sessionStorage.removeItem('saudia-refresh-token');
-                                            localStorage.removeItem('saudia-access-token');
-                                            localStorage.removeItem('authorization');
-                                        } catch(e) {}
-                                    })();
-                                """.trimIndent(), null)
                             }
                         }
 
@@ -319,7 +291,7 @@ fun SessionKeeper(
                     color = Color(0xFFAAAAAA), fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 24.dp))
                 Spacer(Modifier.height(8.dp))
-                Text("يعمل في الخلفية",
+                Text("يعمل في الخلفية — لن يستغرق سوى ثوانٍ",
                     color = Color(0xFF666666), fontSize = 11.sp)
             }
         }
