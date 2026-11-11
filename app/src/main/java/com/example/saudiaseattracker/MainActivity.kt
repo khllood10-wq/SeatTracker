@@ -3,16 +3,22 @@ package com.example.saudiaseattracker
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Flight
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.saudiaseattracker.ui.theme.SaudiaSeatTrackerTheme
 
@@ -29,25 +35,67 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+data class BottomTab(val screen: Screen, val icon: ImageVector)
+
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
     val viewModel: FlightViewModel = viewModel()
-    Scaffold { padding ->
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentDest = backStackEntry?.destination
+
+    val tabs = listOf(
+        BottomTab(Screen.Home, Icons.Default.Home),
+        BottomTab(Screen.Passenger, Icons.Default.Person),
+        BottomTab(Screen.Flight, Icons.Default.Flight)
+    )
+
+    val showBottomBar = tabs.any { tab ->
+        currentDest?.hierarchy?.any { it.route == tab.screen.route } == true
+    }
+
+    Scaffold(
+        bottomBar = {
+            if (showBottomBar) {
+                NavigationBar {
+                    tabs.forEach { tab ->
+                        val selected = currentDest?.hierarchy?.any { it.route == tab.screen.route } == true
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                navController.navigate(tab.screen.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { Icon(tab.icon, contentDescription = tab.screen.title) },
+                            label = { Text(tab.screen.title) }
+                        )
+                    }
+                }
+            }
+        }
+    ) { padding ->
         NavHost(
             navController = navController,
             startDestination = Screen.Login.route,
             modifier = Modifier.padding(padding)
         ) {
-            composable(Screen.Login.route) { LoginScreen(navController, viewModel) }
-            composable(Screen.Search.route) { SearchScreen(navController, viewModel) }
-            composable(Screen.Passengers.route) { PassengersScreen(navController, viewModel) }
-            composable(Screen.AutoConfirm.route) { AutoConfirmScreen(navController, viewModel) }
-            composable(Screen.Replay.route) { ReplayScreen(navController, viewModel) }
-            composable(Screen.UnencryptedPassenger.route) { UnencryptedPassengerScreen(navController, viewModel) }
-            composable(Screen.Order.route) { OrderScreen(navController, viewModel) }
-            composable(Screen.Payment.route) { PaymentScreen(navController, viewModel) }
-            composable(Screen.KeyCapture.route) { KeyCaptureScreen(navController) }
+            composable(Screen.Login.route) {
+                LoginScreen(navController, viewModel)
+            }
+            composable(Screen.Home.route) {
+                MainScreen(navController, viewModel)
+            }
+            composable(Screen.Passenger.route) {
+                PassengerDataScreen(navController, viewModel)
+            }
+            composable(Screen.Flight.route) {
+                FlightDataScreen(navController, viewModel)
+            }
         }
     }
 }
