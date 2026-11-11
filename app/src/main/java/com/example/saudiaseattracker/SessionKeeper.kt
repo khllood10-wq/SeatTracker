@@ -20,12 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
-/**
- * شاشة تجهيز الجلسة — WebView أسود مرئي.
- * يظهر عند فتح التطبيق لأول مرة (أو عند تجديد JWT).
- * يختفي تلقائياً بمجرد التقاط JWT.
- */
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
 fun SessionKeeper(
@@ -37,34 +33,109 @@ fun SessionKeeper(
     var captured by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("جاري تحميل الجلسة...") }
     var showWebView by remember { mutableStateOf(false) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var pollCount by remember { mutableIntStateOf(0) }
+    var pageFinished by remember { mutableStateOf(false) }
 
-    // ⏱️ بعد 30 ثانية إذا لم نلتقط، انتهت المحاولة
+    // ⏱️ أظهر WebView بعد 300ms
+    LaunchedEffect(Unit) {
+        delay(300)
+        showWebView = true
+    }
+
+    // ⏱️ انتهت المهلة بعد 30 ثانية
     LaunchedEffect(Unit) {
         delay(30_000)
         if (!captured) {
-            android.util.Log.w("SessionKeeper", "Timeout — JWT not captured")
+            android.util.Log.w("SessionKeeper", "Timeout — no token")
+            statusText = "⚠️ لم نلتقط التوكن"
             onComplete()
         }
     }
 
-    // ⏱️ أظهر WebView بعد 500ms (لتفادي تسلسل مشاكل التهيئة)
-    LaunchedEffect(Unit) {
-        delay(500)
-        showWebView = true
-        android.util.Log.d("SessionKeeper", "WebView now visible")
+    // ⭐⭐⭐ Polling مباشر على Storage — أهم جزء ⭐⭐⭐
+    LaunchedEffect(pageFinished, captured) {
+        if (!pageFinished || captured) return@LaunchedEffect
+
+        while (isActive && !captured) {
+            pollCount++
+            statusText = "🔍 فحص التخزين... (محاولة $pollCount)"
+
+            webViewRef?.evaluateJavascript("""
+                (function() {
+                    try {
+                        // جرب كل المفاتيح المحتملة
+                        var candidates = [
+                            sessionStorage.getItem('saudia-access-token'),
+                            localStorage.getItem('saudia-access-token'),
+                            localStorage.getItem('authorization'),
+                            localStorage.getItem('token'),
+                            localStorage.getItem('access_token'),
+                            sessionStorage.getItem('authorization'),
+                            sessionStorage.getItem('token')
+                        ];
+                        for (var i = 0; i < candidates.length; i++) {
+                            var t = candidates[i];
+                            if (t && t.indexOf('eyJ') === 0) {
+                                // JWT خام بدون Bearer
+                                SaudiaBridge.onJwtFound('Bearer ' + t);
+                                return;
+                            }
+                            if (t && t.indexOf('Bearer ') === 0 && t.indexOf('eyJ') > -1) {
+                                // JWT مع Bearer
+                                SaudiaBridge.onJwtFound(t);
+                                return;
+                            }
+                        }
+                        // لم نجد — أرسل حالة التشخيص
+                        SaudiaBridge.onPollResult({
+                            readyState: document.readyState,
+                            hasSessionToken: !!sessionStorage.getItem('saudia-access-token'),
+                            hasLocalAuth: !!localStorage.getItem('authorization'),
+                            ssLen: sessionStorage.length,
+                            lsLen: localStorage.length
+                        });
+                    } catch(e) {
+                        SaudiaBridge.onPollError(e.message);
+                    }
+                })();
+            """.trimIndent(), null)
+
+            // ⭐ محاولة تفاعل بعد 3 محاولات (لإيقاظ Angular)
+            if (pollCount == 3 || pollCount == 8 || pollCount == 15) {
+                android.util.Log.d("SessionKeeper", "Triggering click to wake up Angular (poll $pollCount)")
+                webViewRef?.evaluateJavascript("""
+                    (function() {
+                        try {
+                            // البحث عن أي زر أو رابط
+                            var els = document.querySelectorAll('button, a, [role="button"]');
+                            for (var i = 0; i < els.length; i++) {
+                                if (els[i].offsetParent !== null) {
+                                    els[i].click();
+                                    SaudiaBridge.onLog('Clicked element ' + i);
+                                    return;
+                                }
+                            }
+                        } catch(e) {}
+                    })();
+                """.trimIndent(), null)
+            }
+
+            delay(500)
+        }
     }
 
     val bridge = remember {
         object {
             @JavascriptInterface
-            fun onTokenCaptured(auth: String, xD: String, sid: String, ua: String) {
+            fun onJwtFound(token: String) {
                 if (captured) return
                 captured = true
-                android.util.Log.d("SessionKeeper", "JWT captured!")
-                statusText = "✅ تم تجهيز الجلسة"
+                android.util.Log.d("SessionKeeper", "JWT found via polling! ${token.take(50)}...")
+                statusText = "✅ تم التقاط التوكن"
 
-                // حفظ
-                viewModel.saveTokens(auth, xD, sid, ua)
+                viewModel.saveTokens(token, "", "", "Mozilla/5.0 (Linux; Android 14; SM-S918B)")
+
                 try {
                     val cm = CookieManager.getInstance()
                     val sau = cm.getCookie("https://www.saudia.com") ?: ""
@@ -82,10 +153,20 @@ fun SessionKeeper(
                     android.util.Log.e("SessionKeeper", "Cookie: ${e.message}")
                 }
 
-                // ⏱️ انتظر 300ms ثم أغلق (ليرى المستخدم "✅")
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     onComplete()
-                }, 300)
+                }, 400)
+            }
+
+            @JavascriptInterface
+            fun onPollResult(json: String) {
+                android.util.Log.d("SessionKeeper", "Poll: $json")
+                statusText = "🔍 فحص ($pollCount): ${json.take(80)}"
+            }
+
+            @JavascriptInterface
+            fun onPollError(msg: String) {
+                android.util.Log.e("SessionKeeper", "Poll error: $msg")
             }
 
             @JavascriptInterface
@@ -101,19 +182,16 @@ fun SessionKeeper(
         }
     }
 
-    // ⭐ شاشة سوداء كاملة مرئية
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
+        modifier = Modifier.fillMaxSize().background(Color.Black)
     ) {
-        // WebView (سيظهر بعد 500ms)
         if (showWebView) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    android.util.Log.d("SessionKeeper", "WebView created")
+                    android.util.Log.d("SessionKeeper", "WebView creating")
                     WebView(ctx).apply {
+                        webViewRef = this
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.databaseEnabled = true
@@ -142,20 +220,8 @@ fun SessionKeeper(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
                                 android.util.Log.d("SessionKeeper", "Page finished: $url")
-                                view?.evaluateJavascript("""
-                                    setTimeout(function() {
-                                        try {
-                                            var auth = localStorage.getItem('authorization') ||
-                                                       localStorage.getItem('token') ||
-                                                       sessionStorage.getItem('saudia-access-token');
-                                            var xD = localStorage.getItem('x-d-token') || '';
-                                            var sid = localStorage.getItem('saa-session-id') || '';
-                                            if (auth && auth.indexOf('Bearer') > -1) {
-                                                SaudiaBridge.onTokenCaptured(auth, xD, sid, navigator.userAgent);
-                                            }
-                                        } catch(e) {}
-                                    }, 3000);
-                                """.trimIndent(), null)
+                                pageFinished = true
+                                statusText = "🔄 الصفحة محملة — بدء الفحص..."
                             }
                         }
 
@@ -165,12 +231,11 @@ fun SessionKeeper(
             )
         }
 
-        // ⭐ الطبقة السوداء + الحالة (فوق WebView، شفافة جزئياً)
-        // تجعل الشاشة سوداء مع مؤشر تحميل مرئي
+        // الطبقة السوداء + الحالة
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f)),
+                .background(Color.Black.copy(alpha = 0.85f)),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -180,24 +245,15 @@ fun SessionKeeper(
                     strokeWidth = 4.dp
                 )
                 Spacer(Modifier.height(24.dp))
-                Text(
-                    "✈️ تجهيز الجلسة",
-                    color = Color.White,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("✈️ تجهيز الجلسة",
+                    color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    statusText,
-                    color = Color(0xFFAAAAAA),
-                    fontSize = 14.sp
-                )
+                Text(statusText,
+                    color = Color(0xFFAAAAAA), fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 24.dp))
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "يعمل في الخلفية — لن يستغرق سوى ثوانٍ",
-                    color = Color(0xFF666666),
-                    fontSize = 11.sp
-                )
+                Text("يعمل في الخلفية",
+                    color = Color(0xFF666666), fontSize = 11.sp)
             }
         }
     }
@@ -231,10 +287,7 @@ private val SESSION_HOOK_JS = """
                             try {
                                 var d = JSON.parse(t);
                                 if (d.access_token) {
-                                    SaudiaBridge.onTokenCaptured(
-                                        'Bearer ' + d.access_token, '',
-                                        d.session_id || '', navigator.userAgent
-                                    );
+                                    SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
                                 }
                             } catch(e) {}
                         });
@@ -268,10 +321,7 @@ private val SESSION_HOOK_JS = """
                     try {
                         var d = JSON.parse(self.responseText);
                         if (d.access_token) {
-                            SaudiaBridge.onTokenCaptured(
-                                'Bearer ' + d.access_token, '',
-                                d.session_id || '', navigator.userAgent
-                            );
+                            SaudiaBridge.onJwtFound('Bearer ' + d.access_token);
                         }
                     } catch(e) {}
                 });
