@@ -21,8 +21,10 @@ class HyperSessionManager(
         const val TAG = "HyperSessionError"
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
-        // 👇 الرابط الصحيح لجلب IP
-        const val HYPER_IP_URL = "https://api.hypersolutions.co/ip" 
+        
+        // 👇 تم تصحيح الرابط إلى الصيغة الصحيحة
+        const val HYPER_IP_URL = "https://ip.hypersolutions.co/ip" 
+        
         const val SAUDIA_HOST = "www.saudia.com"
         const val SAUDIA_URL = "https://www.saudia.com/ar-SA"
         const val PREFS = "hyper_prefs"
@@ -42,8 +44,7 @@ class HyperSessionManager(
                 .header("User-Agent", userAgent)
                 .header("Accept-Language", acceptLanguage)
 
-            // 👇 نضيف هيدرات المتصفح فقط إذا كان الطلب متجهاً إلى موقع السعودية
-            // (حتى لا نغضب سيرفر Hyper API)
+            // نضيف هيدرات المتصفح فقط لطلبات السعودية (وليس لطلبات Hyper API)
             if (original.url.host.contains("saudia.com")) {
                 requestBuilder.header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
                 requestBuilder.header("sec-ch-ua-mobile", "?0")
@@ -92,7 +93,7 @@ class HyperSessionManager(
             throw IOException("مفتاح API فارغ! تأكد من إعداده في GitHub.")
         }
 
-        // 👇 نطبع المفتاح للتأكد أنه وصل صح (نطبع أول 4 وآخر 4 أحرف فقط للأمان)
+        // نطبع المفتاح للتأكد أنه وصل صح (نطبع أول 4 وآخر 4 أحرف فقط للأمان)
         val maskedKey = if (apiKey.length > 8) "${apiKey.take(4)}...${apiKey.takeLast(4)}" else "قصير جداً"
         Log.d(TAG, "🔑 المفتاح المستخدم حالياً: $maskedKey")
 
@@ -189,7 +190,7 @@ class HyperSessionManager(
 
     private fun fetchEgressIp(): String {
         val req = Request.Builder()
-            .url(HYPER_IP_URL)
+            .url(HYPER_IP_URL) // الرابط الصحيح
             .get()
             .header("x-api-key", apiKey)
             .build()
