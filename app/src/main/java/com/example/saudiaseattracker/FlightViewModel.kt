@@ -153,7 +153,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return buildHeaders(apiVersion, includeXVToken = false, referer = referer)
     }
 
-    // ⭐⭐ الدالة الجديدة الحاسمة — تأكيد المسافر بدون تشفير
+    // ⭐⭐ تأكيد المسافر — بيانات EBRAHIM OTUDI
     fun confirmPassenger() {
         val cartId = _cartId.value
         if (cartId.isNullOrEmpty()) {
@@ -165,7 +165,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             _passengerConfirmResponse.value = "⏳ جاري إرسال بيانات المسافر عبر API..."
             addLog("📤 إرسال PATCH → /travelers/SKH-1-EXT")
 
-            val payload = """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1991-05-10","names":[{"firstName":"Khaled","lastName":"Otudi","title":"Mr","nameType":"universal"}],"regulatoryDetails":[{"regulatoryApisType":"ApisDetailRegulatoryDocument","regulatoryDocument":{"number":"1071580342","name":{"firstName":"KHALED","lastName":"OTUDI","nameType":"universal"},"nationalityCode":"SA","gender":"male","birthDate":"1991-05-10","documentType":"identityCard"}}]}"""
+            val payload = """{"passengerTypeCode":"ADT","gender":"male","dateOfBirth":"1990-02-18","names":[{"firstName":"Ebrahim","lastName":"Otudi","title":"Mr","nameType":"universal"}],"regulatoryDetails":[{"regulatoryApisType":"ApisDetailRegulatoryDocument","regulatoryDocument":{"number":"1065314187","name":{"firstName":"EBRAHIM","lastName":"OTUDI","nameType":"universal"},"nationalityCode":"SA","gender":"male","birthDate":"1990-02-18","documentType":"identityCard"}}]}"""
 
             try {
                 val resp = RetrofitClient.api.updateTravelerRaw(
