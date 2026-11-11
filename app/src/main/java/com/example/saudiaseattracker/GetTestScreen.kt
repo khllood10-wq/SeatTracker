@@ -11,7 +11,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -60,7 +59,7 @@ fun GetTestScreen(navController: NavController, viewModel: FlightViewModel) {
             var xdToken = ""
 
             try {
-                // ═══ 1. GET saudia.com/ar-SA (بدون كوكيز) ═══
+                // ═══ 1. GET /ar-SA ═══
                 withContext(Dispatchers.Main) { currentStep = "1: GET /ar-SA" }
                 val resp1 = client.newCall(
                     Request.Builder()
@@ -77,14 +76,12 @@ fun GetTestScreen(navController: NavController, viewModel: FlightViewModel) {
                 val body1 = resp1.body?.string() ?: ""
                 resp1.close()
 
-                // استخراج كوكيز
                 setCookies1.forEach { c ->
                     val first = c.split(";").first().trim()
                     val p = first.split("=", limit = 2)
                     if (p.size == 2) cookies[p[0].trim()] = p[1].trim()
                 }
 
-                // ⭐ محاولة استخراج x-d-token من HTML
                 val xdRegex = Regex("""x-d-token["']?\s*[:=]\s*["']?(3:[A-Za-z0-9+/=:]{50,})""")
                 val xdFromHtml = xdRegex.find(body1)?.groupValues?.get(1) ?: ""
                 if (xdFromHtml.isNotEmpty()) xdToken = xdFromHtml
@@ -96,13 +93,13 @@ fun GetTestScreen(navController: NavController, viewModel: FlightViewModel) {
                     "Body: ${body1.length} chars\n" +
                     "Set-Cookie: ${setCookies1.size}\n" +
                     "Cookies: ${cookies.keys.joinToString(", ")}\n" +
-                    "x-d-token in HTML: ${if (xdFromHtml.isNotEmpty()) "✅ ${xdFromHtml.length}ch" else "❌ not found"}\n\n" +
+                    "x-d-token: ${if (xdFromHtml.isNotEmpty()) "✅ ${xdFromHtml.length}ch" else "❌ not found"}\n\n" +
                     "Preview:\n${body1.take(400)}"
                 )
 
                 delay(800)
 
-                // ═══ 2. GET / (الجذر — يجلب reese84) ═══
+                // ═══ 2. GET / ═══
                 withContext(Dispatchers.Main) { currentStep = "2: GET /" }
                 val cookieHeader1 = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
                 val resp2 = client.newCall(
@@ -143,7 +140,7 @@ fun GetTestScreen(navController: NavController, viewModel: FlightViewModel) {
 
                 delay(1500)
 
-                // ═══ 3. POST /token/init مع كل الكوكيز + x-d-token إذا وُجد ═══
+                // ═══ 3. POST /token/init مع كل شيء ═══
                 withContext(Dispatchers.Main) { currentStep = "3: POST token/init" }
                 val cookieHeader2 = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
@@ -181,9 +178,9 @@ fun GetTestScreen(navController: NavController, viewModel: FlightViewModel) {
                     "Response:\n${body3.take(600)}"
                 )
 
-                // ═══ 4. POST token/init بدون أي شيء (مرجع) ═══
+                // ═══ 4. POST /token/init بدون شيء (مرجع) ═══
                 delay(2000)
-                withContext(Dispatchers.Main) { currentStep = "4: POST بدون أي شيء" }
+                withContext(Dispatchers.Main) { currentStep = "4: POST بدون شيء" }
                 val resp4 = client.newCall(
                     Request.Builder()
                         .url("https://dapi.saudia.com/session/auth/web/token/initialization")
