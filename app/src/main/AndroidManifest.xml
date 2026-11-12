@@ -4,6 +4,9 @@
 
     <!-- صلاحية الاتصال بالإنترنت -->
     <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- 👇 صلاحية الرسم فوق التطبيقات الأخرى (ضرورية للـ WebView الخفي) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
