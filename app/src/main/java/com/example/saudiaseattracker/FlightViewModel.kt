@@ -73,9 +73,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeJwt = ""
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
-    private var activeBid = ""
-    private var activeGaCid = ""
-    private var activeAnalyticsSession = ""
+    private var activeXdToken = ""
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -183,66 +181,55 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun getJwtAndCookiesViaWebView(): String? {
+    private suspend fun captureSessionViaWebView(): Boolean {
         return withContext(Dispatchers.Main) {
             val activity = currentActivity ?: run {
                 addLog("❌ Activity غير متاح")
-                return@withContext null
+                return@withContext false
             }
 
-            suspendCancellableCoroutine<String?> { continuation ->
+            suspendCancellableCoroutine<Boolean> { continuation ->
                 val reeseCookie = hyperSession.getCookieHeader() ?: ""
                 if (reeseCookie.isBlank()) {
-                    addLog("❌ لا يوجد كوكي reese84")
-                    if (continuation.isActive) continuation.resume(null)
+                    addLog("❌ لا يوجد reese84 من Hyper")
+                    if (continuation.isActive) continuation.resume(false)
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView...")
+                addLog("🕵️‍♂️ فتح WebView لالتقاط الهيدرات الحقيقية...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
                     userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                 )
 
-                manager.fetchToken(
-                    onSuccess = { result: WebViewResult ->
-                        activeJwt = result.token
-                        activeCookie = result.cookie
-                        activeSaaSessionId = result.saaSessionId
-                        activeBid = result.bidValue
-                        activeGaCid = result.gaCid
-                        activeAnalyticsSession = result.analyticsSessionId
+                manager.fetchAll(
+                    onSuccess = { data: CapturedData ->
+                        activeJwt = data.jwt
+                        activeCookie = data.cookie
+                        activeSaaSessionId = data.saaSessionId
+                        activeXdToken = data.xdToken
 
-                        addLog("✅ JWT: ${result.token.take(20)}...")
-                        addLog("🍪 Cookies: ${result.cookie.split(";").size}")
-                        addLog("🔍 bid_*: ${if (result.bidValue.isNotBlank()) result.bidValue else "❌"}")
-                        addLog("🔍 _ga cid: ${if (result.gaCid.isNotBlank()) result.gaCid else "❌"}")
-                        addLog("🔍 analytics-session: ${if (result.analyticsSessionId.isNotBlank()) result.analyticsSessionId.take(30) else "❌"}")
-                        addLog("🆔 saa: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌"}")
+                        addLog("✅ JWT: ${data.jwt.take(20)}...")
+                        addLog("🍪 Cookie: ${data.cookie.split(";").size} كوكي")
+                        addLog("🎯 x-d-token: ${data.xdToken.take(30)}...")
+                        addLog("🆔 saa-session-id: ${data.saaSessionId}")
 
-                        if (continuation.isActive) continuation.resume(result.token)
+                        if (continuation.isActive) continuation.resume(true)
                     },
                     onError = { error: String ->
                         addLog("❌ فشل WebView: $error")
-                        if (continuation.isActive) continuation.resume(null)
+                        if (continuation.isActive) continuation.resume(false)
                     }
                 )
             }
         }
     }
 
-    private fun extractCookieValue(cookieStr: String?, name: String): String? {
-        if (cookieStr == null) return null
-        return cookieStr.split(";").map { it.trim() }.find { it.startsWith("$name=") }?.substringAfter("=")?.trim()
-    }
-
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val nowSec = System.currentTimeMillis() / 1000
-        val fallbackGaUserId = "${Random.nextLong(1000000000L, 2000000000L)}.${Random.nextLong(1000000000L, 2000000000L)}"
-        val fallbackSessionId = "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0"
 
         val h = mutableMapOf(
             "accept" to "application/json",
@@ -253,9 +240,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "version" to "27.2",
-            "x-analytics-session-id" to (activeAnalyticsSession.ifBlank { fallbackSessionId }),
+            "x-analytics-session-id" to "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0",
             "x-analytics-type" to "GA",
-            "x-analytics-user-id" to (activeGaCid.ifBlank { fallbackGaUserId }),
+            "x-analytics-user-id" to "${Random.nextLong(1000000000L, 2000000000L)}.${Random.nextLong(1000000000L, 2000000000L)}",
             "x-api-version" to apiVersion,
             "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
@@ -268,12 +255,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         if (activeSaaSessionId.isNotBlank()) h["saa-session-id"] = activeSaaSessionId
-
-        val cookieSnapshot: String? = activeCookie
-        val wvReese84 = extractCookieValue(cookieSnapshot, "reese84")
-        if (!wvReese84.isNullOrBlank()) h["x-d-token"] = wvReese84
-
-        if (!cookieSnapshot.isNullOrBlank()) h["Cookie"] = cookieSnapshot
+        if (activeXdToken.isNotBlank()) h["x-d-token"] = activeXdToken
+        if (!activeCookie.isNullOrBlank()) h["Cookie"] = activeCookie
 
         return h
     }
@@ -292,10 +275,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                addLog("🎫 جلب JWT + Cookies + saa...")
-                val jwt = getJwtAndCookiesViaWebView()
-                if (jwt == null) {
-                    addLog("❌ فشل جلب البيانات")
+                val captured = captureSessionViaWebView()
+                if (!captured) {
+                    addLog("❌ فشل التقاط الجلسة")
                     _isRunning.value = false
                     return@launch
                 }
@@ -352,9 +334,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             attempt++
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
-                val bidValue = if (activeBid.isNotBlank()) activeBid else "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
-                addLog("🔍 browserId = ${bidValue.take(20)}...")
-
                 val resp = RetrofitClient.api.searchAirBounds(
                     headers = buildHeaders("4"),
                     request = SaudiaSearchRequest(
@@ -365,13 +344,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput(
-                            channel = "WEB",
-                            pointOfSale = "SA",
-                            currencyCode = "SAR",
-                            language = "AR",
-                            browserId = bidValue
-                        )
+                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
                 )
 
