@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +34,8 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
     val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val activity = context as? android.app.Activity
 
     val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
 
@@ -91,7 +94,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
         // زر البدء
         Button(
-            onClick = { viewModel.runFullBooking() },
+            onClick = { 
+                if (activity != null) viewModel.runFullBooking(activity) 
+            },
             enabled = !isRunning,
             modifier = Modifier.fillMaxWidth().height(64.dp)
         ) {
