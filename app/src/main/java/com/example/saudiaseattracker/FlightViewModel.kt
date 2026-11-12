@@ -195,6 +195,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
+                // Log Hyper's reese84 for comparison
+                val hyperReese84 = reeseCookie.removePrefix("reese84=").trim()
+                addLog("🔹 Hyper reese84 (${hyperReese84.length} chars): ${hyperReese84.take(40)}...")
+
                 addLog("🕵️‍♂️ فتح WebView...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
@@ -212,6 +216,19 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         addLog("🍪 Cookies: ${result.cookie.split(";").size}")
                         addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌ غير موجود"}")
 
+                        // 🔍 مقارنة reese84 من Hyper مع reese84 من WebView
+                        val wvReese84 = extractCookieValue(result.cookie, "reese84")
+                        if (!wvReese84.isNullOrBlank()) {
+                            addLog("🔹 WebView reese84 (${wvReese84.length} chars): ${wvReese84.take(40)}...")
+                            if (wvReese84 == hyperReese84) {
+                                addLog("✅ reese84 متطابق (Hyper == WebView)")
+                            } else {
+                                addLog("⚠️ reese84 مختلف! سنستخدم WebView's")
+                            }
+                        } else {
+                            addLog("❌ WebView لا يحتوي على reese84!")
+                        }
+
                         if (continuation.isActive) continuation.resume(result.token)
                     },
                     onError = { error: String ->
@@ -223,6 +240,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun extractCookieValue(cookieStr: String?, name: String): String? {
+        if (cookieStr == null) return null
+        return cookieStr.split(";")
+            .map { it.trim() }
+            .find { it.startsWith("$name=") }
+            ?.substringAfter("=")
+            ?.trim()
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 🎯 الحل: x-d-token = WebView's reese84 (وليس Hyper's)
+    // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
@@ -256,20 +285,26 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             h["saa-session-id"] = activeSaaSessionId
         }
 
-        val reeseHeader = hyperSession.getCookieHeader()
-        val xdToken = reeseHeader?.removePrefix("reese84=")?.trim()
-        if (!xdToken.isNullOrBlank()) {
-            h["x-d-token"] = xdToken
+        val cookieSnapshot: String? = activeCookie
+
+        // 🎯 x-d-token = WebView's reese84 (يجب أن يطابق Cookie's reese84)
+        val wvReese84 = extractCookieValue(cookieSnapshot, "reese84")
+        if (!wvReese84.isNullOrBlank()) {
+            h["x-d-token"] = wvReese84
+            addLog("🎯 x-d-token = WebView reese84 (${wvReese84.length} chars)")
+        } else {
+            // Fallback: Hyper's reese84
+            val reeseHeader = hyperSession.getCookieHeader()
+            val hyperReese84 = reeseHeader?.removePrefix("reese84=")?.trim()
+            if (!hyperReese84.isNullOrBlank()) {
+                h["x-d-token"] = hyperReese84
+                addLog("⚠️ Fallback: Hyper reese84 (${hyperReese84.length} chars)")
+            }
         }
 
-        val cookieSnapshot: String? = activeCookie
         if (!cookieSnapshot.isNullOrBlank()) {
             h["Cookie"] = cookieSnapshot
         }
-
-        addLog("📤 Headers: ${h.keys.filter { it != "Cookie" && it != "authorization" }.joinToString(", ")}")
-        addLog("🔍 saa-session-id: ${activeSaaSessionId.take(20)}...")
-        addLog("🔍 x-d-token length: ${xdToken?.length ?: 0}")
 
         return h
     }
