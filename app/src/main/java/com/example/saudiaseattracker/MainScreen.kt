@@ -34,7 +34,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
-    var refreshTokenInput by remember { mutableStateOf(viewModel.msalRefreshToken) }
     val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
 
     var remainingMs by remember { mutableStateOf(0L) }
@@ -90,28 +89,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // 👇 خانة Refresh Token للتجديد التلقائي 👇
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Column(Modifier.padding(12.dp)) {
-                Text("🔄 Refresh Token (للتجديد التلقائي):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                OutlinedTextField(
-                    value = refreshTokenInput,
-                    onValueChange = { 
-                        refreshTokenInput = it
-                        if(it.length > 50) {
-                            viewModel.saveRefreshToken(it)
-                        }
-                    },
-                    placeholder = { Text("0.A... أو 1.A...", fontSize = 10.sp) },
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    maxLines = 2
-                )
-                if (viewModel.msalRefreshToken.isNotBlank()) {
-                    Text("✅ التجديد التلقائي مفعّل", color = Color(0xFF00C853), fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
-                }
-            }
-        }
-
         // زر البدء
         Button(
             onClick = { viewModel.runFullBooking() },
@@ -122,7 +99,52 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             else Text("🚀 بدء الحجز", fontWeight = FontWeight.Bold)
         }
 
-        // باقي الواجهة (وضع المراقبة، السجل، إلخ...)
+        // وضع المراقبة
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("👁️ وضع المراقبة", fontWeight = FontWeight.Bold)
+                    Text(
+                        if (viewModel.monitoringMode) "✅ يصل للدفع بدون إتمام" else "معطّل",
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(viewModel.monitoringMode, { viewModel.monitoringMode = it }, enabled = !isRunning)
+            }
+        }
+
+        OutlinedButton({ navController.navigate(Screen.Passenger.route) }, Modifier.fillMaxWidth()) {
+            Text("👤 ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}", fontSize = 12.sp)
+        }
+        OutlinedButton({ navController.navigate(Screen.Flight.route) }, Modifier.fillMaxWidth()) {
+            Text("✈️ ${viewModel.flightData.from} → ${viewModel.flightData.to}", fontSize = 12.sp)
+        }
+
+        if (steps.any { it.status != StepStatus.PENDING }) {
+            Text("المراحل:", fontWeight = FontWeight.Bold)
+            steps.forEach { s -> StepRow(s) }
+        }
+
+        if (pnr.isNotEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (paymentStatus == StepStatus.SUCCESS)
+                        Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
+                ),
+                border = BorderStroke(3.dp, Color(0xFF00C853))
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    if (sadad.isNotEmpty()) {
+                        Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Button({ clipboard.setText(AnnotatedString(sadad)) }, Modifier.fillMaxWidth()) {
+                            Text("📋 نسخ SADAD")
+                        }
+                    }
+                }
+            }
+        }
+
         if (logs.isNotEmpty()) {
             Text("📝 السجل:", fontWeight = FontWeight.Bold)
             Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -134,6 +156,46 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun StepRow(step: BookingStep) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when (step.status) {
+                StepStatus.RUNNING -> MaterialTheme.colorScheme.secondaryContainer
+                StepStatus.SUCCESS -> MaterialTheme.colorScheme.primaryContainer
+                StepStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
+                StepStatus.SKIPPED -> MaterialTheme.colorScheme.tertiaryContainer
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                when (step.status) {
+                    StepStatus.SUCCESS -> Icons.Default.CheckCircle
+                    StepStatus.FAILED -> Icons.Default.Error
+                    StepStatus.SKIPPED -> Icons.Default.RemoveCircleOutline
+                    else -> Icons.Default.RadioButtonUnchecked
+                },
+                null,
+                tint = when (step.status) {
+                    StepStatus.SUCCESS -> Color(0xFF00C853)
+                    StepStatus.FAILED -> Color(0xFFD32F2F)
+                    else -> MaterialTheme.colorScheme.primary
+                }
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(step.title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                if (step.detail.isNotEmpty()) Text(step.detail, fontSize = 10.sp)
+            }
+            if (step.status == StepStatus.RUNNING)
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
         }
     }
 }
