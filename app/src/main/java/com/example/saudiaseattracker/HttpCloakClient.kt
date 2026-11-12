@@ -14,8 +14,9 @@ class HttpCloakClient {
         return Session(
             SessionConfig(
                 preset = Presets.CHROME_LATEST_ANDROID,
-                timeout = 0,             // 👈 0 يعني بدون مهلة (انتظر للأبد)
-                httpVersion = "h2"       
+                timeout = 15,                   // مهلة 15 ثانية
+                httpVersion = "h1",             // إجبار HTTP/1.1 (TCP فقط)
+                dnsServers = listOf("8.8.8.8")  // 👈 إجبار استخدام Google DNS لحل مشكلة أندرويد
             )
         )
     }
@@ -25,10 +26,10 @@ class HttpCloakClient {
         newSession().use { session ->
             try {
                 val response = session.get(url, headers)
-                Log.d("HttpCloakClient", "✅ استجابة GET: HTTP ${response.statusCode}، طول: ${response.text.length}")
+                Log.d("HttpCloakClient", "✅ استجابة GET: HTTP ${response.statusCode}")
                 HttpCloakResponse(response.statusCode, response.text)
             } catch (e: Exception) {
-                Log.e("HttpCloakClient", "❌ فشل GET: ${e.javaClass.simpleName} - ${e.message}", e)
+                Log.e("HttpCloakClient", "❌ فشل GET: ${e.message}", e)
                 throw e
             }
         }
@@ -42,15 +43,11 @@ class HttpCloakClient {
         Log.d("HttpCloakClient", "🚀 بدء طلب POST إلى: $url")
         newSession().use { session ->
             try {
-                val response = session.post(
-                    url = url,
-                    body = body,
-                    headers = headers
-                )
-                Log.d("HttpCloakClient", "✅ استجابة POST: HTTP ${response.statusCode}، طول: ${response.text.length}")
+                val response = session.post(url, body, headers)
+                Log.d("HttpCloakClient", "✅ استجابة POST: HTTP ${response.statusCode}")
                 HttpCloakResponse(response.statusCode, response.text)
             } catch (e: Exception) {
-                Log.e("HttpCloakClient", "❌ فشل POST: ${e.javaClass.simpleName} - ${e.message}", e)
+                Log.e("HttpCloakClient", "❌ فشل POST: ${e.message}", e)
                 throw e
             }
         }
