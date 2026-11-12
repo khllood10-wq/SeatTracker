@@ -13,8 +13,6 @@ import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.UUID
-import kotlin.random.Random
 
 data class PassengerData(
     val title: String = "Mr",
@@ -66,8 +64,8 @@ data class BookingStep(
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
     // ═══════════════════════════════════════════════════════════════
-    // 🔑 اختبار: JWT + x-d-token فقط (بدون كوكيز، بدون WebView)
-    // ⚠️ الصق JWT حديث (من التقاط حديث) هنا:
+    // 🔑 احتفظ بالـ JWT الذي يعمل عندك الآن (لا تغيره إذا كان يعمل)
+    // إذا كان فارغاً، الصق التوكن هنا:
     // ═══════════════════════════════════════════════════════════════
     private var activeJwt = "Bearer الصق_التوكن_هنا"
 
@@ -177,13 +175,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun extractReese84Value(cookieHeader: String?): String? {
-        if (cookieHeader == null) return null
-        // cookieHeader يبدأ بـ "reese84="
-        return cookieHeader.removePrefix("reese84=").trim().ifEmpty { null }
-    }
-
-    // 👇 buildHeaders: JWT + x-d-token فقط (بدون Cookie)
+    // ═══════════════════════════════════════════════════════════════
+    // 🧪 اختبار: JWT فقط + هيدرات أساسية (لا كوكيز، لا x-d-token، لا saa)
+    // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val h = mutableMapOf(
             "accept" to "application/json",
@@ -197,23 +191,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        // 1. Authorization (JWT)
+        // 👇 JWT فقط. لا شيء آخر.
         if (activeJwt.isNotBlank() && activeJwt != "Bearer الصق_التوكن_هنا") {
             h["authorization"] = activeJwt
+            addLog("🔑 JWT مُرسل (${activeJwt.take(20)}...)")
         } else {
-            addLog("⚠️ JWT غير مضبوط! الصق توكن حديث في الكود")
+            addLog("⚠️ JWT فارغ! الصق التوكن في الكود")
         }
-
-        // 2. x-d-token (من reese84 الذي يوفره Hyper)
-        val reese84Value = extractReese84Value(hyperSession.getCookieHeader())
-        if (!reese84Value.isNullOrBlank()) {
-            h["x-d-token"] = reese84Value
-            addLog("🎯 x-d-token مُرسل (طول: ${reese84Value.length})")
-        } else {
-            addLog("❌ reese84 غير متوفر لتوليد x-d-token")
-        }
-
-        // ❌ لا Cookie - كما طلبت
 
         return h
     }
@@ -222,8 +206,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
         if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
-        if (activeJwt == "Bearer الصق_التوكن_هنا") {
-            addLog("❌ الرجاء لصق JWT حديث في الكود أولاً")
+        if (activeJwt == "Bearer الصق_التوكن_هنا" || activeJwt.isBlank()) {
+            addLog("❌ الرجاء لصق JWT في الكود أولاً")
             return
         }
 
@@ -302,7 +286,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("❌ رفض (${resp.code()}) - لا WebView للتجديد في هذا الاختبار")
+                    addLog("❌ رفض (${resp.code()}) - JWT وحده لا يكفي")
                     return null
                 }
 
