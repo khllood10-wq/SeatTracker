@@ -210,8 +210,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeJwt = data.jwt
                         activeCookie = data.cookie
                         activeSaaSessionId = data.saaSessionId
-
-                        // x-d-token = reese84 (من CookieManager بعد انتظار 6 ثواني)
                         activeXdToken = extractCookieValue(data.cookie, "reese84") ?: ""
 
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
@@ -239,15 +237,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             ?.trim()
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 🔧 buildHeaders = نسخة قديمة حرفياً (بدون analytics)
-    // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(
         apiVersion: String,
         isWebEndpoint: Boolean = false,
         referer: String = "https://www.saudia.com/"
     ): Map<String, String> {
-        // Snapshots (val) لتجنب Smart Cast
         val cookieSnapshot: String? = activeCookie
         val saaSnapshot: String = activeSaaSessionId
         val jwtSnapshot: String = activeJwt
@@ -362,7 +356,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
                 val resp = RetrofitClient.api.searchAirBounds(
-                    headers = buildHeaders("4"),
+                    headers = buildHeaders("4"), // 👈 default (isWebEndpoint = false)
                     request = SaudiaSearchRequest(
                         airBoundsSearchInputs = AirBoundsSearchInputs(
                             itineraries = listOf(
@@ -375,7 +369,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
 
-                // 🆕 جمع الكوكيز من Set-Cookie في الرد
                 saveCookiesFromResponse(resp)
 
                 if (resp.code() == 401 || resp.code() == 403) {
@@ -408,13 +401,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return null
     }
 
-    // 🆕 نفس دالة الكود القديم
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isEmpty()) return
         val cookieMap = mutableMapOf<String, String>()
         
-        // ابدأ بالكوكيز الحالية
         val currentCookie = activeCookie ?: ""
         if (currentCookie.isNotEmpty()) {
             currentCookie.split(";").forEach { pair ->
@@ -423,20 +414,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         
-        // أضف الكوكيز الجديدة من الرد
         setCookieHeaders.forEach { header ->
             val firstPart = header.split(";").first().trim()
             val parts = firstPart.split("=", limit = 2)
             if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
         }
         
-        // دمج الكوكيز الجديدة مع القديمة (الجديدة تفوز)
         activeCookie = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
     }
 
     private suspend fun createCart(airBoundId: String): String? = try {
         val r = RetrofitClient.api.createCart(
-            headers = buildHeaders("2"),
+            headers = buildHeaders("2"), // 👈 default
             request = CreateCartRequest(listOf(airBoundId))
         )
         saveCookiesFromResponse(r)
@@ -453,7 +442,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val payload = """{"passengerTypeCode":"ADT","gender":"${p.gender}","dateOfBirth":"${p.dateOfBirth}","names":[{"firstName":"${p.firstName}","lastName":"${p.lastName}","title":"${p.title}","nameType":"universal"}],"regulatoryDetails":[{"regulatoryApisType":"ApisDetailRegulatoryDocument","regulatoryDocument":{"number":"${p.nationalId}","name":{"firstName":"${p.firstName.uppercase()}","lastName":"${p.lastName.uppercase()}","nameType":"universal"},"nationalityCode":"${p.nationality}","gender":"${p.gender}","birthDate":"${p.dateOfBirth}","documentType":"identityCard"}}]}"""
         val r = RetrofitClient.api.updateTravelerRaw(
             cid, "SKH-1-EXT",
-            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = payload.toRequestBody("application/json".toMediaType())
         )
         saveCookiesFromResponse(r)
@@ -464,7 +453,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val body = """[{"content":"eyJzdGF0dXMiOiJWRVJJRklFRCIsImhlYWx0aENoZWNrU3RhdHVzIjoiTk9fUkVTUE9OU0UifQ==","travelerId":"SKH-1-EXT","extensionType":"TextExtension","name":"YQENSTATUS"}]"""
         val r = RetrofitClient.api.addCartExtension(
             cid, guestOfficeId = "JEDSV08AA",
-            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = body.toRequestBody("application/json".toMediaType())
         )
         saveCookiesFromResponse(r)
@@ -476,7 +465,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val body = """[{"address":"${p.email}","category":"personal","contactType":"Email","purpose":"notification","lang":"ar","travelerIds":["SKH-1-EXT"]},{"address":"${p.email}","category":"personal","contactType":"Email","purpose":"standard"},{"category":"personal","contactType":"Phone","countryPhoneExtension":"+966","number":"${p.phone}","deviceType":"mobile","purpose":"notification","lang":"ar","travelerIds":["SKH-1-EXT"]},{"category":"personal","contactType":"Phone","countryPhoneExtension":"+966","number":"${p.phone}","deviceType":"mobile","purpose":"standard"}]"""
         val r = RetrofitClient.api.saveContacts(
             cid,
-            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = body.toRequestBody("application/json".toMediaType())
         )
         saveCookiesFromResponse(r)
@@ -486,7 +475,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun createOrder(cid: String): Pair<String, String>? = try {
         val r = RetrofitClient.api.createOrderRaw(
             cid,
-            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = "{}".toRequestBody("application/json".toMediaType())
         )
         saveCookiesFromResponse(r)
@@ -503,7 +492,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val body = """{"orderPaymentRequest":{"paymentRequests":[{"paymentMethod":{"paymentType":"CustomPayment","id":"SADAD"}}]},"emailParameters":{"displayParameters":{"alharamain":true,"baggage":true,"bookingCom":true,"eatmarna":false,"electronicVisa":false,"plusgrade":true,"rental":true,"seat":true,"wifi":true,"onDemandTeasers":[]}},"isCardholderAbsent":false,"isQueuePlacementEnabled":false}"""
         val r = RetrofitClient.api.submitPayment(
             pnr, p.lastName,
-            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            headers = buildHeaders("2", referer = "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = body.toRequestBody("application/json".toMediaType())
         )
         saveCookiesFromResponse(r)
