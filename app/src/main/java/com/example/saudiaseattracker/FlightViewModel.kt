@@ -72,8 +72,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private var currentActivity: android.app.Activity? = null
 
-    private var activeJwt = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6InhIOURKSDNOMDg2QWdzOEpMNklRemVRaDFwOCJ9.eyJhdWQiOiIyZjIwNWM4Yi04MmE5LTQzMGYtYjFiYS0wOGFjMzFiNmVkNGMiLCJpc3MiOiJodHRwczovL2xvZ2luLm1pY3Jvc29mdG9ubGluZS5jb20vZjhiYTJjMjMtYTQwMy00MjNiLWJhMzktZjc4ODNjMjExNjM3L3YyLjAiLCJpYXQiOjE3OTQ0NDc5NjUsIm5iZiI6MTc5NDQ0Nzk2NSwiZXhwIjoxNzk0NDUxODY1LCJhaW8iOiJBU1FBMi84ZUFBQUF6eC9uSmNuVVU4UE40ZjA4bHA4Qzl2aFpIa1F3VWxDcUZTbXFyUTByR2RRPSIsImF6cCI6IjRhNmYwZDMxLThjNDQtNDVkNi04YjVmLWRkMWY0YTM5YmI2MCIsImF6cGFjciI6IjEiLCJvaWQiOiJjMWQwM2M1Ni1jZGJjLTQ2ZTAtOTEwMC02NTY2YjJhOTYyYWIiLCJyaCI6IjEuQVFrQUl5eTYtQU9rTzBLNk9mZUlQQ0VXTjR0Y0lDLXBnZzlEc2JvSXJERzI3VXdBQUFBSkFBLiIsInJvbGVzIjpbIkJvb2tpbmdBbGxBY2Nlc3MiXSwic3ViIjoiYzFkMDNjNTYtY2RiYy00NmUwLTkxMDAtNjU2NmIyYTk2MmFiIiwidGlkIjoiZjhiYTJjMjMtYTQwMy00MjNiLWJhMzktZjc4ODNjMjExNjM3IiwidXRpIjoicFpLS191TEVYVUNwelE1dXJZd0NBQSIsInZlciI6IjIuMCIsInhtc19mdGQiOiJabkpvQUdGVkRxMVptYWtBcDByVXBXQTJ6cjItOFNUaEZKZ0FOOTd4NzJjQlpuSmhibU5sWXkxa2MyMXoifQ.Y3hlV0bo3O8W-PBUyBipo1ePnzbJQtAa_4kMcmRbqwUQg7uaXPtFbtTn15TJlYxtp3w5_tmA4wMN4fnEzM0LRaSI4lwhz11gDVcT_IeMAEfUDpZMbAHEoiIwx1QymjEMN9yhFsYFzTK78oeEgzB9Npcp4IVq8_HnjgDH0mY0CfY50K5UxdM4rp_KzCUO2SpS30YYBbqV7nZuAaCjs-XesGHQLr2rLwvZ-P6EJBGIAVw75Bv6AE9TC8PS_h34pjaTPeNOwEUPLfuuoZeZa02SzXFKVQJK9q2kwsPeOrkr8TuIzNXYyrXrCujiXbBxZDgbldp8YuncZLh2XdA2KjYYfQ"
-
+    private var activeJwt = ""
+    private var activeXdToken = ""
     private var activeCookie: String? = null
 
     private val hyperSession: HyperSessionManager by lazy {
@@ -182,41 +182,42 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // 👇 هنا تم إضافة الأنواع صراحةً (result: WebViewResult) و (error: String)
     private suspend fun refreshTokenViaHiddenWebView(): String? {
         return withContext(Dispatchers.Main) {
             val activity = currentActivity
             if (activity == null) {
-                addLog("❌ Activity غير متاح لفتح الـ WebView")
+                addLog("❌ Activity غير متاح")
                 return@withContext null
             }
 
             suspendCancellableCoroutine<String?> { continuation ->
                 val reeseCookie = hyperSession.getCookieHeader() ?: ""
-                
                 if (reeseCookie.isBlank()) {
-                    addLog("❌ لا يوجد كوكي reese84 لتجاوز الحماية")
+                    addLog("❌ لا يوجد كوكي reese84")
                     if (continuation.isActive) continuation.resume(null)
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ جاري فتح WebView خفي لتجديد التوكن...")
-                
+                addLog("🕵️‍♂️ فتح WebView خفي...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
                     userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                 )
-                
+
                 manager.fetchToken(
                     onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
+                        activeXdToken = result.xdToken
                         activeCookie = result.cookie
-                        addLog("✅ تم تجديد التوكن والكوكيز بنجاح عبر WebView الخفي")
+                        val tokenPreview = if (result.token.length > 30) "${result.token.take(30)}..." else result.token
+                        val xdPreview = if (result.xdToken.length > 20) "${result.xdToken.take(20)}..." else result.xdToken
+                        addLog("✅ توكن جديد | JWT: $tokenPreview | xd-token: $xdPreview")
+                        addLog("🍪 الكوكيز: ${result.cookie.take(80)}...")
                         if (continuation.isActive) continuation.resume(result.token)
                     },
                     onError = { error: String ->
-                        addLog("❌ فشل التجديد عبر WebView: $error")
+                        addLog("❌ فشل WebView: $error")
                         if (continuation.isActive) continuation.resume(null)
                     }
                 )
@@ -248,7 +249,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
 
-        h["Authorization"] = activeJwt
+        if (activeJwt.isNotBlank()) h["Authorization"] = activeJwt
+        if (activeXdToken.isNotBlank()) h["x-d-token"] = activeXdToken
+
         val cookieToUse = activeCookie ?: hyperSession.getCookieHeader()
         if (!cookieToUse.isNullOrBlank()) h["Cookie"] = cookieToUse
 
@@ -268,6 +271,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 hyperSession.ensureFreshToken()
                 markSessionReady()
+
+                // 👇 نجلب التوكن فوراً عند بدء الحجز
+                addLog("🎫 جلب التوكن الأولي...")
+                refreshTokenViaHiddenWebView()
 
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
@@ -317,6 +324,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun searchUntilFound(max: Int = 1000): FoundFlightDetails? {
         var attempt = 0
+        var refreshCount = 0
         while (attempt < max) {
             attempt++
             setStep("search", StepStatus.RUNNING, "$attempt")
@@ -336,14 +344,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("⚠️ التوكن منتهي - جاري تشغيل WebView الخفي للتجديد...")
+                    // 👇 نحدد عدد مرات التجديد لتجنب الحلقة المفرغة
+                    refreshCount++
+                    if (refreshCount > 3) {
+                        addLog("❌ تجاوزنا 3 محاولات تجديد - توقف البحث")
+                        addLog("🔍 السبب: WebView يعطي توكن لكن السيرفر يرفضه")
+                        addLog("💡 الحل: نحتاج التقاط الطلب الحقيقي من المتصفح")
+                        return null
+                    }
+                    addLog("⚠️ التوكن مرفوض - تجديد #$refreshCount")
                     val newToken = refreshTokenViaHiddenWebView()
                     if (newToken != null) {
-                        addLog("✅ تم التجديد بنجاح، إعادة المحاولة...")
-                        delay(1000)
+                        addLog("✅ التوكن محدث، إعادة المحاولة...")
+                        delay(2000)
+                        attempt-- // لا نحسب هذه المحاولة
                         continue
                     } else {
-                        addLog("❌ فشل تجديد التوكن عبر WebView، أوقف البحث.")
                         return null
                     }
                 }
