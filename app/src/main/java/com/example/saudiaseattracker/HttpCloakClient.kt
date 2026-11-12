@@ -3,6 +3,7 @@ package com.example.saudiaseattracker
 import io.github.sardanioss.httpcloak.Presets
 import io.github.sardanioss.httpcloak.Session
 import io.github.sardanioss.httpcloak.SessionConfig
+import io.github.sardanioss.httpcloak.Body
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -11,8 +12,8 @@ class HttpCloakClient {
     private fun newSession(): Session = Session(
         SessionConfig(
             preset = Presets.CHROME_LATEST_ANDROID,
-            timeout = 20,          // مهلة 20 ثانية
-            httpVersion = "h2"     // إجبار HTTP/2 لتجنب مشاكل QUIC
+            timeout = 20,          
+            httpVersion = "h2"     
         )
     )
 
@@ -26,15 +27,13 @@ class HttpCloakClient {
         }
     }
 
-    // 👇 تم التعديل: نوع body أصبح Map<String, String>
     suspend fun post(
         url: String,
-        body: Map<String, String> = emptyMap(),
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String> = emptyMap(),
+        body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
         val session = newSession()
         try {
-            // استخدام المعاملات المسماة لتجنب أي التباس في الترتيب
             val response = session.post(
                 url = url,
                 body = body,
