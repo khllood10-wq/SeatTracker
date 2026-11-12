@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -193,16 +192,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val reeseValue = reeseCookie.removePrefix("reese84=").trim()
 
                 addLog("🔄 اختبار httpcloak على موقع السعودية...")
-                val pageResp = withTimeout(30_000L) {
-                    httpCloakClient.get(
-                        url = "https://www.saudia.com/ar-SA",
-                        headers = mapOf(
-                            "Cookie" to reeseCookie,
-                            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
-                        )
+                
+                // 👇 بدون مؤقت
+                val pageResp = httpCloakClient.get(
+                    url = "https://www.saudia.com/ar-SA",
+                    headers = mapOf(
+                        "Cookie" to reeseCookie,
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
                     )
-                }
+                )
 
                 addLog("📄 GET /ar-SA → HTTP ${pageResp.statusCode}, Length: ${pageResp.text.length}")
 
@@ -224,22 +223,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("🎉 httpcloak تجاوز Imperva بنجاح!")
 
                 addLog("🔄 محاولة token/initialization...")
-                val initResp = withTimeout(30_000L) {
-                    httpCloakClient.post(
-                        url = "https://dapi.saudia.com/session/auth/web/token/initialization",
-                        headers = mapOf(
-                            "Cookie" to reeseCookie,
-                            "x-d-token" to reeseValue,
-                            "Content-Type" to "application/x-www-form-urlencoded",
-                            "Accept" to "application/json",
-                            "platform" to "Web",
-                            "version" to "27.2",
-                            "Origin" to "https://www.saudia.com",
-                            "Referer" to "https://www.saudia.com/ar-SA"
-                        ),
-                        body = Body.form(emptyMap())
-                    )
-                }
+                
+                // 👇 بدون مؤقت
+                val initResp = httpCloakClient.post(
+                    url = "https://dapi.saudia.com/session/auth/web/token/initialization",
+                    headers = mapOf(
+                        "Cookie" to reeseCookie,
+                        "x-d-token" to reeseValue,
+                        "Content-Type" to "application/x-www-form-urlencoded",
+                        "Accept" to "application/json",
+                        "platform" to "Web",
+                        "version" to "27.2",
+                        "Origin" to "https://www.saudia.com",
+                        "Referer" to "https://www.saudia.com/ar-SA"
+                    ),
+                    body = Body.form(emptyMap())
+                )
 
                 addLog("📄 POST /token/init → HTTP ${initResp.statusCode}")
                 addLog("📋 Response: ${initResp.text.take(500)}")
@@ -271,10 +270,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return@withContext false
 
             } catch (e: Exception) {
-                // 👇 طباعة تفاصيل الخطأ الدقيق (Stack Trace)
-                val fullError = e.stackTraceToString().take(500)
                 addLog("❌ فشل httpcloak: ${e.javaClass.simpleName} - ${e.message}")
-                addLog("🔍 التفاصيل: $fullError")
                 return@withContext false
             }
         }
