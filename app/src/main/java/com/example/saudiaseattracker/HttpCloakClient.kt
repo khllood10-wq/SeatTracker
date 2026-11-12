@@ -23,7 +23,12 @@ class HttpCloakClient {
         headers: Map<String, String> = emptyMap(), 
         body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
-        val response = session.post(url, headers, body)
+        // 👇 استخدام المعاملات المسماة لتجنب أي التباس في الترتيب
+        val response = session.post(
+            url = url,
+            body = body,
+            headers = headers
+        )
         HttpCloakResponse(response.statusCode, response.text)
     }
 
