@@ -46,6 +46,11 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE"
+            excludes += "/META-INF/LICENSE.txt"
+            excludes += "/META-INF/NOTICE"
+            excludes += "/META-INF/NOTICE.txt"
         }
     }
 }
@@ -76,7 +81,11 @@ dependencies {
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
     // 👇 الحل: انتحال بصمة TLS/JA3/JA4 و HTTP/2 الخاصة بـ Chrome
-    implementation("com.github.zhkl0228:impersonator-okhttp:1.0.13")
+    // نستبعد okhttp و okio من المكتبة لمنع duplicate classes (فنسختنا موجودة أعلاه)
+    implementation("com.github.zhkl0228:impersonator-okhttp:1.0.13") {
+        exclude(group = "com.squareup.okhttp3")
+        exclude(group = "com.squareup.okio")
+    }
 
     // اختبارات
     testImplementation("junit:junit:4.13.2")
