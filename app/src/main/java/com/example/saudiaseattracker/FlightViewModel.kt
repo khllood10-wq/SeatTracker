@@ -197,7 +197,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView...")
+                addLog("🕵️‍♂️ فتح WebView لالتقاط الجلسة...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
@@ -375,10 +375,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(resp)
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    // 🔍 اطبع جسم الاستجابة لنعرف السبب
                     val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
-                    addLog("🚨 403 Response Body: ${errBody.take(500)}")
-                    addLog("📋 Headers: ${resp.headers().toString().take(300)}")
+                    addLog("🚨 ${resp.code()} Body: ${errBody.take(200)}")
                     return null
                 }
 
@@ -424,7 +422,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
         }
         activeCookie = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
-        addLog("🍪 Cookies محدثة: ${cookieMap.size} كوكي")
     }
 
     private suspend fun createCart(airBoundId: String): String? = try {
