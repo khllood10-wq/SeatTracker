@@ -70,18 +70,15 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // متغير لحفظ الـ Activity لاستخدامه في الـ WebView
     private var currentActivity: android.app.Activity? = null
 
-    // 🔑 التوكن الافتراضي
     private var activeJwt = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6InhIOURKSDNOMDg2QWdzOEpMNklRemVRaDFwOCJ9.eyJhdWQiOiIyZjIwNWM4Yi04MmE5LTQzMGYtYjFiYS0wOGFjMzFiNmVkNGMiLCJpc3MiOiJodHRwczovL2xvZ2luLm1pY3Jvc29mdG9ubGluZS5jb20vZjhiYTJjMjMtYTQwMy00MjNiLWJhMzktZjc4ODNjMjExNjM3L3YyLjAiLCJpYXQiOjE3OTQ0NDc5NjUsIm5iZiI6MTc5NDQ0Nzk2NSwiZXhwIjoxNzk0NDUxODY1LCJhaW8iOiJBU1FBMi84ZUFBQUF6eC9uSmNuVVU4UE40ZjA4bHA4Qzl2aFpIa1F3VWxDcUZTbXFyUTByR2RRPSIsImF6cCI6IjRhNmYwZDMxLThjNDQtNDVkNi04YjVmLWRkMWY0YTM5YmI2MCIsImF6cGFjciI6IjEiLCJvaWQiOiJjMWQwM2M1Ni1jZGJjLTQ2ZTAtOTEwMC02NTY2YjJhOTYyYWIiLCJyaCI6IjEuQVFrQUl5eTYtQU9rTzBLNk9mZUlQQ0VXTjR0Y0lDLXBnZzlEc2JvSXJERzI3VXdBQUFBSkFBLiIsInJvbGVzIjpbIkJvb2tpbmdBbGxBY2Nlc3MiXSwic3ViIjoiYzFkMDNjNTYtY2RiYy00NmUwLTkxMDAtNjU2NmIyYTk2MmFiIiwidGlkIjoiZjhiYTJjMjMtYTQwMy00MjNiLWJhMzktZjc4ODNjMjExNjM3IiwidXRpIjoicFpLS191TEVYVUNwelE1dXJZd0NBQSIsInZlciI6IjIuMCIsInhtc19mdGQiOiJabkpvQUdGVkRxMVptYWtBcDByVXBXQTJ6cjItOFNUaEZKZ0FOOTd4NzJjQlpuSmhibU5sWXkxa2MyMXoifQ.Y3hlV0bo3O8W-PBUyBipo1ePnzbJQtAa_4kMcmRbqwUQg7uaXPtFbtTn15TJlYxtp3w5_tmA4wMN4fnEzM0LRaSI4lwhz11gDVcT_IeMAEfUDpZMbAHEoiIwx1QymjEMN9yhFsYFzTK78oeEgzB9Npcp4IVq8_HnjgDH0mY0CfY50K5UxdM4rp_KzCUO2SpS30YYBbqV7nZuAaCjs-XesGHQLr2rLwvZ-P6EJBGIAVw75Bv6AE9TC8PS_h34pjaTPeNOwEUPLfuuoZeZa02SzXFKVQJK9q2kwsPeOrkr8TuIzNXYyrXrCujiXbBxZDgbldp8YuncZLh2XdA2KjYYfQ"
 
-    // 🍪 متغير لحفظ الكوكيز التي تأتي من الـ WebView
     private var activeCookie: String? = null
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
-            context = getApplication<Application>(), // 👈 الإصلاح هنا
+            context = getApplication<Application>(),
             rawApiKey = BuildConfig.HYPER_API_KEY,
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             acceptLanguage = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
@@ -145,6 +142,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _sessionStatus.value = if (_sessionReady.value) "✅ جلسة Hyper جاهزة" else "⏳ جاهزة عند أول طلب"
     }
 
+    fun markSessionPreparing() {
+        _sessionReady.value = false
+        _sessionStatus.value = "⏳ جاري تجهيز الجلسة..."
+    }
+
     fun addLog(message: String) {
         val curr = _searchLogs.value.toMutableList()
         curr.add(0, message)
@@ -166,7 +168,21 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun sessionExpiryMs(): Long = hyperSession.expiryAt()
 
-    // 🕵️‍♂️ دالة التجديد عبر الـ WebView الخفي
+    // 👇 دالة التجديد اليدوي (التي كانت مفقودة)
+    fun refreshSession() {
+        viewModelScope.launch {
+            try {
+                markSessionPreparing()
+                hyperSession.ensureFreshToken(forceRenew = true)
+                markSessionReady()
+                addLog("✅ تم تجديد reese84 يدوياً")
+            } catch (e: Exception) {
+                addLog("❌ فشل التجديد: ${e.message}")
+                markSessionPreparing()
+            }
+        }
+    }
+
     private suspend fun refreshTokenViaHiddenWebView(): String? {
         return withContext(Dispatchers.Main) {
             val activity = currentActivity
@@ -175,7 +191,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return@withContext null
             }
 
-            suspendCancellableCoroutine<String?> { continuation -> // 👈 تحديد النوع
+            suspendCancellableCoroutine<String?> { continuation ->
                 val reeseCookie = hyperSession.getCookieHeader() ?: ""
                 
                 if (reeseCookie.isBlank()) {
