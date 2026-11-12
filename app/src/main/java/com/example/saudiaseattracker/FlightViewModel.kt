@@ -271,7 +271,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return@withContext false
 
             } catch (e: Exception) {
+                // 👇 طباعة تفاصيل الخطأ الدقيق (Stack Trace)
+                val fullError = e.stackTraceToString().take(500)
                 addLog("❌ فشل httpcloak: ${e.javaClass.simpleName} - ${e.message}")
+                addLog("🔍 التفاصيل: $fullError")
                 return@withContext false
             }
         }
