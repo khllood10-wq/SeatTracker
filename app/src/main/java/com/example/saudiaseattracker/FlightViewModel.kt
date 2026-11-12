@@ -1,7 +1,6 @@
 package com.example.saudiaseattracker
 
 import android.app.Application
-import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -164,6 +163,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _searchLogs.value = emptyList()
     }
 
+    fun hasToken(): Boolean = hyperSession.hasFreshToken()
+
+    // 👇 الدالة الناقصة التي تسببت بالخطأ (تمت إضافتها)
+    fun sessionExpiryMs(): Long = hyperSession.expiryAt()
+
     fun refreshSession() {
         viewModelScope.launch {
             try {
@@ -222,8 +226,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                hyperSession.ensureFreshToken()
-                markSessionReady()
+                try {
+                    addLog("🔄 ضمان جلسة Hyper قبل البحث...")
+                    hyperSession.ensureFreshToken()
+                    markSessionReady()
+                } catch (e: Exception) {
+                    addLog("❌ فشل تجهيز الجلسة: ${e.message}")
+                    _isRunning.value = false
+                    return@launch
+                }
 
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
@@ -232,8 +243,39 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("search", StepStatus.SUCCESS, "${flight.price} SAR"); _foundFlight.value = flight
                 delay(1200)
 
-                // بقية الخطوات (السلة، المسافر، إلخ...) تبقى كما هي
-                // ... (لن أكررها لتوفير المساحة، الكود القديم يعمل)
+                setStep("cart", StepStatus.RUNNING)
+                val cid = createCart(flight.airBoundId) ?: run {
+                    setStep("cart", StepStatus.FAILED); _isRunning.value = false; return@launch
+                }
+                setStep("cart", StepStatus.SUCCESS, cid); delay(1200)
+
+                setStep("passenger", StepStatus.RUNNING)
+                if (!confirmPassenger(cid)) { setStep("passenger", StepStatus.FAILED); _isRunning.value = false; return@launch }
+                setStep("passenger", StepStatus.SUCCESS); delay(1200)
+
+                setStep("extension", StepStatus.RUNNING)
+                if (!addExtension(cid)) { setStep("extension", StepStatus.FAILED); _isRunning.value = false; return@launch }
+                setStep("extension", StepStatus.SUCCESS); delay(1200)
+
+                setStep("contacts", StepStatus.RUNNING)
+                if (!saveContacts(cid)) { setStep("contacts", StepStatus.FAILED); _isRunning.value = false; return@launch }
+                setStep("contacts", StepStatus.SUCCESS); delay(1200)
+
+                setStep("order", StepStatus.RUNNING)
+                val ord = createOrder(cid) ?: run {
+                    setStep("order", StepStatus.FAILED); _isRunning.value = false; return@launch
+                }
+                _finalPnr.value = ord.first; _finalSadad.value = ord.second
+                setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}"); delay(1200)
+
+                if (monitoringMode) {
+                    setStep("payment", StepStatus.SKIPPED, "👁️ لم يُرسل الدفع")
+                    _isRunning.value = false; return@launch
+                }
+
+                setStep("payment", StepStatus.RUNNING)
+                if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); _isRunning.value = false; return@launch }
+                setStep("payment", StepStatus.SUCCESS, "✅ SADAD جاهز — ادفع خلال 24 ساعة")
             } catch (e: Exception) {
                 addLog("❌ ${e.message}")
             } finally { _isRunning.value = false }
@@ -244,6 +286,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         var attempt = 0
         while (attempt < max) {
             attempt++
+            try {
+                hyperSession.ensureFreshToken()
+            } catch (e: Exception) {
+                addLog("⚠️ فشل تجديد reese84: ${e.message} — انتظار 30s")
+                delay(30_000)
+                continue
+            }
+
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
                 val resp = RetrofitClient.api.searchAirBounds(
@@ -261,7 +311,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("⚠️ استجابة ${resp.code()} — التوكن غير صالح")
+                    addLog("⚠️ استجابة ${resp.code()} — التوكن غير صالح أو منتهي")
                     delay(5000)
                     continue
                 }
@@ -290,4 +340,74 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
         return null
     }
+
+    private suspend fun createCart(airBoundId: String): String? = try {
+        val r = RetrofitClient.api.createCart(
+            headers = buildHeaders("2"),
+            request = CreateCartRequest(listOf(airBoundId))
+        )
+        if (!r.isSuccessful) null else {
+            val bodyStr = r.body()?.string() ?: ""
+            val j = JSONObject(bodyStr)
+            val dataObj = j.optJSONObject("data")
+            dataObj?.optString("id")?.takeIf { it.isNotEmpty() } ?: j.optString("id")
+        }
+    } catch (e: Exception) { null }
+
+    private suspend fun confirmPassenger(cid: String): Boolean = try {
+        val p = passengerData
+        val payload = """{"passengerTypeCode":"ADT","gender":"${p.gender}","dateOfBirth":"${p.dateOfBirth}","names":[{"firstName":"${p.firstName}","lastName":"${p.lastName}","title":"${p.title}","nameType":"universal"}],"regulatoryDetails":[{"regulatoryApisType":"ApisDetailRegulatoryDocument","regulatoryDocument":{"number":"${p.nationalId}","name":{"firstName":"${p.firstName.uppercase()}","lastName":"${p.lastName.uppercase()}","nameType":"universal"},"nationalityCode":"${p.nationality}","gender":"${p.gender}","birthDate":"${p.dateOfBirth}","documentType":"identityCard"}}]}"""
+        val r = RetrofitClient.api.updateTravelerRaw(
+            cid, "SKH-1-EXT",
+            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            request = payload.toRequestBody("application/json".toMediaType())
+        )
+        r.code() == 200
+    } catch (e: Exception) { false }
+
+    private suspend fun addExtension(cid: String): Boolean = try {
+        val body = """[{"content":"eyJzdGF0dXMiOiJWRVJJRklFRCIsImhlYWx0aENoZWNrU3RhdHVzIjoiTk9fUkVTUE9OU0UifQ==","travelerId":"SKH-1-EXT","extensionType":"TextExtension","name":"YQENSTATUS"}]"""
+        val r = RetrofitClient.api.addCartExtension(
+            cid, guestOfficeId = "JEDSV08AA",
+            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            request = body.toRequestBody("application/json".toMediaType())
+        )
+        r.isSuccessful
+    } catch (e: Exception) { false }
+
+    private suspend fun saveContacts(cid: String): Boolean = try {
+        val p = passengerData
+        val body = """[{"address":"${p.email}","category":"personal","contactType":"Email","purpose":"notification","lang":"ar","travelerIds":["SKH-1-EXT"]},{"address":"${p.email}","category":"personal","contactType":"Email","purpose":"standard"},{"category":"personal","contactType":"Phone","countryPhoneExtension":"+966","number":"${p.phone}","deviceType":"mobile","purpose":"notification","lang":"ar","travelerIds":["SKH-1-EXT"]},{"category":"personal","contactType":"Phone","countryPhoneExtension":"+966","number":"${p.phone}","deviceType":"mobile","purpose":"standard"}]"""
+        val r = RetrofitClient.api.saveContacts(
+            cid,
+            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            request = body.toRequestBody("application/json".toMediaType())
+        )
+        r.isSuccessful
+    } catch (e: Exception) { false }
+
+    private suspend fun createOrder(cid: String): Pair<String, String>? = try {
+        val r = RetrofitClient.api.createOrderRaw(
+            cid,
+            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            request = "{}".toRequestBody("application/json".toMediaType())
+        )
+        if (!r.isSuccessful) null else {
+            val b = r.body()?.string() ?: return null
+            val pnr = Regex("\"id\"\\s*:\\s*\"([A-Z0-9]{4,8})\"").find(b)?.groupValues?.get(1) ?: return null
+            val sadad = Regex("\"numericId\"\\s*:\\s*\"([0-9]{10,14})\"").find(b)?.groupValues?.get(1) ?: ""
+            Pair(pnr, sadad)
+        }
+    } catch (e: Exception) { null }
+
+    private suspend fun submitPayment(pnr: String): Boolean = try {
+        val p = passengerData
+        val body = """{"orderPaymentRequest":{"paymentRequests":[{"paymentMethod":{"paymentType":"CustomPayment","id":"SADAD"}}]},"emailParameters":{"displayParameters":{"alharamain":true,"baggage":true,"bookingCom":true,"eatmarna":false,"electronicVisa":false,"plusgrade":true,"rental":true,"seat":true,"wifi":true,"onDemandTeasers":[]}},"isCardholderAbsent":false,"isQueuePlacementEnabled":false}"""
+        val r = RetrofitClient.api.submitPayment(
+            pnr, p.lastName,
+            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
+            request = body.toRequestBody("application/json".toMediaType())
+        )
+        r.isSuccessful
+    } catch (e: Exception) { false }
 }
