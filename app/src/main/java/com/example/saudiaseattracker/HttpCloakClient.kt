@@ -14,7 +14,8 @@ class HttpCloakClient {
         HttpCloakResponse(response.statusCode, response.text)
     }
 
-    suspend fun post(url: String, headers: Map<String, String> = emptyMap(), body: String? = null): HttpCloakResponse = withContext(Dispatchers.IO) {
+    // 👇 تعديل: تغيير نوع body إلى Map<String, String>
+    suspend fun post(url: String, headers: Map<String, String> = emptyMap(), body: Map<String, String> = emptyMap()): HttpCloakResponse = withContext(Dispatchers.IO) {
         val response = session.post(url, headers, body)
         HttpCloakResponse(response.statusCode, response.text)
     }
