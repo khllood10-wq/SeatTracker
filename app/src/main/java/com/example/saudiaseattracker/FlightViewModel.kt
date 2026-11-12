@@ -18,7 +18,7 @@ import org.json.JSONObject
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
-import io.github.sardanioss.httpcloak.Body  // 👈 استيراد Body
+import io.github.sardanioss.httpcloak.Body
 
 data class PassengerData(
     val title: String = "Mr",
@@ -223,7 +223,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🔄 محاولة token/initialization...")
 
-                // 👇 استخدام Body.form بدلاً من emptyMap
                 val initResp = httpCloakClient.post(
                     url = "https://dapi.saudia.com/session/auth/web/token/initialization",
                     headers = mapOf(
