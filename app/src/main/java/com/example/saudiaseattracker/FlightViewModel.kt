@@ -73,7 +73,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var currentActivity: android.app.Activity? = null
     private var activeJwt = ""
     private var activeCookie: String? = null
-    private var activeSaaSessionId = ""
+    
+    // 👇 متغير لتوليد saa-session-id محلياً (يبقى ثابتاً طوال الجلسة)
+    private var generatedSaaSessionId: String? = null
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -207,11 +209,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
                         activeCookie = result.cookie
-                        activeSaaSessionId = result.saaSessionId
                         
                         addLog("✅ JWT: ${result.token.take(30)}...")
                         addLog("🍪 Cookies count: ${result.cookie.split(";").size}")
-                        addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "غير موجود!"}")
                         
                         if (continuation.isActive) continuation.resume(result.token)
                     },
@@ -237,6 +237,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         
+        // 👇 توليد saa-session-id مرة واحدة (يبقى ثابتاً)
+        if (generatedSaaSessionId == null) {
+            generatedSaaSessionId = UUID.randomUUID().toString()
+            addLog("🆔 تم توليد saa-session-id: ${generatedSaaSessionId!!.take(8)}...")
+        }
+        
+        val saaId = generatedSaaSessionId ?: UUID.randomUUID().toString()
+        
         val h = mutableMapOf(
             "accept" to "application/json",
             "content-type" to "application/json",
@@ -253,15 +261,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Origin" to "https://www.saudia.com",
-            "Referer" to referer
+            "Referer" to referer,
+            "saa-session-id" to saaId // 👈 يُرسل الآن في كل طلب
         )
 
         // Authorization
         if (activeJwt.isNotBlank()) h["authorization"] = activeJwt
         
-        // نسخ محلية لتجنب smart cast error
+        // نسخة محلية لتجنب smart cast
         val cookieSnapshot: String? = activeCookie
-        val saaSnapshot: String = activeSaaSessionId
         
         // x-d-token = reese84 value (من الالتقاط!)
         if (cookieSnapshot != null) {
@@ -269,11 +277,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             if (!reese84Value.isNullOrBlank()) {
                 h["x-d-token"] = reese84Value
             }
-        }
-        
-        // saa-session-id
-        if (saaSnapshot.isNotBlank()) {
-            h["saa-session-id"] = saaSnapshot
         }
         
         // Cookie
