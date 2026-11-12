@@ -231,9 +231,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val nowSec = System.currentTimeMillis() / 1000
 
+        // 👇 Snapshots (val) لتجنب Smart Cast Error
+        val cookieSnapshot: String? = activeCookie
+        val saaSnapshot: String = activeSaaSessionId
+        val xdSnapshot: String = activeXdToken
+        val jwtSnapshot: String = activeJwt
+
         val h = mutableMapOf(
             "accept" to "application/json",
-            "authorization" to activeJwt,
+            "authorization" to jwtSnapshot,
             "content-type" to "application/json",
             "platform" to "Web",
             "request-context" to "appId=cid-v1:45124bde-070b-4e51-a925-aa883fdba652",
@@ -254,9 +260,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        if (activeSaaSessionId.isNotBlank()) h["saa-session-id"] = activeSaaSessionId
-        if (activeXdToken.isNotBlank()) h["x-d-token"] = activeXdToken
-        if (!activeCookie.isNullOrBlank()) h["Cookie"] = activeCookie
+        if (saaSnapshot.isNotBlank()) h["saa-session-id"] = saaSnapshot
+        if (xdSnapshot.isNotBlank()) h["x-d-token"] = xdSnapshot
+        if (!cookieSnapshot.isNullOrBlank()) h["Cookie"] = cookieSnapshot
 
         return h
     }
