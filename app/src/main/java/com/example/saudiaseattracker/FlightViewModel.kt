@@ -256,7 +256,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             "Origin" to "https://www.saudia.com",
                             "Referer" to "https://www.saudia.com/ar-SA"
                         ),
-                        body = Body.form(emptyMap()) // استخدام Body.form
+                        body = Body.form(emptyMap())
                     )
                 }
 
