@@ -12,8 +12,9 @@ class HttpCloakClient {
     private fun newSession(): Session = Session(
         SessionConfig(
             preset = Presets.CHROME_LATEST_ANDROID,
-            timeout = 20,
-            httpVersion = "h2"
+            timeout = 15,
+            httpVersion = "h1",
+            withoutHTTP3 = true
         )
     )
 
@@ -30,7 +31,7 @@ class HttpCloakClient {
         body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
         newSession().use { session ->
-            val response = session.post(url, body, headers)
+            val response = session.post(url, headers, body)
             HttpCloakResponse(response.statusCode, response.text)
         }
     }
