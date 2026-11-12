@@ -3,36 +3,46 @@ package com.example.saudiaseattracker
 import io.github.sardanioss.httpcloak.Presets
 import io.github.sardanioss.httpcloak.Session
 import io.github.sardanioss.httpcloak.SessionConfig
-import io.github.sardanioss.httpcloak.Body
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class HttpCloakClient {
 
-    // 👇 استخدام SessionConfig لضبط timeout افتراضي (20 ثانية)
     private fun newSession(): Session = Session(
         SessionConfig(
             preset = Presets.CHROME_LATEST_ANDROID,
-            timeout = 20
+            timeout = 20,          // مهلة 20 ثانية
+            httpVersion = "h2"     // إجبار HTTP/2 لتجنب مشاكل QUIC
         )
     )
 
     suspend fun get(url: String, headers: Map<String, String> = emptyMap()): HttpCloakResponse = withContext(Dispatchers.IO) {
-        // 👇 استخدام use { } لضمان إغلاق الجلسة تلقائياً
-        newSession().use { session ->
+        val session = newSession()
+        try {
             val response = session.get(url, headers)
             HttpCloakResponse(response.statusCode, response.text)
+        } finally {
+            try { session.close() } catch (e: Exception) {}
         }
     }
 
+    // 👇 تم التعديل: نوع body أصبح Map<String, String>
     suspend fun post(
         url: String,
-        headers: Map<String, String> = emptyMap(),
-        body: Body? = null
+        body: Map<String, String> = emptyMap(),
+        headers: Map<String, String> = emptyMap()
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
-        newSession().use { session ->
-            val response = session.post(url, headers, body)
+        val session = newSession()
+        try {
+            // استخدام المعاملات المسماة لتجنب أي التباس في الترتيب
+            val response = session.post(
+                url = url,
+                body = body,
+                headers = headers
+            )
             HttpCloakResponse(response.statusCode, response.text)
+        } finally {
+            try { session.close() } catch (e: Exception) {}
         }
     }
 }
