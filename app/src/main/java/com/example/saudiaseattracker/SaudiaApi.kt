@@ -1,3 +1,6 @@
+import com.github.zhkl0228.impersonator.ImpersonatorApi
+import com.github.zhkl0228.impersonator.ImpersonatorFactory
+import com.github.zhkl0228.impersonator.okhttp.OkHttpClientFactory
 package com.example.saudiaseattracker
 
 import com.github.zhkl0228.impersonator.ImpersonatorApi
@@ -99,7 +102,7 @@ object RetrofitClient {
     val api: SaudiaApi by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
-            .client(impersonatingClient) // 👈 استخدام العميل المعدّل
+            .client(impersonatingClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(SaudiaApi::class.java)
