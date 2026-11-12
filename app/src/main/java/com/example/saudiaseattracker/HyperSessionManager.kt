@@ -33,33 +33,18 @@ class HyperSessionManager(
         const val KEY_COOKIE_DOMAIN = "reese84_cookie_domain"
     }
 
+    // 👇 مثل Termux: connectionSpecs فقط، بدون interceptor
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
-        // 👇 الإعدادات التي كانت تعمل سابقاً (بصمة TLS حديثة)
         .connectionSpecs(listOf(
             ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                 .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
                 .build(),
             ConnectionSpec.CLEARTEXT
         ))
-        // 👇 اعتراض لإضافة User-Agent و Accept-Language لكل الطلبات
-        .addInterceptor { chain ->
-            val original = chain.request()
-            val builder = original.newBuilder()
-                .header("User-Agent", userAgent)
-                .header("Accept-Language", acceptLanguage)
-            
-            // إضافة sec-ch-ua فقط لطلبات السعودية (وليس لطلبات Hyper)
-            if (original.url.host.contains("saudia.com")) {
-                builder.header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
-                builder.header("sec-ch-ua-mobile", "?0")
-                builder.header("sec-ch-ua-platform", "\"Windows\"")
-            }
-            chain.proceed(builder.build())
-        }
         .build()
 
     @Volatile private var currentToken: String? = prefs.getString(KEY_TOKEN, null)
@@ -99,7 +84,7 @@ class HyperSessionManager(
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions: ${e.localizedMessage}", e)
-            throw e 
+            throw e
         }
     }
 
@@ -109,15 +94,17 @@ class HyperSessionManager(
         }
 
         val script = fetchScript(scriptUrl!!)
-        val egressIp = fetchEgressIp()
-        val pow = tryFetchPowIfNeeded()
+        Log.d(TAG, "📜 طول السكريبت: ${script.length}")
 
+        val egressIp = fetchEgressIp()
+        Log.d(TAG, "🌐 IP المستخدم: $egressIp")
+
+        // 👇 مثل Termux: بدون pow
         val sensorPayload = generateSensor(
             script = script,
             scriptUrl = scriptUrl!!,
             pageUrl = SAUDIA_URL,
-            ip = egressIp,
-            pow = pow
+            ip = egressIp
         )
 
         val result = submitSensor(sensorPath!!, sensorPayload)
@@ -140,6 +127,9 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(SAUDIA_URL)
             .get()
+            .header("User-Agent", userAgent)
+            .header("Accept-Language", acceptLanguage)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
             .build()
 
         client.newCall(req).execute().use { resp ->
@@ -160,6 +150,9 @@ class HyperSessionManager(
 
             sensorPath = "$rawPath?d=$SAUDIA_HOST"
             scriptUrl = "https://$SAUDIA_HOST$fullPath"
+
+            Log.d(TAG, "✅ sensorPath=$sensorPath")
+            Log.d(TAG, "✅ scriptUrl=$scriptUrl")
         }
     }
 
@@ -167,6 +160,7 @@ class HyperSessionManager(
         val req = Request.Builder()
             .url(url)
             .get()
+            .header("User-Agent", userAgent)
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("فشل جلب السكريبت: ${resp.code}")
@@ -175,6 +169,7 @@ class HyperSessionManager(
     }
 
     private fun fetchEgressIp(): String {
+        // 👇 مثل Termux: فقط x-api-key بدون User-Agent
         val req = Request.Builder()
             .url(IP_FETCH_URL)
             .get()
@@ -186,29 +181,7 @@ class HyperSessionManager(
                 Log.e(TAG, "❌ فشل جلب IP. الكود: ${resp.code}، الرد: $body")
                 throw IOException("فشل جلب IP: ${resp.code} - $body")
             }
-            val ip = JSONObject(body).getString("ip")
-            Log.d(TAG, "🌐 IP المستخدم: $ip")
-            return ip
-        }
-    }
-
-    private fun tryFetchPowIfNeeded(): String? {
-        return try {
-            val req = Request.Builder()
-                .url("https://$SAUDIA_HOST${sensorPath!!}")
-                .post("{\"f\":\"gpc\"}".toRequestBody("text/plain; charset=utf-8".toMediaType()))
-                .header("Content-Type", "text/plain; charset=utf-8")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                val body = resp.body?.string()
-                if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) {
-                    body 
-                } else {
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            null
+            return JSONObject(body).getString("ip")
         }
     }
 
@@ -216,8 +189,7 @@ class HyperSessionManager(
         script: String,
         scriptUrl: String,
         pageUrl: String,
-        ip: String,
-        pow: String?
+        ip: String
     ): String {
         val body = JSONObject().apply {
             put("userAgent", userAgent)
@@ -226,9 +198,11 @@ class HyperSessionManager(
             put("script", script)
             put("ip", ip)
             put("acceptLanguage", acceptLanguage)
-            if (!pow.isNullOrBlank()) put("pow", pow)
         }.toString()
 
+        Log.d(TAG, "📤 Hyper Request Body size: ${body.length}")
+
+        // 👇 مثل Termux: فقط x-api-key و Content-Type، بدون User-Agent
         val req = Request.Builder()
             .url("$HYPER_BASE/reese84")
             .post(body.toRequestBody("application/json".toMediaType()))
@@ -250,10 +224,13 @@ class HyperSessionManager(
 
     private fun submitSensor(sensorPath: String, payload: String): TokenResult {
         val url = "https://$SAUDIA_HOST$sensorPath"
+        // 👇 مثل Termux: User-Agent + Content-Type + Accept
         val req = Request.Builder()
             .url(url)
             .post(payload.toRequestBody("text/plain; charset=utf-8".toMediaType()))
             .header("Content-Type", "text/plain; charset=utf-8")
+            .header("User-Agent", userAgent)
+            .header("Accept", "*/*")
             .build()
 
         client.newCall(req).execute().use { resp ->
