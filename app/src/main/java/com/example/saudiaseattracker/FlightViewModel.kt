@@ -18,6 +18,7 @@ import org.json.JSONObject
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
+import io.github.sardanioss.httpcloak.Body  // 👈 استيراد Body
 
 data class PassengerData(
     val title: String = "Mr",
@@ -222,6 +223,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🔄 محاولة token/initialization...")
 
+                // 👇 استخدام Body.form بدلاً من emptyMap
                 val initResp = httpCloakClient.post(
                     url = "https://dapi.saudia.com/session/auth/web/token/initialization",
                     headers = mapOf(
@@ -234,7 +236,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         "Origin" to "https://www.saudia.com",
                         "Referer" to "https://www.saudia.com/ar-SA"
                     ),
-                    body = emptyMap() // 👈 تعديل: إرسال Map فارغ بدلاً من نص
+                    body = Body.form(emptyMap())
                 )
 
                 addLog("📄 POST /token/init → HTTP ${initResp.statusCode}")
