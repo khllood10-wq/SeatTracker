@@ -34,7 +34,7 @@ android {
     kotlinOptions { jvmTarget = "1.8" }
     buildFeatures { compose = true; buildConfig = true }
 
-    // 👇 الحل: استبعاد ملفات META-INF المتعارضة من BouncyCastle/Impersonator
+    // 👇 الحل: استبعاد كل ملفات META-INF المتعارضة (بما فيها versions/ من BouncyCastle)
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -48,8 +48,11 @@ android {
             excludes += "/META-INF/*.SF"
             excludes += "/META-INF/*.DSA"
             excludes += "/META-INF/*.RSA"
-            excludes += "/META-INF/versions/9/previous-compilation-data.bin"
+            excludes += "/META-INF/versions/**"
             excludes += "/META-INF/*.kotlin_module"
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/MANIFEST.MF"
+            excludes += "/META-INF/*.txt"
         }
         jniLibs {
             pickFirsts += "**/libc++_shared.so"
@@ -81,7 +84,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // 👇 impersonator-bctls: يوفر SSLContext يحاكي بصمة Chrome (بدون OkHttp fork)
+    // 👇 impersonator-bctls: يوفر SSLContext يحاكي بصمة Chrome
     implementation("com.github.zhkl0228:impersonator-bctls:1.0.12")
 
     // اختبارات
