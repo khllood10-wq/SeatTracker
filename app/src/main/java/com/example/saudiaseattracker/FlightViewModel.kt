@@ -1,16 +1,21 @@
 package com.example.saudiaseattracker
 
 import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import retrofit2.Response
@@ -66,8 +71,28 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // 👇 متغير التوكن اليدوي (يمكن تعديله من الواجهة)
-    var manualToken by mutableStateOf("Bearer ")
+    // ═══════════════════════════════════════════════════════════════
+    // 🔑 التوكن الافتراضي
+    // ═══════════════════════════════════════════════════════════════
+    private var activeJwt = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6InhIOURKSDNOMDg2QWdzOEpMNklRemVRaDFwOCJ9.eyJhdWQiOiIyZjIwNWM4Yi04MmE5LTQzMGYtYjFiYS0wOGFjMzFiNmVkNGMiLCJpc3MiOiJodHRwczovL2xvZ2luLm1pY3Jvc29mdG9ubGluZS5jb20vZjhiYTJjMjMtYTQwMy00MjNiLWJhMzktZjc4ODNjMjExNjM3L3YyLjAiLCJpYXQiOjE3OTQ0NDYwOTYsIm5iZiI6MTc5NDQ0NjA5NiwiZXhwIjoxNzk0NDQ5OTk2LCJhaW8iOiJrMk5nWU9pNFZLWDNvUHRJVkZYMkFwN0E2UmNWVXVzaTdGa1RGN1lsbkE3UytLM0d6UU1BIiwiYXpwIjoiNGE2ZjBkMzEtOGM0NC00NWQ2LThiNWYtZGQxZjRhMzliYjYwIiwiYXpwYWNyIjoiMSIsIm9pZCI6ImMxZDAzYzU2LWNkYmMtNDZlMC05MTAwLTY1NjZiMmE5NjJhYiIsInJoIjoiMS5BUWtBSXl5Ni1BT2tPMEs2T2ZlSVBDRVdONHRjSUMtcGdnOURzYm9JckRHMjdVd0FBQUFKQUEuIiwicm9sZXMiOlsiQm9va2luZ0FsbEFjY2VzcyJdLCJzdWIiOiJjMWQwM2M1Ni1jZGJjLTQ2ZTAtOTEwMC02NTY2YjJhOTYyYWIiLCJ0aWQiOiJmOGJhMmMyMy1hNDAzLTQyM2ItYmEzOS1mNzg4M2MyMTE2MzciLCJ1dGkiOiJKYlJORlUwZWUweW8wZDFqZE1oVkFBIiwidmVyIjoiMi4wIiwieG1zX2Z0ZCI6IjRaaDRqT1RUejlUWi1fUXI3TW1xS3VwaXg4WUxsZEh3SzcweTJxWkpCellCYzNkbFpHVnVZeTFrYzIxeiJ9.j3-2-UfHayi8nqL1lbgX08IXNKVGQXxh1b6CWGfOVib2zqnQNNnJvy0OlmZTUS0Gb0EHlVjs38B0vGIDBAvxz2MxixPglNXL3L5zydPazMCndsuuac66cVrTbp_r0b0Rjq2K-5pOuct9FA0vIWd7Fj01lyhRnL9cEEhKRqNBdyfaQmpfAoBDUS9vW4FE_W-WqAb3kc4QgRqw8qR-9HM_V4CBe6ZBr8o-L9zOBemUDtYA_XmEeAxeTrkKcgb-f2U0WqEWslWKyqY5--35k0DoJISw0lFLb0xKZ0-NVEN5thlWM11pRsvBbOPnizhRCfURUve7JLznKMq2JyppviuuuA"
+
+    // ═══════════════════════════════════════════════════════════════
+    // 🧩 طلب الـ Replay (الذي استخرجته)
+    // ═══════════════════════════════════════════════════════════════
+    private val replayPayload = JSONObject("""
+        {
+          "url": "https://dapi.saudia.com/session/auth/web/token/initialization",
+          "body": "key=UUh2b1ptWElibEoraXR4N21KVUlpdGNuQWlKa2g4eUdXOFBzdUlCQU5aemlRRmhTK09paG1mZVZLNnJPdUxRN3FrUjdjYWxVL0tKRDBFSkxFUm5wK21rNkViMDhlcitYQThYTlNCaEZBQTRaMERTOWV2MXNOMFNWNzhKSDJzYUZ4SWQxOUNEZFJkUk1zVGhFaEhSTjBEcXpVUHdtMGNKNmoyUEF0eEs4NE0wcXZIVHNVOHVkTjNUWktBaW5hcjJkL0REdEpWckRhS2d1c3UvaXVFM1JyMDEybHZzZnl6Q2hrdEdBLzViMEdNUlh1VzMva1ZTWHVwYnFmU3UrUzRySTJjKzdybGU3ODcrT2JYQjVyaWREcGZQK3NQWFd2Zjd6SFVkeStXVTZ4dGNIN1NEZ01lMy84em5Dd3c3dTJ5WS9NeTROamd5eTVNdWlsVlJHM1VtOFRsVW1GcHJncUx3TVljSjZCMHowZUtnZVZWUlRtalBKZnd5dCtDNGMyVTFpUjVPa2RWNzBMZEg5UTVYaWhBSnVORHBFakZ2Wmc5bGs4a2JiNmtMd2w0c2F0b3QzR1gxZHBUYmlGdU8zaTZ6UlBRZmV0Q0FuR0ZVRUFVTk1MNTkzMUdBK1hzSGsyUzNsbUdoaElrczNac0hQZkVUdStyNG5qUFBqUGpxZTROZXM2QWwvaTZFdDhYbTNMd3dWVmVYT1F0R3FUOU1Wc04rSHU4eVBlV3J4cmdOYW9ubWlmMkxkeDV1Rm9oSUhvSjI4U0RBd0lnMGdiZVM3OXp3N3FMRHQ3blR5NWNEL3Y0TURPd3cwOERCY1lpdEs0bGJKNUFQSjhnWC8ycGN3REk1K1NLSHp4VlRyT3lrbDQ5V2Fhb2pnaHh4TTdJYlJxMXhGMG95UDJxRDVIU2c9&body=NjMyMmZkNGJjNDJjZmZiMzIwMzlhZTYzNTQ4ZGFkZjFkNmZhMmJkN2M4OTdkOGYwZGI2Y2VhZDU2YzYxMTdhODUxNmM0OWJjYmY5NjQ4OTRlN2E0OTRiMjM0MTQ1ZTU4NGY2NGQ1YTg5MmIzYjkzYjk0YmU3OWI3ZWMwNzVhYWYwYWFjZjY0YWY1NzMyOTI0MDU0NDA3MzMxNzI2ZTI1YzczNjY5OWYwYjU2OWZmOTU2MDM1NmZmMjVmOTg3NjhkNWQ0MWM5NTg5YzFkODE2YmRlM2RhZjA2ZjM1ZWUyZTU3ZWVjMGE4YjQ1ZThmY2NkZjI3Nzc1ZjAxN2M3NDVkNTBmMDFiOTFkNmVmMTljZWEzYThjZjg0ODEzNTkzOTJiMzZiODFjMzIyZmYyNWRmYzk5OWM4MzA3NzViNzRmOWJkNTU4MjczMzZiM2E2NGQ3NDhkNGI4MDdiNTYyOTMxYWY3MmIzYWFlMDFkZGY4NzZjOTljOTI2YjZmMjA5MWM4ZDE1ZGI4ODcyNjg0NDllODQwZmQ5ZjUzN2JmOWNmZDZhNDMzMTUwY2I5OGFmZDQ3NmM2N2RmZWRhMDE0YTU5NGU1YmJlMGM3NjIwMzUzMDkzNTcwOGUxZTEzMzg0NGFlYzlkODU4M2JiZTc5MGZmYjU1ZmE3N2YxZTAwY2FkNGY=",
+          "xdToken": "3:hZcTrr6YK93lEdp5NFgzPQ==:AiDNK0Qg3GNenZyYa3hXh+LDSmw4BrryVr+IjlGDRaV6VDiRgHd1tr7u5GiRg3lrgwm5S7JTgUtPVl4vcR2e+eADx6/KpUTVfdQB1+ZR3Oy2bFyhjud7PG5NnaMrrzDHibYnTJ4XOkB+7vamdj6ec0thu0ErLq99h8tBuhx+FKk=:bhsavVVDGyj8BwFeChe3IfW1J5GfxKzCEFJsOk+69Ek=:b195C0bceVKfSjfFuTmR2/FOWZNDT7Yuxvrva5RzIybGsuEug/CmrT+WvKFisHWmR3MbR3FJeBnQttFv2PatTQd6VUOwKe6kHvNfyma+p5VKUHt/A3mC65rPW6MHhxRRhaECf0YBwQz0BjmAQaNSl89Nq0LzU4mXKxlXoJX40m7m1uXDi24adMqprXxNxlfp6Q+F9oSqsNtgM+xeqQ5qvkBjNvBhJ7Cggq73F6IpGtpM19gHauHhoSlqTdnQT0o8WS4Uo1CIw+DhgSl+St/+ZQPiiwD/YVitnU07skHIX5OsHZV9BaIJtB1NsjBQo9U8vW7j2Kza6GxVXB6vOiw/2ip8rS5lfV+Asded4dow/Kuuemnq2Srs/au2iQ1cOncWggdYMhi4817iOZYKCC8uyxoRNAnJ734El8QzQXSNUioYebBOHpz2pWiMYnGBhO96sn33zQq5kK4SpBfvyA==:",
+          "headers": {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "x-d-token": "3:hZcTrr6YK93lEdp5NFgzPQ==:AiDNK0Qg3GNenZyYa3hXh+LDSmw4BrryVr+IjlGDRaV6VDiRgHd1tr7u5GiRg3lrgwm5S7JTgUtPVl4vcR2e+eADx6/KpUTVfdQB1+ZR3Oy2bFyhjud7PG5NnaMrrzDHibYnTJ4XOkB+7vamdj6ec0thu0ErLq99h8tBuhx+FKk=:bhsavVVDGyj8BwFeChe3IfW1J5GfxKzCEFJsOk+69Ek=:b195C0bceVKfSjfFuTmR2/FOWZNDT7Yuxvrva5RzIybGsuEug/CmrT+WvKFisHWmR3MbR3FJeBnQttFv2PatTQd6VUOwKe6kHvNfyma+p5VKUHt/A3mC65rPW6MHhxRRhaECf0YBwQz0BjmAQaNSl89Nq0LzU4mXKxlXoJX40m7m1uXDi24adMqprXxNxlfp6Q+F9oSqsNtgM+xeqQ5qvkBjNvBhJ7Cggq73F6IpGtpM19gHauHhoSlqTdnQT0o8WS4Uo1CIw+DhgSl+St/+ZQPiiwD/YVitnU07skHIX5OsHZV9BaIJtB1NsjBQo9U8vW7j2Kza6GxVXB6vOiw/2ip8rS5lfV+Asded4dow/Kuuemnq2Srs/au2iQ1cOncWggdYMhi4817iOZYKCC8uyxoRNAnJ734El8QzQXSNUioYebBOHpz2pWiMYnGBhO96sn33zQq5kK4SpBfvyA==:",
+            "platform": "Web",
+            "version": "27.2"
+          }
+        }
+    """.trimIndent())
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -119,14 +144,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     init {
         viewModelScope.launch {
             try {
-                if (BuildConfig.HYPER_API_KEY.isBlank()) {
-                    addLog("❌ مفتاح Hyper فارغ!")
-                    _sessionStatus.value = "❌ مفتاح API فارغ"
-                    return@launch
-                }
                 addLog("🔄 تهيئة جلسة Hyper...")
                 hyperSession.ensureFreshToken()
                 markSessionReady()
+                addLog("✅ جلسة Hyper جاهزة")
+                
+                // تجديد التوكن فوراً عند بدء التشغيل
+                refreshJwtFromReplay()
             } catch (e: Exception) {
                 _sessionStatus.value = "⚠️ تعذر التجهيز: ${e.message}"
                 addLog("❌ فشل Hyper: ${e.message}")
@@ -137,11 +161,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun markSessionReady() {
         _sessionReady.value = hyperSession.hasFreshToken()
         _sessionStatus.value = if (_sessionReady.value) "✅ جلسة Hyper جاهزة" else "⏳ جاهزة عند أول طلب"
-    }
-
-    fun markSessionPreparing() {
-        _sessionReady.value = false
-        _sessionStatus.value = "⏳ جاري تجهيز الجلسة..."
     }
 
     fun addLog(message: String) {
@@ -163,20 +182,58 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _searchLogs.value = emptyList()
     }
 
-    fun hasToken(): Boolean = hyperSession.hasFreshToken()
-
-    // 👇 الدالة الناقصة التي تسببت بالخطأ (تمت إضافتها)
     fun sessionExpiryMs(): Long = hyperSession.expiryAt()
 
-    fun refreshSession() {
-        viewModelScope.launch {
+    // ═══════════════════════════════════════════════════════════════
+    // 🚀 دالة التجديد التلقائي باستخدام الـ Replay
+    // ═══════════════════════════════════════════════════════════════
+    private suspend fun refreshJwtFromReplay(): Boolean {
+        return withContext(Dispatchers.IO) {
             try {
-                markSessionPreparing()
-                hyperSession.ensureFreshToken(forceRenew = true)
-                markSessionReady()
-                addLog("✅ تم تجديد reese84")
+                val client = OkHttpClient()
+                val url = replayPayload.getString("url")
+                val bodyString = replayPayload.getString("body")
+                val xdToken = replayPayload.getString("xdToken")
+
+                val request = Request.Builder()
+                    .url(url)
+                    .post(bodyString.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                    .header("x-d-token", xdToken)
+                    .header("platform", "Web")
+                    .header("version", "27.2")
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    // 👇 هنا نستخدم كوكي reese84 من Hyper الذي يتخطى حماية Imperva
+                    .header("Cookie", hyperSession.getCookieHeader() ?: "")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: ""
+                    if (response.isSuccessful) {
+                        val json = JSONObject(body)
+                        val newToken = json.optString("access_token", json.optString("token", ""))
+                        if (newToken.isNotEmpty()) {
+                            activeJwt = "Bearer $newToken"
+                            withContext(Dispatchers.Main) {
+                                addLog("✅ تم تجديد التوكن تلقائياً من الـ Replay")
+                            }
+                            true
+                        } else {
+                            withContext(Dispatchers.Main) { addLog("❌ لم يتم العثور على التوكن في الرد") }
+                            false
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            addLog("❌ فشل التجديد: ${response.code} - $body")
+                        }
+                        false
+                    }
+                }
             } catch (e: Exception) {
-                addLog("❌ فشل التجديد: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    addLog("❌ خطأ أثناء التجديد: ${e.message}")
+                }
+                false
             }
         }
     }
@@ -205,10 +262,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
 
-        // 👇 استخدام التوكن اليدوي من الواجهة
-        if (manualToken.isNotBlank() && manualToken.length > 10) {
-            h["Authorization"] = manualToken
-        }
+        // 👇 استخدام التوكن النشط (المجدد تلقائياً)
+        h["Authorization"] = activeJwt
 
         val reese = hyperSession.getCookieHeader()
         if (!reese.isNullOrBlank()) h["Cookie"] = reese
@@ -226,15 +281,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                try {
-                    addLog("🔄 ضمان جلسة Hyper قبل البحث...")
-                    hyperSession.ensureFreshToken()
-                    markSessionReady()
-                } catch (e: Exception) {
-                    addLog("❌ فشل تجهيز الجلسة: ${e.message}")
-                    _isRunning.value = false
-                    return@launch
-                }
+                hyperSession.ensureFreshToken()
+                markSessionReady()
+
+                // تجديد التوكن قبل البحث
+                refreshJwtFromReplay()
 
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
@@ -286,14 +337,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         var attempt = 0
         while (attempt < max) {
             attempt++
-            try {
-                hyperSession.ensureFreshToken()
-            } catch (e: Exception) {
-                addLog("⚠️ فشل تجديد reese84: ${e.message} — انتظار 30s")
-                delay(30_000)
-                continue
-            }
-
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
                 val resp = RetrofitClient.api.searchAirBounds(
@@ -310,10 +353,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
 
+                // إذا انتهت صلاحية التوكن، جدد وحاول مرة أخرى
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("⚠️ استجابة ${resp.code()} — التوكن غير صالح أو منتهي")
-                    delay(5000)
-                    continue
+                    addLog("⚠️ التوكن منتهي - جاري التجديد التلقائي...")
+                    val refreshed = refreshJwtFromReplay()
+                    if (refreshed) {
+                        addLog("✅ تم التجديد، إعادة المحاولة...")
+                        delay(2000)
+                        continue 
+                    } else {
+                        addLog("❌ فشل التجديد، أوقف البحث.")
+                        return null
+                    }
                 }
 
                 if (resp.isSuccessful) {
