@@ -12,10 +12,10 @@ class HttpCloakClient {
     private fun newSession(): Session = Session(
         SessionConfig(
             preset = Presets.CHROME_LATEST_ANDROID,
-            timeout = 20,
-            httpVersion = "auto",       // 👈 السماح بالمفاوضة التلقائية
-            retry = 2,                  // 👈 إعادة المحاولة عند الفشل
-            withoutClientHints = true   // 👈 تعطيل Client Hints لتجنب مشاكل Imperva
+            timeout = 30,              // مهلة 30 ثانية
+            httpVersion = "h2",        // إجبار HTTP/2
+            disableHTTP3 = true,       // 👈 تعطيل QUIC نهائياً (المعامل الصحيح)
+            retry = 3                  // 3 محاولات إعادة
         )
     )
 
@@ -32,7 +32,11 @@ class HttpCloakClient {
         body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
         newSession().use { session ->
-            val response = session.post(url, body, headers)
+            val response = session.post(
+                url = url,
+                body = body,
+                headers = headers
+            )
             HttpCloakResponse(response.statusCode, response.text)
         }
     }
