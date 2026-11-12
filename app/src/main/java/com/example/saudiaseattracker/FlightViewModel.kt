@@ -68,7 +68,6 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // 👇 عميل httpcloak
     private val httpCloakClient = HttpCloakClient()
 
     private var activeJwt = ""
@@ -182,9 +181,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 🎯 التقاط الجلسة باستخدام httpcloak (بدلاً من curl/WebView)
-    // ═══════════════════════════════════════════════════════════════
     private suspend fun captureSessionViaHttpCloak(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -238,7 +234,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         "Origin" to "https://www.saudia.com",
                         "Referer" to "https://www.saudia.com/ar-SA"
                     ),
-                    body = ""
+                    body = emptyMap() // 👈 تعديل: إرسال Map فارغ بدلاً من نص
                 )
 
                 addLog("📄 POST /token/init → HTTP ${initResp.statusCode}")
