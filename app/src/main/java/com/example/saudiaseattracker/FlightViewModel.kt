@@ -237,7 +237,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         
-        // مطابقة هيدرات المتصفح الحقيقي (من الالتقاط)
         val h = mutableMapOf(
             "accept" to "application/json",
             "content-type" to "application/json",
@@ -260,19 +259,27 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         // Authorization
         if (activeJwt.isNotBlank()) h["authorization"] = activeJwt
         
-        // ⭐ x-d-token = reese84 value (من الالتقاط!)
-        val reese84Value = extractCookieValue(activeCookie, "reese84")
-        if (!reese84Value.isNullOrBlank()) {
-            h["x-d-token"] = reese84Value
+        // نسخ محلية لتجنب smart cast error
+        val cookieSnapshot: String? = activeCookie
+        val saaSnapshot: String = activeSaaSessionId
+        
+        // x-d-token = reese84 value (من الالتقاط!)
+        if (cookieSnapshot != null) {
+            val reese84Value = extractCookieValue(cookieSnapshot, "reese84")
+            if (!reese84Value.isNullOrBlank()) {
+                h["x-d-token"] = reese84Value
+            }
         }
         
-        // ⭐ saa-session-id (الحل الرئيسي!)
-        if (activeSaaSessionId.isNotBlank()) {
-            h["saa-session-id"] = activeSaaSessionId
+        // saa-session-id
+        if (saaSnapshot.isNotBlank()) {
+            h["saa-session-id"] = saaSnapshot
         }
         
         // Cookie
-        if (!activeCookie.isNullOrBlank()) h["Cookie"] = activeCookie
+        if (!cookieSnapshot.isNullOrBlank()) {
+            h["Cookie"] = cookieSnapshot
+        }
 
         return h
     }
@@ -362,13 +369,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput(
-                            channel = "WEB",
-                            pointOfSale = "SA",
-                            currencyCode = "SAR",
-                            language = "AR",
-                            browserId = "63a3e711-d1a3-48a9-a497-1b1be70e3817"
-                        )
+                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
                 )
 
