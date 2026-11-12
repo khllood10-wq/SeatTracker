@@ -19,7 +19,7 @@ import org.json.JSONObject
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
-import io.github.sardanioss.httpcloak.Body // 👈 استيراد Body
+import io.github.sardanioss.httpcloak.Body
 
 data class PassengerData(
     val title: String = "Mr",
@@ -256,7 +256,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             "Origin" to "https://www.saudia.com",
                             "Referer" to "https://www.saudia.com/ar-SA"
                         ),
-                        body = Body.form(emptyMap()) // 👈 استخدام Body.form
+                        body = Body.form(emptyMap()) // استخدام Body.form
                     )
                 }
 
@@ -554,9 +554,4 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         saveCookiesFromResponse(r)
         r.isSuccessful
     } catch (e: Exception) { false }
-    
-    override fun onCleared() {
-        super.onCleared()
-        httpCloakClient.close()
-    }
 }
