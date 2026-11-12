@@ -7,17 +7,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class HttpCloakClient {
+    // إنشاء جلسة تحاكي متصفح Chrome على أندرويد
     private val session = Session(Presets.CHROME_LATEST_ANDROID)
 
-    suspend fun get(url: String, headers: Map<String, String> = emptyMap()): HttpCloakResponse = withContext(Dispatchers.IO) {
+    suspend fun get(
+        url: String, 
+        headers: Map<String, String> = emptyMap()
+    ): HttpCloakResponse = withContext(Dispatchers.IO) {
         val response = session.get(url, headers)
         HttpCloakResponse(response.statusCode, response.text)
     }
 
-    // 👇 تم التعديل: نوع body أصبح Body?
     suspend fun post(
-        url: String,
-        headers: Map<String, String> = emptyMap(),
+        url: String, 
+        headers: Map<String, String> = emptyMap(), 
         body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
         val response = session.post(url, headers, body)
@@ -25,7 +28,11 @@ class HttpCloakClient {
     }
 
     fun close() {
-        try { session.close() } catch (e: Exception) { }
+        try {
+            session.close()
+        } catch (e: Exception) {
+            // تجاهل أخطاء الإغلاق
+        }
     }
 }
 
