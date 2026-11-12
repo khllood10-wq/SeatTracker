@@ -208,21 +208,35 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 manager.fetchAll(
                     onSuccess = { data: CapturedData ->
                         activeJwt = data.jwt
-                        activeCookie = data.cookie
                         activeSaaSessionId = data.saaSessionId
                         activeXdToken = extractCookieValue(data.cookie, "reese84") ?: ""
+
+                        // 🎯 استخراج bid من headers (إذا التقاطه الـ hook)
                         if (data.bid.isNotBlank()) {
                             activeBid = data.bid
                         } else {
-                            val bidFromCookie = extractCookieValue(data.cookie, "bid_62671c5aacb31d282f1da1d3c8ee4abb")
-                            if (!bidFromCookie.isNullOrBlank()) activeBid = bidFromCookie
+                            // استخراج bid من الكوكيز (bid_*)
+                            val bidFromCookie = extractBidFromCookies(data.cookie)
+                            if (!bidFromCookie.isNullOrBlank()) {
+                                activeBid = bidFromCookie
+                            }
+                        }
+
+                        // 🎯 نضيف bid_* إلى الكوكيز إذا لم يكن موجوداً (باستخدام activeBid)
+                        val bidCookieName = "bid_62671c5aacb31d282f1da1d3c8ee4abb"
+                        val hasBid = data.cookie.split(";").any { it.trim().startsWith("bid_") }
+                        activeCookie = if (!hasBid) {
+                            "${data.cookie}; $bidCookieName=$activeBid"
+                        } else {
+                            data.cookie
                         }
 
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
-                        addLog("🍪 Cookie: ${data.cookie.split(";").size} كوكي")
+                        addLog("🍪 Cookie: ${activeCookie?.split(";")?.size ?: 0} كوكي")
                         addLog("🆔 saa-session-id: ${if (data.saaSessionId.isNotBlank()) data.saaSessionId else "❌ فارغ"}")
                         addLog("🎯 x-d-token: ${activeXdToken.take(30)}...")
-                        addLog("🔑 bid: ${activeBid.take(20)}...")
+                        addLog("🔑 bid: $activeBid")
+                        addLog("🆕 bid_* مضاف يدوياً: ${!hasBid}")
 
                         if (continuation.isActive) continuation.resume(true)
                     },
@@ -240,6 +254,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return cookieStr.split(";")
             .map { it.trim() }
             .find { it.startsWith("$name=") }
+            ?.substringAfter("=")
+            ?.trim()
+    }
+
+    private fun extractBidFromCookies(cookieStr: String?): String? {
+        if (cookieStr == null) return null
+        return cookieStr.split(";")
+            .map { it.trim() }
+            .find { it.startsWith("bid_") }
             ?.substringAfter("=")
             ?.trim()
     }
