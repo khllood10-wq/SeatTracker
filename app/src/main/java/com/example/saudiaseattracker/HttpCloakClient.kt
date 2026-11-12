@@ -12,10 +12,12 @@ class HttpCloakClient {
     private fun newSession(): Session = Session(
         SessionConfig(
             preset = Presets.CHROME_LATEST_ANDROID,
-            timeout = 30,              // مهلة 30 ثانية
-            httpVersion = "h2",        // إجبار HTTP/2
-            disableHTTP3 = true,       // 👈 تعطيل QUIC نهائياً (المعامل الصحيح)
-            retry = 3                  // 3 محاولات إعادة
+            timeout = 30,               // مهلة 30 ثانية
+            httpVersion = "h2",         // إجبار HTTP/2
+            disableHTTP3 = true,        // تعطيل QUIC (UDP) نهائياً
+            disableBrotli = true,       // 👈 تعطيل Brotli (قد يسبب مشاكل على بعض الشبكات)
+            disableZstd = true,         // 👈 تعطيل Zstd (قد يسبب مشاكل على بعض الشبكات)
+            retry = 3                   // 3 محاولات إعادة
         )
     )
 
