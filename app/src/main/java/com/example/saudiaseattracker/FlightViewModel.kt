@@ -207,11 +207,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeJwt = result.token
                         activeCookie = result.cookie
                         activeSaaSessionId = result.saaSessionId
-                        
+
                         addLog("✅ JWT: ${result.token.take(20)}...")
                         addLog("🍪 Cookies: ${result.cookie.split(";").size}")
                         addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌ غير موجود"}")
-                        
+
                         if (continuation.isActive) continuation.resume(result.token)
                     },
                     onError = { error: String ->
@@ -223,14 +223,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 🎯 JWT + كل الكوكيز + x-d-token + saa-session-id + كل الهيدرات
-    // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
-        
-        // كل هيدرات المتصفح من الالتقاط
+        val nowSec = System.currentTimeMillis() / 1000
+        val gaUserId = "${Random.nextLong(1000000000L, 2000000000L)}.${Random.nextLong(1000000000L, 2000000000L)}"
+
         val h = mutableMapOf(
             "accept" to "application/json",
             "authorization" to activeJwt,
@@ -240,6 +238,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "version" to "27.2",
+            "x-analytics-session-id" to "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0",
+            "x-analytics-type" to "GA",
+            "x-analytics-user-id" to gaUserId,
             "x-api-version" to apiVersion,
             "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
@@ -251,23 +252,24 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        // 1. saa-session-id (الحقيقي)
         if (activeSaaSessionId.isNotBlank()) {
             h["saa-session-id"] = activeSaaSessionId
         }
 
-        // 2. x-d-token = reese84 value
         val reeseHeader = hyperSession.getCookieHeader()
         val xdToken = reeseHeader?.removePrefix("reese84=")?.trim()
         if (!xdToken.isNullOrBlank()) {
             h["x-d-token"] = xdToken
         }
 
-        // 3. Cookie (كل الكوكيز)
         val cookieSnapshot: String? = activeCookie
         if (!cookieSnapshot.isNullOrBlank()) {
             h["Cookie"] = cookieSnapshot
         }
+
+        addLog("📤 Headers: ${h.keys.filter { it != "Cookie" && it != "authorization" }.joinToString(", ")}")
+        addLog("🔍 saa-session-id: ${activeSaaSessionId.take(20)}...")
+        addLog("🔍 x-d-token length: ${xdToken?.length ?: 0}")
 
         return h
     }
