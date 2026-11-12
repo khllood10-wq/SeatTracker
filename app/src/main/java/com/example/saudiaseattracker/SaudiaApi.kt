@@ -1,6 +1,3 @@
-import com.github.zhkl0228.impersonator.ImpersonatorApi
-import com.github.zhkl0228.impersonator.ImpersonatorFactory
-import com.github.zhkl0228.impersonator.okhttp.OkHttpClientFactory
 package com.example.saudiaseattracker
 
 import com.github.zhkl0228.impersonator.ImpersonatorApi
