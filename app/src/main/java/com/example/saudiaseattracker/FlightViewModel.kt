@@ -176,7 +176,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // يفتح WebView لجلب JWT فقط
     private suspend fun getJwtViaWebView(): String? {
         return withContext(Dispatchers.Main) {
             val activity = currentActivity ?: run {
@@ -215,7 +214,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 🧪 اختبار حاسم: JWT فقط. لا كوكيز، لا x-d-token، لا saa.
+    // 🧪 اختبار: JWT + x-d-token (من Hyper). لا كوكيز، لا saa.
     // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val h = mutableMapOf(
@@ -230,11 +229,21 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        // 👇 JWT فقط
+        // 1. JWT (Authorization)
         if (activeJwt.isNotBlank()) {
             h["authorization"] = activeJwt
         } else {
             addLog("⚠️ JWT فارغ!")
+        }
+
+        // 2. x-d-token (من Hyper - نفس قيمة reese84)
+        val reese84Header = hyperSession.getCookieHeader() // "reese84=..."
+        val xdToken = reese84Header?.removePrefix("reese84=")?.trim()
+        if (!xdToken.isNullOrBlank()) {
+            h["x-d-token"] = xdToken
+            addLog("🎯 x-d-token مُرسل (طول: ${xdToken.length})")
+        } else {
+            addLog("⚠️ x-d-token فارغ - reese84 غير متوفر")
         }
 
         return h
@@ -254,7 +263,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                // جلب JWT أولاً
                 addLog("🎫 جلب JWT عبر WebView...")
                 val jwt = getJwtViaWebView()
                 if (jwt == null) {
@@ -263,7 +271,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
 
-                // الآن البحث بـ JWT فقط
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
                     setStep("search", StepStatus.FAILED); _isRunning.value = false; return@launch
@@ -331,7 +338,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("❌ رفض (${resp.code()}) - JWT وحده لا يكفي")
+                    addLog("❌ رفض (${resp.code()}) - JWT + x-d-token لا يكفي")
                     return null
                 }
 
