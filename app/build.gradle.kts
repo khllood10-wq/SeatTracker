@@ -33,12 +33,26 @@ android {
     }
     kotlinOptions { jvmTarget = "1.8" }
     buildFeatures { compose = true; buildConfig = true }
+
+    // 👇 الحل: استبعاد ملفات META-INF المتعارضة من BouncyCastle/Impersonator
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/DEPENDENCIES"
-            excludes += "/META-INF/LICENSE*"
-            excludes += "/META-INF/NOTICE*"
+            excludes += "/META-INF/LICENSE"
+            excludes += "/META-INF/LICENSE.txt"
+            excludes += "/META-INF/LICENSE.md"
+            excludes += "/META-INF/NOTICE"
+            excludes += "/META-INF/NOTICE.txt"
+            excludes += "/META-INF/NOTICE.md"
+            excludes += "/META-INF/*.SF"
+            excludes += "/META-INF/*.DSA"
+            excludes += "/META-INF/*.RSA"
+            excludes += "/META-INF/versions/9/previous-compilation-data.bin"
+            excludes += "/META-INF/*.kotlin_module"
+        }
+        jniLibs {
+            pickFirsts += "**/libc++_shared.so"
         }
     }
 }
