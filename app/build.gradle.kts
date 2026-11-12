@@ -68,7 +68,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // 👇 impersonator-bctls: يوفر SSLContext يحاكي بصمة Chrome (بدون OkHttp fork)
-    implementation("com.github.zhkl0228:impersonator-bctls:1.0.13")
+    implementation("com.github.zhkl0228:impersonator-bctls:1.0.12")
 
     // اختبارات
     testImplementation("junit:junit:4.13.2")
