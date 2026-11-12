@@ -13,8 +13,8 @@ class HttpCloakClient {
         SessionConfig(
             preset = Presets.CHROME_LATEST_ANDROID,
             timeout = 15,
-            httpVersion = "h1",
-            withoutHTTP3 = true
+            httpVersion = "h1"
+            // 👆 تم حذف withoutHTTP3 لأنها غير موجودة في هذا الإصدار
         )
     )
 
@@ -31,7 +31,6 @@ class HttpCloakClient {
         body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
         newSession().use { session ->
-            // 👇 الترتيب الصحيح: url, body, headers
             val response = session.post(
                 url = url,
                 body = body,
