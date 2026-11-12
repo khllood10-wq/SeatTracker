@@ -1,129 +1,266 @@
 package com.example.saudiaseattracker
 
-import android.annotation.SuppressLint
-import android.app.Activity
-import android.graphics.Color
-import android.os.Handler
-import android.os.Looper
-import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
+import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
-@SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
-class HiddenWebViewManager(
-    private val activity: Activity,
-    private val reese84Cookie: String,
-    private val userAgent: String
+class HyperSessionManager(
+    context: Context,
+    rawApiKey: String,
+    private val userAgent: String = DEFAULT_UA,
+    private val acceptLanguage: String = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
 ) {
-    private var webView: WebView? = null
+    private val apiKey = rawApiKey.trim()
+    private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun fetchToken(onSuccess: (String) -> Unit, onError: (String) -> Unit) {
-        Handler(Looper.getMainLooper()).post {
-            try {
-                // 1. إنشاء WebView وهمي بحجم 1x1 بكسل، شفاف، ومخفي خلف الواجهة
-                webView = WebView(activity).apply {
-                    layoutParams = FrameLayout.LayoutParams(1, 1)
-                    alpha = 0f
-                    setBackgroundColor(Color.TRANSPARENT)
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.databaseEnabled = true
-                    settings.userAgentString = userAgent
-                    settings.loadWithOverviewMode = true
-                    settings.useWideViewPort = true
-                }
+    companion object {
+        const val TAG = "HyperSessionError"
+        const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        const val HYPER_BASE = "https://incapsula.hypersolutions.co"
+        const val IP_FETCH_URL = "https://ip.hypersolutions.co/ip"
+        const val SAUDIA_HOST = "www.saudia.com"
+        const val SAUDIA_URL = "https://www.saudia.com/ar-SA"
+        const val PREFS = "hyper_prefs"
+        const val KEY_TOKEN = "reese84_token"
+        const val KEY_EXPIRY = "reese84_expiry_ms"
+        const val KEY_COOKIE_DOMAIN = "reese84_cookie_domain"
+    }
 
-                // 2. حقن كوكي reese84 من Hyper
-                val cookieManager = CookieManager.getInstance()
-                cookieManager.setAcceptCookie(true)
-                cookieManager.setAcceptThirdPartyCookies(webView, true)
-                cookieManager.setCookie("https://www.saudia.com", reese84Cookie)
-                cookieManager.setCookie("https://dapi.saudia.com", reese84Cookie)
-                cookieManager.flush()
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
 
-                // 3. إضافة الجسر لاستقبال التوكن
-                webView?.addJavascriptInterface(object {
-                    @JavascriptInterface
-                    fun onTokenFound(token: String) {
-                        Handler(Looper.getMainLooper()).post {
-                            cleanup()
-                            val cleanToken = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                            onSuccess(cleanToken)
-                        }
-                    }
+    @Volatile private var currentToken: String? = prefs.getString(KEY_TOKEN, null)
+    @Volatile private var expiryMs: Long = prefs.getLong(KEY_EXPIRY, 0L)
+    @Volatile private var cookieDomain: String = prefs.getString(KEY_COOKIE_DOMAIN, SAUDIA_HOST) ?: SAUDIA_HOST
 
-                    @JavascriptInterface
-                    fun onError(msg: String) {
-                        Handler(Looper.getMainLooper()).post {
-                            cleanup()
-                            onError(msg)
-                        }
-                    }
-                }, "AndroidBridge")
+    @Volatile private var sensorPath: String? = null
+    @Volatile private var scriptUrl: String? = null
 
-                // 4. اعتراض الطلبات لاكتشاف التوكن
-                webView?.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        val js = """
-                            (function() {
-                                if (window.tokenPollingStarted) return;
-                                window.tokenPollingStarted = true;
-                                
-                                function checkToken() {
-                                    try {
-                                        var t = sessionStorage.getItem('saudia-access-token') || 
-                                                localStorage.getItem('saudia-access-token') ||
-                                                localStorage.getItem('rawAirData');
-                                        if (t && t.indexOf('eyJ') > -1) {
-                                            window.AndroidBridge.onTokenFound(t);
-                                            return true;
-                                        }
-                                    } catch(e) {}
-                                    return false;
-                                }
-                                
-                                var interval = setInterval(function() {
-                                    if (checkToken()) {
-                                        clearInterval(interval);
-                                    }
-                                }, 500);
+    fun hasFreshToken(minRemainingMs: Long = 120_000L): Boolean {
+        val t = currentToken ?: return false
+        return t.isNotBlank() && (expiryMs - System.currentTimeMillis()) > minRemainingMs
+    }
 
-                                setTimeout(function() {
-                                    clearInterval(interval);
-                                    window.AndroidBridge.onError("Timeout: Token not found in 10s");
-                                }, 15000);
-                            })();
-                        """.trimIndent()
-                        view?.evaluateJavascript(js, null)
-                    }
-                }
+    fun getToken(): String? = currentToken
+    fun getCookieHeader(): String? {
+        val t = currentToken ?: return null
+        return "reese84=$t"
+    }
 
-                // 5. إضافة الـ WebView إلى واجهة الـ Activity (بدون صلاحيات إضافية)
-                val rootView = activity.window.decorView as ViewGroup
-                rootView.addView(webView)
+    @Synchronized
+    fun ensureFreshToken(forceRenew: Boolean = false) {
+        if (!forceRenew && hasFreshToken()) {
+            Log.d(TAG, "✅ التوكن الحالي صالح")
+            return
+        }
+        
+        if (apiKey.isBlank()) {
+            Log.e(TAG, "❌ خطأ فادح: مفتاح API فارغ!")
+            throw IOException("مفتاح API فارغ! تأكد من إعداده في GitHub.")
+        }
 
-                // 6. تحميل الصفحة
-                webView?.loadUrl("https://www.saudia.com/ar-SA")
-
-            } catch (e: Exception) {
-                cleanup()
-                onError(e.message ?: "Unknown error")
+        Log.d(TAG, "🔄 جاري حل/تجديد reese84...")
+        try {
+            runBlocking(Dispatchers.IO) {
+                solveOrRenew()
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ فشل الاتصال بـ Hyper Solutions: ${e.localizedMessage}", e)
+            throw e 
         }
     }
 
-    private fun cleanup() {
-        try {
-            webView?.stopLoading()
-            webView?.loadUrl("about:blank")
-            webView?.destroy()
-            val parent = webView?.parent as? ViewGroup
-            parent?.removeView(webView)
-            webView = null
-        } catch (e: Exception) {}
+    private fun solveOrRenew() {
+        if (sensorPath == null || scriptUrl == null) {
+            discoverPaths()
+        }
+
+        val script = fetchScript(scriptUrl!!)
+        val egressIp = fetchEgressIp()
+        val pow = tryFetchPowIfNeeded()
+
+        val sensorPayload = generateSensor(
+            script = script,
+            scriptUrl = scriptUrl!!,
+            pageUrl = SAUDIA_URL,
+            ip = egressIp,
+            pow = pow
+        )
+
+        val result = submitSensor(sensorPath!!, sensorPayload)
+
+        currentToken = result.token
+        expiryMs = System.currentTimeMillis() + result.renewInSec * 1000L
+        cookieDomain = result.cookieDomain
+
+        prefs.edit()
+            .putString(KEY_TOKEN, result.token)
+            .putLong(KEY_EXPIRY, expiryMs)
+            .putString(KEY_COOKIE_DOMAIN, cookieDomain)
+            .apply()
+
+        Log.d(TAG, "✅ تم الحصول على reese84 token (صالح ${result.renewInSec}s)")
+    }
+
+    private fun discoverPaths() {
+        Log.d(TAG, "🔍 اكتشاف مسارات التحدي...")
+        val req = Request.Builder()
+            .url(SAUDIA_URL)
+            .get()
+            .header("User-Agent", userAgent)
+            .header("Accept-Language", acceptLanguage)
+            .build()
+
+        client.newCall(req).execute().use { resp ->
+            val html = resp.body?.string() ?: throw IOException("لا يوجد HTML")
+            val pathRegex = Regex("""src\s*=\s*"(/[^/]+/[^?]+)\?.*"""")
+            val fullRegex = Regex("""scriptElement\.src\s*=\s*"(.*?)"""")
+
+            val pathMatch = pathRegex.find(html)
+            val fullMatch = fullRegex.find(html)
+
+            if (pathMatch == null || fullMatch == null) {
+                Log.e(TAG, "❌ لم يتم العثور على مسار سكريبت التحدي.")
+                throw IOException("لم يتم العثور على مسار سكريبت التحدي.")
+            }
+
+            val rawPath = pathMatch.groupValues[1]
+            val fullPath = fullMatch.groupValues[1]
+
+            sensorPath = "$rawPath?d=$SAUDIA_HOST"
+            scriptUrl = "https://$SAUDIA_HOST$fullPath"
+        }
+    }
+
+    private fun fetchScript(url: String): String {
+        val req = Request.Builder()
+            .url(url)
+            .get()
+            .header("User-Agent", userAgent)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("فشل جلب السكريبت: ${resp.code}")
+            return resp.body?.string() ?: throw IOException("السكريبت فارغ")
+        }
+    }
+
+    private fun fetchEgressIp(): String {
+        val req = Request.Builder()
+            .url(IP_FETCH_URL)
+            .get()
+            .header("x-api-key", apiKey)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل جلب IP. الكود: ${resp.code}، الرد: $body")
+                throw IOException("فشل جلب IP: ${resp.code} - $body")
+            }
+            val ip = JSONObject(body).getString("ip")
+            Log.d(TAG, "🌐 IP المستخدم: $ip")
+            return ip
+        }
+    }
+
+    private fun tryFetchPowIfNeeded(): String? {
+        return try {
+            val req = Request.Builder()
+                .url("https://$SAUDIA_HOST${sensorPath!!}")
+                .post("{\"f\":\"gpc\"}".toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                .header("User-Agent", userAgent)
+                .header("Content-Type", "text/plain; charset=utf-8")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string()
+                if (resp.isSuccessful && !body.isNullOrBlank() && body.length > 10) {
+                    body 
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun generateSensor(
+        script: String,
+        scriptUrl: String,
+        pageUrl: String,
+        ip: String,
+        pow: String?
+    ): String {
+        val body = JSONObject().apply {
+            put("userAgent", userAgent)
+            put("pageUrl", pageUrl)
+            put("scriptUrl", scriptUrl)
+            put("script", script)
+            put("ip", ip)
+            put("acceptLanguage", acceptLanguage)
+            if (!pow.isNullOrBlank()) put("pow", pow)
+        }.toString()
+
+        val req = Request.Builder()
+            .url("$HYPER_BASE/reese84")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .header("x-api-key", apiKey)
+            .header("Content-Type", "application/json")
+            .build()
+
+        client.newCall(req).execute().use { resp ->
+            val respBody = resp.body?.string() ?: throw IOException("Hyper API: رد فارغ")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ رفضت Hyper الطلب! (HTTP ${resp.code}) | السبب: $respBody")
+                throw IOException("Hyper API ${resp.code}: $respBody")
+            }
+            return JSONObject(respBody).getString("payload")
+        }
+    }
+
+    private data class TokenResult(val token: String, val renewInSec: Long, val cookieDomain: String)
+
+    private fun submitSensor(sensorPath: String, payload: String): TokenResult {
+        val url = "https://$SAUDIA_HOST$sensorPath"
+        val req = Request.Builder()
+            .url(url)
+            .post(payload.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+            .header("Content-Type", "text/plain; charset=utf-8")
+            .header("User-Agent", userAgent)
+            .build()
+
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IOException("رد فارغ من إرسال sensor")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "❌ فشل إرسال sensor إلى saudia (HTTP ${resp.code}): $body")
+                throw IOException("فشل إرسال sensor (${resp.code})")
+            }
+            val json = JSONObject(body)
+            return TokenResult(
+                token = json.getString("token"),
+                renewInSec = json.optLong("renewInSec", 900L),
+                cookieDomain = json.optString("cookieDomain", SAUDIA_HOST)
+            )
+        }
+    }
+
+    fun expiryAt(): Long = expiryMs
+
+    fun forceClear() {
+        currentToken = null
+        expiryMs = 0L
+        sensorPath = null
+        scriptUrl = null
+        prefs.edit().clear().apply()
     }
 }
