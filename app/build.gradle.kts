@@ -76,7 +76,7 @@ dependencies {
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
     // 👇 الحل: انتحال بصمة TLS/JA3/JA4 و HTTP/2 الخاصة بـ Chrome
-    implementation("com.github.zhkl0228:impersonator-okhttp:1.11.0")
+    implementation("com.github.zhkl0228:impersonator-okhttp:1.0.13")
 
     // اختبارات
     testImplementation("junit:junit:4.13.2")
