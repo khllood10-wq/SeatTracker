@@ -15,7 +15,8 @@ import android.widget.FrameLayout
 data class CapturedData(
     val jwt: String,
     val cookie: String,
-    val saaSessionId: String
+    val saaSessionId: String,
+    val bid: String
 )
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
@@ -50,8 +51,7 @@ class HiddenWebViewManager(
 
                 webView?.addJavascriptInterface(object {
                     @JavascriptInterface
-                    fun onCaptured(jwt: String, saaId: String) {
-                        // 👇 ننتظر 6 ثواني إضافية لجمع incap_ses_* من CookieManager
+                    fun onCaptured(jwt: String, saaId: String, bid: String) {
                         Handler(Looper.getMainLooper()).postDelayed({
                             try {
                                 val c1 = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
@@ -70,24 +70,14 @@ class HiddenWebViewManager(
                                 }
                                 val combined = map.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
-                                // سجل أسماء الكوكيز الحرجة
-                                val names = map.keys.toList()
-                                val hasIncap = names.any { it.startsWith("incap_ses") }
-                                val hasVisid = names.any { it.startsWith("visid_incap") }
-                                val hasReese = names.contains("reese84")
-                                val hasBid = names.any { it.startsWith("bid_") }
-
                                 cleanup()
                                 val cleanToken = if (jwt.startsWith("Bearer ")) jwt else "Bearer $jwt"
-                                
-                                // نرسل المعلومات الإضافية عبر onSuccess
-                                capturedInfo = "Cookies: ${names.size} | incap_ses: $hasIncap | visid: $hasVisid | reese84: $hasReese | bid: $hasBid"
-                                onSuccess(CapturedData(cleanToken, combined, saaId))
+                                onSuccess(CapturedData(cleanToken, combined, saaId, bid))
                             } catch (e: Exception) {
                                 cleanup()
                                 onError("Error collecting: ${e.message}")
                             }
-                        }, 6000)
+                        }, 3000) // 3 ثواني إضافية
                     }
 
                     @JavascriptInterface
@@ -100,32 +90,18 @@ class HiddenWebViewManager(
                 }, "AndroidBridge")
 
                 webView?.webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        super.onPageStarted(view, url, favicon)
+                        view?.evaluateJavascript(HOOK_JS, null)
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
+                        view?.evaluateJavascript(HOOK_JS, null)
                         val js = """
                             (function() {
                                 if (window.__pollerStarted) return;
                                 window.__pollerStarted = true;
-                                
-                                function findSaaId() {
-                                    try {
-                                        for (var i = 0; i < localStorage.length; i++) {
-                                            var v = localStorage.getItem(localStorage.key(i));
-                                            if (v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) {
-                                                var k = localStorage.key(i).toLowerCase();
-                                                if (k.indexOf('saa') > -1 || k.indexOf('session') > -1 || k.indexOf('sid') > -1) return v;
-                                            }
-                                        }
-                                        for (var j = 0; j < sessionStorage.length; j++) {
-                                            var v2 = sessionStorage.getItem(sessionStorage.key(j));
-                                            if (v2 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v2)) {
-                                                var k2 = sessionStorage.key(j).toLowerCase();
-                                                if (k2.indexOf('saa') > -1 || k2.indexOf('session') > -1 || k2.indexOf('sid') > -1) return v2;
-                                            }
-                                        }
-                                    } catch(e) {}
-                                    return window.__capturedSessionId || '';
-                                }
                                 
                                 function check() {
                                     try {
@@ -133,8 +109,12 @@ class HiddenWebViewManager(
                                                   localStorage.getItem('saudia-access-token') ||
                                                   localStorage.getItem('rawAirData');
                                         if (jwt && jwt.indexOf('eyJ') > -1) {
-                                            var sid = findSaaId();
-                                            window.AndroidBridge.onCaptured(jwt, sid);
+                                            // ننتظر 4 ثواني إضافية لالتقاط الـ hooks
+                                            setTimeout(function() {
+                                                var sid = window.__capturedSaaId || '';
+                                                var bid = window.__capturedBid || '';
+                                                window.AndroidBridge.onCaptured(jwt, sid, bid);
+                                            }, 4000);
                                             return true;
                                         }
                                     } catch(e) {}
@@ -146,7 +126,7 @@ class HiddenWebViewManager(
                                 setTimeout(function() {
                                     clearInterval(interval);
                                     window.AndroidBridge.onError("Timeout");
-                                }, 25000);
+                                }, 30000);
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(js, null)
@@ -164,8 +144,61 @@ class HiddenWebViewManager(
     }
 
     companion object {
-        @Volatile
-        var capturedInfo: String = ""
+        private const val HOOK_JS = """
+            (function() {
+                if (window.__hooked) return;
+                window.__hooked = true;
+                window.__capturedSaaId = '';
+                window.__capturedBid = '';
+                
+                // 1. اعتراض setRequestHeader (XHR)
+                var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+                XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+                    try {
+                        var n = (name || '').toLowerCase();
+                        if (n === 'saa-session-id') window.__capturedSaaId = value;
+                        if (n === 'browserid') window.__capturedBid = value;
+                    } catch(e) {}
+                    return origSetHeader.apply(this, arguments);
+                };
+                
+                // 2. اعتراض fetch
+                var origFetch = window.fetch;
+                window.fetch = function(input, init) {
+                    try {
+                        if (init && init.headers) {
+                            var h = init.headers;
+                            if (h instanceof Headers) {
+                                var v = h.get('saa-session-id');
+                                if (v) window.__capturedSaaId = v;
+                                var b = h.get('browserid');
+                                if (b) window.__capturedBid = b;
+                            } else if (Array.isArray(h)) {
+                                for (var i = 0; i < h.length; i++) {
+                                    var k = (h[i][0] || '').toLowerCase();
+                                    if (k === 'saa-session-id') window.__capturedSaaId = h[i][1];
+                                    if (k === 'browserid') window.__capturedBid = h[i][1];
+                                }
+                            } else if (typeof h === 'object') {
+                                for (var key in h) {
+                                    var kk = key.toLowerCase();
+                                    if (kk === 'saa-session-id') window.__capturedSaaId = h[key];
+                                    if (kk === 'browserid') window.__capturedBid = h[key];
+                                }
+                            }
+                        }
+                    } catch(e) {}
+                    return origFetch.apply(this, arguments);
+                };
+                
+                // 3. اعتراض XHR.open (بعض التطبيقات تستخدم open بدلاً من setRequestHeader)
+                var origOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
+                    this.__url = url;
+                    return origOpen.apply(this, arguments);
+                };
+            })();
+        """.trimIndent()
     }
 
     private fun cleanup() {
