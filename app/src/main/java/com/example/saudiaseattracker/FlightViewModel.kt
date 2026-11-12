@@ -73,6 +73,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeJwt = ""
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
+    private var activeBid = ""
+    private var activeGaCid = ""
+    private var activeAnalyticsSession = ""
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -207,18 +210,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeJwt = result.token
                         activeCookie = result.cookie
                         activeSaaSessionId = result.saaSessionId
+                        activeBid = result.bidValue
+                        activeGaCid = result.gaCid
+                        activeAnalyticsSession = result.analyticsSessionId
 
                         addLog("✅ JWT: ${result.token.take(20)}...")
                         addLog("🍪 Cookies: ${result.cookie.split(";").size}")
-                        addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌"}")
-
-                        // 🔍 استخراج bid_* و cid
-                        val bid = extractBidFromCookies(result.cookie)
-                        val cid = extractCidFromGa(result.cookie)
-                        val analyticsSession = extractAnalyticsSessionId(result.cookie)
-                        addLog("🔍 bid_* = ${bid ?: "❌"}")
-                        addLog("🔍 _ga cid = ${cid ?: "❌"}")
-                        addLog("🔍 analytics-session-id = ${analyticsSession?.take(30) ?: "❌"}")
+                        addLog("🔍 bid_*: ${if (result.bidValue.isNotBlank()) result.bidValue else "❌"}")
+                        addLog("🔍 _ga cid: ${if (result.gaCid.isNotBlank()) result.gaCid else "❌"}")
+                        addLog("🔍 analytics-session: ${if (result.analyticsSessionId.isNotBlank()) result.analyticsSessionId.take(30) else "❌"}")
+                        addLog("🆔 saa: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌"}")
 
                         if (continuation.isActive) continuation.resume(result.token)
                     },
@@ -233,33 +234,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun extractCookieValue(cookieStr: String?, name: String): String? {
         if (cookieStr == null) return null
-        return cookieStr.split(";")
-            .map { it.trim() }
-            .find { it.startsWith("$name=") }
-            ?.substringAfter("=")
-            ?.trim()
-    }
-
-    private fun extractBidFromCookies(cookieStr: String?): String? {
-        if (cookieStr == null) return null
-        return cookieStr.split(";")
-            .map { it.trim() }
-            .find { it.startsWith("bid_") }
-            ?.substringAfter("=")
-            ?.trim()
-    }
-
-    private fun extractCidFromGa(cookieStr: String?): String? {
-        val ga = extractCookieValue(cookieStr, "_ga") ?: return null
-        // Format: GA1.1.1665079041.1792189288
-        val parts = ga.split(".")
-        return if (parts.size >= 4) "${parts[2]}.${parts[3]}" else null
-    }
-
-    private fun extractAnalyticsSessionId(cookieStr: String?): String? {
-        val gaSession = extractCookieValue(cookieStr, "_ga_LVNZGXXWMB") ?: return null
-        // Format: GS2.1.s1794457128$o14$g1$t1794457462$j38$l0$h1303289424
-        return if (gaSession.startsWith("GS2.1.")) gaSession.removePrefix("GS2.1.") else null
+        return cookieStr.split(";").map { it.trim() }.find { it.startsWith("$name=") }?.substringAfter("=")?.trim()
     }
 
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
@@ -268,10 +243,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val nowSec = System.currentTimeMillis() / 1000
         val fallbackGaUserId = "${Random.nextLong(1000000000L, 2000000000L)}.${Random.nextLong(1000000000L, 2000000000L)}"
         val fallbackSessionId = "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0"
-
-        // 🎯 استخراج القيم الحقيقية من الكوكيز
-        val realAnalyticsUserId = extractCidFromGa(activeCookie) ?: fallbackGaUserId
-        val realAnalyticsSessionId = extractAnalyticsSessionId(activeCookie) ?: fallbackSessionId
 
         val h = mutableMapOf(
             "accept" to "application/json",
@@ -282,9 +253,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "version" to "27.2",
-            "x-analytics-session-id" to realAnalyticsSessionId,
+            "x-analytics-session-id" to (activeAnalyticsSession.ifBlank { fallbackSessionId }),
             "x-analytics-type" to "GA",
-            "x-analytics-user-id" to realAnalyticsUserId,
+            "x-analytics-user-id" to (activeGaCid.ifBlank { fallbackGaUserId }),
             "x-api-version" to apiVersion,
             "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
@@ -296,21 +267,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        if (activeSaaSessionId.isNotBlank()) {
-            h["saa-session-id"] = activeSaaSessionId
-        }
+        if (activeSaaSessionId.isNotBlank()) h["saa-session-id"] = activeSaaSessionId
 
         val cookieSnapshot: String? = activeCookie
-
-        // x-d-token = WebView's reese84
         val wvReese84 = extractCookieValue(cookieSnapshot, "reese84")
-        if (!wvReese84.isNullOrBlank()) {
-            h["x-d-token"] = wvReese84
-        }
+        if (!wvReese84.isNullOrBlank()) h["x-d-token"] = wvReese84
 
-        if (!cookieSnapshot.isNullOrBlank()) {
-            h["Cookie"] = cookieSnapshot
-        }
+        if (!cookieSnapshot.isNullOrBlank()) h["Cookie"] = cookieSnapshot
 
         return h
     }
@@ -329,7 +292,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                addLog("🎫 جلب JWT + Cookies + saa-session-id...")
+                addLog("🎫 جلب JWT + Cookies + saa...")
                 val jwt = getJwtAndCookiesViaWebView()
                 if (jwt == null) {
                     addLog("❌ فشل جلب البيانات")
@@ -389,9 +352,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             attempt++
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
-                // 🎯 استخراج bid_* واستخدامه كـ browserId
-                val bidValue = extractBidFromCookies(activeCookie) ?: "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
-                addLog("🔍 using browserId = $bidValue")
+                val bidValue = if (activeBid.isNotBlank()) activeBid else "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
+                addLog("🔍 browserId = ${bidValue.take(20)}...")
 
                 val resp = RetrofitClient.api.searchAirBounds(
                     headers = buildHeaders("4"),
