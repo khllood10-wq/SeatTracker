@@ -31,7 +31,12 @@ class HttpCloakClient {
         body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
         newSession().use { session ->
-            val response = session.post(url, headers, body)
+            // 👇 الترتيب الصحيح: url, body, headers
+            val response = session.post(
+                url = url,
+                body = body,
+                headers = headers
+            )
             HttpCloakResponse(response.statusCode, response.text)
         }
     }
