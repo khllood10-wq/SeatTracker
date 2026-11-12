@@ -25,8 +25,8 @@ class HyperSessionManager(
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
         const val IP_FETCH_URL = "https://ip.hypersolutions.co/ip"
-        const val SAUDIA_HOST = "https://www.saudia.com"
-        const val SAUDIA_URL = "https://www.saudia.com/ar-SA"
+        
+        const val SAUDIA_URL = "www.saudia.com/ar-SA"
         const val PREFS = "hyper_prefs"
         const val KEY_TOKEN = "reese84_token"
         const val KEY_EXPIRY = "reese84_expiry_ms"
