@@ -73,8 +73,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var currentActivity: android.app.Activity? = null
     private var activeJwt = ""
     private var activeCookie: String? = null
-    
-    // 👇 متغير لتوليد saa-session-id محلياً (يبقى ثابتاً طوال الجلسة)
+    private var activeSaaSessionId = ""
     private var generatedSaaSessionId: String? = null
 
     private val hyperSession: HyperSessionManager by lazy {
@@ -209,10 +208,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
                         activeCookie = result.cookie
-                        
-                        addLog("✅ JWT: ${result.token.take(30)}...")
-                        addLog("🍪 Cookies count: ${result.cookie.split(";").size}")
-                        
+                        activeSaaSessionId = result.sessionId
+
+                        addLog("✅ JWT: ${result.token.take(20)}...")
+                        addLog("🍪 Cookies: ${result.cookie.split(";").size}")
+                        addLog("🆔 session_id: ${if (result.sessionId.isNotBlank()) result.sessionId.take(20) else "⚠️ لم يُعثر عليه - سيُولّد عشوائياً"}")
+
                         if (continuation.isActive) continuation.resume(result.token)
                     },
                     onError = { error: String ->
@@ -236,15 +237,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
-        
-        // 👇 توليد saa-session-id مرة واحدة (يبقى ثابتاً)
-        if (generatedSaaSessionId == null) {
-            generatedSaaSessionId = UUID.randomUUID().toString()
-            addLog("🆔 تم توليد saa-session-id: ${generatedSaaSessionId!!.take(8)}...")
-        }
-        
-        val saaId = generatedSaaSessionId ?: UUID.randomUUID().toString()
-        
+
         val h = mutableMapOf(
             "accept" to "application/json",
             "content-type" to "application/json",
@@ -261,25 +254,40 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Origin" to "https://www.saudia.com",
-            "Referer" to referer,
-            "saa-session-id" to saaId // 👈 يُرسل الآن في كل طلب
+            "Referer" to referer
         )
 
-        // Authorization
         if (activeJwt.isNotBlank()) h["authorization"] = activeJwt
-        
-        // نسخة محلية لتجنب smart cast
+
         val cookieSnapshot: String? = activeCookie
-        
-        // x-d-token = reese84 value (من الالتقاط!)
+        val saaSnapshot: String = activeSaaSessionId
+
+        // سجل أسماء الكوكيز للتشخيص
+        if (cookieSnapshot != null) {
+            val names = cookieSnapshot.split(";")
+                .map { it.trim().substringBefore("=") }
+                .filter { it.isNotEmpty() }
+            android.util.Log.d("HyperCookies", "🍪 Names: ${names.joinToString(", ")}")
+        }
+
+        // saa-session-id: استخدم الحقيقي إن وُجد، وإلا ولّد عشوائياً (ثابت)
+        if (saaSnapshot.isNotBlank()) {
+            h["saa-session-id"] = saaSnapshot
+        } else {
+            if (generatedSaaSessionId == null) {
+                generatedSaaSessionId = UUID.randomUUID().toString()
+                addLog("🆔 تم توليد saa-session-id احتياطي: ${generatedSaaSessionId!!.take(8)}...")
+            }
+            h["saa-session-id"] = generatedSaaSessionId!!
+        }
+
         if (cookieSnapshot != null) {
             val reese84Value = extractCookieValue(cookieSnapshot, "reese84")
             if (!reese84Value.isNullOrBlank()) {
                 h["x-d-token"] = reese84Value
             }
         }
-        
-        // Cookie
+
         if (!cookieSnapshot.isNullOrBlank()) {
             h["Cookie"] = cookieSnapshot
         }
