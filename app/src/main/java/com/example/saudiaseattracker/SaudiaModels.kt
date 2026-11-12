@@ -26,7 +26,9 @@ data class Itinerary(
     @SerializedName("isRequestedBound") val isRequestedBound: Boolean = true
 )
 
-data class Traveler(@SerializedName("passengerTypeCode") val passengerTypeCode: String = "ADT")
+data class Traveler(
+    @SerializedName("passengerTypeCode") val passengerTypeCode: String = "ADT"
+)
 
 data class SearchPreferences(
     @SerializedName("showUnavailableEntries") val showUnavailableEntries: Boolean = false,
@@ -35,15 +37,20 @@ data class SearchPreferences(
 )
 
 data class OfferCodeAvailabilityInput(
-    @@SerializedName("channel") val channel: String = "MOBILE_WEB", // 👈 تم التعديل
+    @SerializedName("channel") val channel: String = "MOBILE_WEB",
     @SerializedName("pointOfSale") val pointOfSale: String = "SA",
     @SerializedName("currencyCode") val currencyCode: String = "SAR",
     @SerializedName("language") val language: String = "AR",
     @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
 )
 
-data class SaudiaResponse(@SerializedName("data") val data: SaudiaData?)
-data class SaudiaData(@SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?)
+data class SaudiaResponse(
+    @SerializedName("data") val data: SaudiaData?
+)
+
+data class SaudiaData(
+    @SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?
+)
 
 data class AirBoundGroup(
     @SerializedName("boundDetails") val boundDetails: BoundDetails?,
@@ -56,7 +63,9 @@ data class BoundDetails(
     @SerializedName("segments") val segments: List<Segment>?
 )
 
-data class Segment(@SerializedName("flightId") val flightId: String?)
+data class Segment(
+    @SerializedName("flightId") val flightId: String?
+)
 
 data class AirBound(
     @SerializedName("airBoundId") val airBoundId: String?,
@@ -65,8 +74,14 @@ data class AirBound(
     @SerializedName("airOffer") val airOffer: AirOffer?
 )
 
-data class FlightStatus(@SerializedName("value") val value: String?)
-data class AirOffer(@SerializedName("totalPrice") val totalPrice: TotalPrice?)
+data class FlightStatus(
+    @SerializedName("value") val value: String?
+)
+
+data class AirOffer(
+    @SerializedName("totalPrice") val totalPrice: TotalPrice?
+)
+
 data class TotalPrice(
     @SerializedName("value") val value: Double?,
     @SerializedName("currencyCode") val currencyCode: String?
