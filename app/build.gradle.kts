@@ -75,7 +75,8 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.11.0")
-
+// ... في نهاية قسم dependencies
+implementation("com.github.zhkl0228:impersonator-okhttp:1.11.0")
     // اختبارات (اختياري)
     testImplementation("junit:junit:4.13.2")
 }
