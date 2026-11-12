@@ -10,7 +10,7 @@ import retrofit2.http.*
 interface SaudiaApi {
     @POST("airsearch/search/air-bounds")
     suspend fun searchAirBounds(
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: SaudiaSearchRequest
@@ -18,7 +18,7 @@ interface SaudiaApi {
 
     @POST("shopping/carts")
     suspend fun createCart(
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: CreateCartRequest
@@ -28,7 +28,7 @@ interface SaudiaApi {
     suspend fun getCartDetails(
         @Path("cartId") cartId: String,
         @Query("pageIdentity") pageIdentity: String = "PassengerDetails",
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>
     ): Response<ResponseBody>
@@ -36,7 +36,7 @@ interface SaudiaApi {
     @POST("shopping/carts/{cartId}/extensions")
     suspend fun addCartExtension(
         @Path("cartId") cartId: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
@@ -46,7 +46,7 @@ interface SaudiaApi {
     suspend fun updateTravelerRaw(
         @Path("cartId") cartId: String,
         @Path("travelerId") travelerId: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
@@ -55,7 +55,7 @@ interface SaudiaApi {
     @POST("shopping/carts/{cartId}/contacts")
     suspend fun saveContacts(
         @Path("cartId") cartId: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
@@ -64,7 +64,7 @@ interface SaudiaApi {
     @POST("purchase/orders")
     suspend fun createOrderRaw(
         @Query("cartId") cartId: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
@@ -74,7 +74,7 @@ interface SaudiaApi {
     suspend fun submitPayment(
         @Path("orderId") orderId: String,
         @Query("lastName") lastName: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
