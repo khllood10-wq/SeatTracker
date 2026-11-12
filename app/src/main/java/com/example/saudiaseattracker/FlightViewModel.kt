@@ -75,9 +75,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
-    // 🎯 القيمة الحقيقية من التقاطك
-    private var activeBid = "63a3e711-d1a3-48a9-a497-1b1be70e3817"
-    private var activeGaUserId = "1665079041.1792189288"
+    // 🎯 هذه القيمة ستُستبدل بالـ bid الحقيقي من WebView
+    private var activeBid = ""
+    private var activeGaUserId = ""
     private var activeGaSession = ""
 
     private val hyperSession: HyperSessionManager by lazy {
@@ -201,7 +201,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView...")
+                addLog("🕵️‍♂️ فتح WebView (15 ثانية انتظار)...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
@@ -214,7 +214,31 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeSaaSessionId = data.saaSessionId
                         activeXdToken = extractCookieValue(data.cookie, "reese84") ?: ""
 
-                        // 🎯 نستخرج _ga و _ga_LVNZGXXWMB من الكوكيز
+                        // 🎯 bid من WebView (يجب أن يكون موجوداً بعد 15 ثانية)
+                        if (data.bid.isNotBlank()) {
+                            activeBid = data.bid
+                        } else {
+                            // آخر محاولة: من الكوكيز
+                            val fromCookie = extractCookieValue(data.cookie, "bid_62671c5aacb31d282f1da1d3c8ee4abb")
+                            if (!fromCookie.isNullOrBlank()) {
+                                activeBid = fromCookie
+                            } else {
+                                // إذا لم يوجد، نولّد UUID عشوائي (قد لا يطابق السعودية، لكن نحاول)
+                                activeBid = UUID.randomUUID().toString()
+                                addLog("⚠️ لم نجد bid_*، ولّدنا واحداً عشوائياً")
+                            }
+                        }
+
+                        // إضافة bid_* إلى الكوكيز إذا لم يوجد
+                        val bidCookieName = "bid_62671c5aacb31d282f1da1d3c8ee4abb"
+                        val hasBid = data.cookie.split(";").any { it.trim().startsWith("bid_") }
+                        activeCookie = if (!hasBid) {
+                            "${data.cookie}; $bidCookieName=$activeBid"
+                        } else {
+                            data.cookie
+                        }
+
+                        // 🎯 استخراج ga_user_id و ga_session
                         val gaValue = extractCookieValue(data.cookie, "_ga")
                         if (gaValue != null && gaValue.startsWith("GA1.1.")) {
                             activeGaUserId = gaValue.removePrefix("GA1.1.")
@@ -224,27 +248,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             activeGaSession = gaSession.removePrefix("GS2.1.")
                         }
 
-                        // 🎯 نبقي bid الثابت من التقاطك
-                        // نضيف bid_* إلى الكوكيز إن لم يكن موجوداً
-                        val bidCookieName = "bid_62671c5aacb31d282f1da1d3c8ee4abb"
-                        val hasBid = data.cookie.split(";").any { it.trim().startsWith("bid_") }
-                        activeCookie = if (!hasBid) {
-                            "${data.cookie}; $bidCookieName=$activeBid"
-                        } else {
-                            // نستخرج bid الحقيقي من الكوكيز إن وُجد
-                            val realBid = extractBidFromCookies(data.cookie)
-                            if (!realBid.isNullOrBlank()) {
-                                activeBid = realBid
-                            }
-                            data.cookie
-                        }
-
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
                         addLog("🍪 Cookie: ${activeCookie?.split(";")?.size ?: 0} كوكي")
-                        addLog("🆔 saa-session-id: ${if (data.saaSessionId.isNotBlank()) data.saaSessionId else "❌ فارغ"}")
+                        addLog("🆔 saa-session-id: ${if (data.saaSessionId.isNotBlank()) data.saaSessionId else "❌"}")
                         addLog("🎯 x-d-token: ${activeXdToken.take(30)}...")
-                        addLog("🔑 bid: $activeBid")
-                        addLog("📊 ga-user-id: $activeGaUserId")
+                        addLog("🔑 bid: ${activeBid.take(20)}...")
+                        addLog("📊 ga-user-id: ${activeGaUserId.take(20)}")
                         addLog("📊 ga-session: ${activeGaSession.take(30)}")
 
                         if (continuation.isActive) continuation.resume(true)
@@ -267,15 +276,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             ?.trim()
     }
 
-    private fun extractBidFromCookies(cookieStr: String?): String? {
-        if (cookieStr == null) return null
-        return cookieStr.split(";")
-            .map { it.trim() }
-            .find { it.startsWith("bid_") }
-            ?.substringAfter("=")
-            ?.trim()
-    }
-
     private fun buildHeaders(
         apiVersion: String,
         isWebEndpoint: Boolean = false,
@@ -285,14 +285,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val saaSnapshot: String = activeSaaSessionId
         val jwtSnapshot: String = activeJwt
         val xdSnapshot: String = activeXdToken
+        val gaUser = if (activeGaUserId.isNotBlank()) activeGaUserId else "1665079041.1792189288"
         val nowSec = System.currentTimeMillis() / 1000
-
-        // 🎯 نستخدم ga-session الحقيقي إن وُجد، وإلا نولده
-        val analyticsSession = if (activeGaSession.isNotBlank()) {
-            activeGaSession
-        } else {
-            "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0"
-        }
+        val gaSession = if (activeGaSession.isNotBlank()) activeGaSession else "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0"
 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
@@ -307,9 +302,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "saa-session-id" to saaSnapshot,
             "traceparent" to "00-$traceId-$spanId-01",
             "version" to "27.2",
-            "x-analytics-session-id" to analyticsSession,
+            "x-analytics-session-id" to gaSession,
             "x-analytics-type" to "GA",
-            "x-analytics-user-id" to activeGaUserId,
+            "x-analytics-user-id" to gaUser,
             "x-api-version" to apiVersion,
             "x-d-token" to xdSnapshot,
             "x-datadog-origin" to "rum",
