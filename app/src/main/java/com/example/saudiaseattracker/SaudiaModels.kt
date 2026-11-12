@@ -37,7 +37,7 @@ data class SearchPreferences(
 )
 
 data class OfferCodeAvailabilityInput(
-    @SerializedName("channel") val channel: String = "MOBILE_WEB",
+    @SerializedName("channel") val channel: String = "WEB",
     @SerializedName("pointOfSale") val pointOfSale: String = "SA",
     @SerializedName("currencyCode") val currencyCode: String = "SAR",
     @SerializedName("language") val language: String = "AR",
