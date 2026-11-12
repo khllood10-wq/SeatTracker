@@ -75,10 +75,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
-    // 🎯 هذه القيمة ستُستبدل بالـ bid الحقيقي من WebView
-    private var activeBid = ""
-    private var activeGaUserId = ""
-    private var activeGaSession = ""
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -201,7 +197,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView (15 ثانية انتظار)...")
+                addLog("🕵️‍♂️ فتح WebView...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
@@ -213,48 +209,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeJwt = data.jwt
                         activeSaaSessionId = data.saaSessionId
                         activeXdToken = extractCookieValue(data.cookie, "reese84") ?: ""
-
-                        // 🎯 bid من WebView (يجب أن يكون موجوداً بعد 15 ثانية)
-                        if (data.bid.isNotBlank()) {
-                            activeBid = data.bid
-                        } else {
-                            // آخر محاولة: من الكوكيز
-                            val fromCookie = extractCookieValue(data.cookie, "bid_62671c5aacb31d282f1da1d3c8ee4abb")
-                            if (!fromCookie.isNullOrBlank()) {
-                                activeBid = fromCookie
-                            } else {
-                                // إذا لم يوجد، نولّد UUID عشوائي (قد لا يطابق السعودية، لكن نحاول)
-                                activeBid = UUID.randomUUID().toString()
-                                addLog("⚠️ لم نجد bid_*، ولّدنا واحداً عشوائياً")
-                            }
-                        }
-
-                        // إضافة bid_* إلى الكوكيز إذا لم يوجد
-                        val bidCookieName = "bid_62671c5aacb31d282f1da1d3c8ee4abb"
-                        val hasBid = data.cookie.split(";").any { it.trim().startsWith("bid_") }
-                        activeCookie = if (!hasBid) {
-                            "${data.cookie}; $bidCookieName=$activeBid"
-                        } else {
-                            data.cookie
-                        }
-
-                        // 🎯 استخراج ga_user_id و ga_session
-                        val gaValue = extractCookieValue(data.cookie, "_ga")
-                        if (gaValue != null && gaValue.startsWith("GA1.1.")) {
-                            activeGaUserId = gaValue.removePrefix("GA1.1.")
-                        }
-                        val gaSession = extractCookieValue(data.cookie, "_ga_LVNZGXXWMB")
-                        if (gaSession != null && gaSession.startsWith("GS2.1.")) {
-                            activeGaSession = gaSession.removePrefix("GS2.1.")
-                        }
+                        activeCookie = data.cookie
 
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
-                        addLog("🍪 Cookie: ${activeCookie?.split(";")?.size ?: 0} كوكي")
+                        addLog("🍪 Cookie: ${data.cookie.split(";").size} كوكي")
                         addLog("🆔 saa-session-id: ${if (data.saaSessionId.isNotBlank()) data.saaSessionId else "❌"}")
-                        addLog("🎯 x-d-token: ${activeXdToken.take(30)}...")
-                        addLog("🔑 bid: ${activeBid.take(20)}...")
-                        addLog("📊 ga-user-id: ${activeGaUserId.take(20)}")
-                        addLog("📊 ga-session: ${activeGaSession.take(30)}")
 
                         if (continuation.isActive) continuation.resume(true)
                     },
@@ -276,49 +235,48 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             ?.trim()
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // 🎯 نفس الكود القديم حرفياً (MOBILE_WEB + browserid)
+    // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(
         apiVersion: String,
         isWebEndpoint: Boolean = false,
         referer: String = "https://www.saudia.com/"
     ): Map<String, String> {
         val cookieSnapshot: String? = activeCookie
-        val saaSnapshot: String = activeSaaSessionId
         val jwtSnapshot: String = activeJwt
         val xdSnapshot: String = activeXdToken
-        val gaUser = if (activeGaUserId.isNotBlank()) activeGaUserId else "1665079041.1792189288"
-        val nowSec = System.currentTimeMillis() / 1000
-        val gaSession = if (activeGaSession.isNotBlank()) activeGaSession else "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0"
+        val saaSnapshot: String = activeSaaSessionId
 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
 
         val headers = mutableMapOf(
-            "accept" to "application/json",
-            "authorization" to jwtSnapshot,
-            "content-type" to "application/json",
-            "platform" to "Web",
-            "request-context" to "appId=cid-v1:45124bde-070b-4e51-a925-aa883fdba652",
-            "request-id" to "|$traceId.$spanId",
-            "saa-session-id" to saaSnapshot,
-            "traceparent" to "00-$traceId-$spanId-01",
-            "version" to "27.2",
-            "x-analytics-session-id" to gaSession,
-            "x-analytics-type" to "GA",
-            "x-analytics-user-id" to gaUser,
-            "x-api-version" to apiVersion,
+            "Authorization" to jwtSnapshot,
             "x-d-token" to xdSnapshot,
+            "saa-session-id" to saaSnapshot,
+            "x-api-version" to apiVersion,
+            "platform" to "Web",
+            "version" to "27.2",
+            "Accept" to "application/json",
+            "Content-Type" to "application/json",
+            "Origin" to "https://www.saudia.com",
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "request-id" to "|$traceId.$spanId",
+            "traceparent" to "00-$traceId-$spanId-01",
             "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
             "x-datadog-sampling-priority" to "1",
-            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Origin" to "https://www.saudia.com",
-            "Referer" to referer
+            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
 
         if (isWebEndpoint) {
             headers["x-v-token"] = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
+        } else {
+            headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
+            headers["channel"] = "MOBILE_WEB"
         }
 
         if (!cookieSnapshot.isNullOrBlank()) headers["Cookie"] = cookieSnapshot
@@ -398,7 +356,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             attempt++
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
-                val bidSnapshot: String = activeBid
                 val resp = RetrofitClient.api.searchAirBounds(
                     headers = buildHeaders("4"),
                     request = SaudiaSearchRequest(
@@ -409,13 +366,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput(
-                            channel = "WEB",
-                            pointOfSale = "SA",
-                            currencyCode = "SAR",
-                            language = "AR",
-                            browserId = bidSnapshot
-                        )
+                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                     )
                 )
 
