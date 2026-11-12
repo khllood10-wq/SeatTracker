@@ -73,7 +73,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeJwt = ""
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
-    private var activeXdToken = ""
+
+    // x-v-token من التقرير
+    private val xvToken = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -196,7 +198,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView لالتقاط الهيدرات الحقيقية...")
+                addLog("🕵️‍♂️ فتح WebView...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
@@ -208,11 +210,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeJwt = data.jwt
                         activeCookie = data.cookie
                         activeSaaSessionId = data.saaSessionId
-                        activeXdToken = data.xdToken
 
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
                         addLog("🍪 Cookie: ${data.cookie.split(";").size} كوكي")
-                        addLog("🎯 x-d-token: ${data.xdToken.take(30)}...")
                         addLog("🆔 saa-session-id: ${data.saaSessionId}")
 
                         if (continuation.isActive) continuation.resume(true)
@@ -226,15 +226,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun extractCookieValue(cookieStr: String?, name: String): String? {
+        if (cookieStr == null) return null
+        return cookieStr.split(";").map { it.trim() }.find { it.startsWith("$name=") }?.substringAfter("=")?.trim()
+    }
+
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val nowSec = System.currentTimeMillis() / 1000
 
-        // 👇 Snapshots (val) لتجنب Smart Cast Error
         val cookieSnapshot: String? = activeCookie
         val saaSnapshot: String = activeSaaSessionId
-        val xdSnapshot: String = activeXdToken
         val jwtSnapshot: String = activeJwt
 
         val h = mutableMapOf(
@@ -257,11 +260,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Origin" to "https://www.saudia.com",
-            "Referer" to referer
+            "Referer" to referer,
+            "x-v-token" to xvToken // 👈 جديد!
         )
 
         if (saaSnapshot.isNotBlank()) h["saa-session-id"] = saaSnapshot
-        if (xdSnapshot.isNotBlank()) h["x-d-token"] = xdSnapshot
+
+        // x-d-token = reese84 من CookieManager
+        val reese84Value = extractCookieValue(cookieSnapshot, "reese84")
+        if (!reese84Value.isNullOrBlank()) h["x-d-token"] = reese84Value
+
         if (!cookieSnapshot.isNullOrBlank()) h["Cookie"] = cookieSnapshot
 
         return h
