@@ -17,9 +17,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import retrofit2.Response
-import java.util.UUID
 import kotlin.coroutines.resume
-import kotlin.random.Random
 
 data class PassengerData(
     val title: String = "Mr",
@@ -73,8 +71,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var currentActivity: android.app.Activity? = null
     private var activeJwt = ""
     private var activeCookie: String? = null
-    private var activeSaaSessionId = ""
-    private var generatedSaaSessionId: String? = null
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -208,12 +204,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
                         activeCookie = result.cookie
-                        activeSaaSessionId = result.sessionId
-
-                        addLog("✅ JWT: ${result.token.take(20)}...")
-                        addLog("🍪 Cookies: ${result.cookie.split(";").size}")
-                        addLog("🆔 session_id: ${if (result.sessionId.isNotBlank()) result.sessionId.take(20) else "⚠️ لم يُعثر عليه - سيُولّد عشوائياً"}")
-
+                        addLog("✅ JWT: ${result.token.take(30)}...")
+                        addLog("🍪 Cookies count: ${result.cookie.split(";").size}")
                         if (continuation.isActive) continuation.resume(result.token)
                     },
                     onError = { error: String ->
@@ -225,72 +217,26 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun extractCookieValue(cookieStr: String?, name: String): String? {
-        if (cookieStr == null) return null
-        return cookieStr.split(";")
-            .map { it.trim() }
-            .find { it.startsWith("$name=") }
-            ?.substringAfter("=")
-            ?.trim()
-    }
-
+    // 👇 buildHeaders مبسطة: Bearer + Cookies فقط (كما كانت في SessionKeeper القديم)
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
-        val traceId = UUID.randomUUID().toString().replace("-", "")
-        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
-
         val h = mutableMapOf(
             "accept" to "application/json",
             "content-type" to "application/json",
             "platform" to "Web",
-            "request-context" to "appId=cid-v1:45124bde-070b-4e51-a925-aa883fdba652",
-            "request-id" to "|$traceId.$spanId",
-            "traceparent" to "00-$traceId-$spanId-01",
             "version" to "27.2",
             "x-api-version" to apiVersion,
-            "x-datadog-origin" to "rum",
-            "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
-            "x-datadog-sampling-priority" to "1",
-            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Origin" to "https://www.saudia.com",
             "Referer" to referer
         )
 
+        // Bearer JWT فقط
         if (activeJwt.isNotBlank()) h["authorization"] = activeJwt
 
+        // Cookies فقط
         val cookieSnapshot: String? = activeCookie
-        val saaSnapshot: String = activeSaaSessionId
-
-        // سجل أسماء الكوكيز للتشخيص
-        if (cookieSnapshot != null) {
-            val names = cookieSnapshot.split(";")
-                .map { it.trim().substringBefore("=") }
-                .filter { it.isNotEmpty() }
-            android.util.Log.d("HyperCookies", "🍪 Names: ${names.joinToString(", ")}")
-        }
-
-        // saa-session-id: استخدم الحقيقي إن وُجد، وإلا ولّد عشوائياً (ثابت)
-        if (saaSnapshot.isNotBlank()) {
-            h["saa-session-id"] = saaSnapshot
-        } else {
-            if (generatedSaaSessionId == null) {
-                generatedSaaSessionId = UUID.randomUUID().toString()
-                addLog("🆔 تم توليد saa-session-id احتياطي: ${generatedSaaSessionId!!.take(8)}...")
-            }
-            h["saa-session-id"] = generatedSaaSessionId!!
-        }
-
-        if (cookieSnapshot != null) {
-            val reese84Value = extractCookieValue(cookieSnapshot, "reese84")
-            if (!reese84Value.isNullOrBlank()) {
-                h["x-d-token"] = reese84Value
-            }
-        }
-
-        if (!cookieSnapshot.isNullOrBlank()) {
-            h["Cookie"] = cookieSnapshot
-        }
+        if (!cookieSnapshot.isNullOrBlank()) h["Cookie"] = cookieSnapshot
 
         return h
     }
@@ -387,8 +333,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (resp.code() == 401 || resp.code() == 403) {
                     refreshCount++
                     if (refreshCount > 2) {
-                        addLog("❌ فشل البحث بعد 2 محاولات تجديد")
-                        addLog("🔍 الكود: ${resp.code()} - ${resp.message()}")
+                        addLog("❌ فشل البحث بعد محاولتين")
+                        addLog("🔍 الكود: ${resp.code()}")
                         return null
                     }
                     addLog("⚠️ التوكن مرفوض (${resp.code()}) - تجديد #$refreshCount")
