@@ -46,11 +46,6 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            excludes += "/META-INF/DEPENDENCIES"
-            excludes += "/META-INF/LICENSE"
-            excludes += "/META-INF/LICENSE.txt"
-            excludes += "/META-INF/NOTICE"
-            excludes += "/META-INF/NOTICE.txt"
         }
     }
 }
@@ -74,18 +69,12 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
-    // Networking - OkHttp/Retrofit
+    // Networking - Retrofit فقط، بدون OkHttp العادي
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // 👇 الحل: انتحال بصمة TLS/JA3/JA4 و HTTP/2 الخاصة بـ Chrome
-    implementation("com.github.zhkl0228:impersonator-okhttp:1.11.0") {
-        // استبعاد okhttp و okio من المكتبة، لأننا سنفرض نسخة واحدة عبر resolutionStrategy
-        exclude(group = "com.squareup.okhttp3", module = "okhttp")
-        exclude(group = "com.squareup.okio", module = "okio")
-    }
+    // 👇 impersonator-okhttp يجلب نسخته المعدّلة من OkHttp و Okio
+    implementation("com.github.zhkl0228:impersonator-okhttp:1.11.0")
 
     // اختبارات
     testImplementation("junit:junit:4.13.2")
@@ -95,12 +84,4 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-}
-
-// 👇 الحل النهائي: فرض إصدار واحد لكل من okhttp و okio
-configurations.all {
-    resolutionStrategy {
-        force("com.squareup.okhttp3:okhttp:4.12.0")
-        force("com.squareup.okio:okio:3.9.0")
-    }
 }
