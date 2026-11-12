@@ -90,7 +90,6 @@ data class CreateCartRequest(val airBoundIds: List<String>)
 object RetrofitClient {
     private const val BASE_URL = "https://dapi.saudia.com/"
 
-    // 👇 إنشاء عميل OkHttp ينتحل بصمة Chrome (Android profile)
     private val impersonatingClient: OkHttpClient by lazy {
         val api: ImpersonatorApi = ImpersonatorFactory.android()
         OkHttpClientFactory.create(api).newHttpClient()
