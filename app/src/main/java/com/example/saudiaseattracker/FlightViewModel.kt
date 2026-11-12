@@ -11,14 +11,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import retrofit2.Response
 import java.util.UUID
-import kotlin.coroutines.resume
 import kotlin.random.Random
 
 data class PassengerData(
@@ -70,7 +68,9 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    private var currentActivity: android.app.Activity? = null
+    // 👇 عميل curl-impersonate
+    private val curlClient = CurlImpersonateClient(getApplication<Application>())
+
     private var activeJwt = ""
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
@@ -182,62 +182,107 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun captureSessionViaWebView(): Boolean {
-        return withContext(Dispatchers.Main) {
-            val activity = currentActivity ?: run {
-                addLog("❌ Activity غير متاح")
-                return@withContext false
-            }
-
-            suspendCancellableCoroutine<Boolean> { continuation ->
-                val reeseCookie = hyperSession.getCookieHeader() ?: ""
-                if (reeseCookie.isBlank()) {
+    // ═══════════════════════════════════════════════════════════════
+    // 🎯 التقاط الجلسة باستخدام curl-impersonate (بدلاً من WebView)
+    // ═══════════════════════════════════════════════════════════════
+    private suspend fun captureSessionViaCurl(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val reeseCookie = hyperSession.getCookieHeader() ?: run {
                     addLog("❌ لا يوجد reese84 من Hyper")
-                    if (continuation.isActive) continuation.resume(false)
-                    return@suspendCancellableCoroutine
+                    return@withContext false
                 }
 
-                addLog("🕵️‍♂️ فتح WebView لالتقاط الجلسة...")
-                val manager = HiddenWebViewManager(
-                    activity = activity,
-                    reese84Cookie = reeseCookie,
-                    userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                val reeseValue = reeseCookie.removePrefix("reese84=").trim()
+                addLog("🔄 اختبار curl-impersonate على الصفحة الرئيسية...")
+
+                // 🧪 الخطوة 1: اختبار هل curl-impersonate يتجاوز Imperva
+                val pageResp = curlClient.execute(
+                    url = "https://www.saudia.com/ar-SA",
+                    method = "GET",
+                    headers = mapOf(
+                        "Cookie" to reeseCookie,
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
+                    )
                 )
 
-                manager.fetchAll(
-                    onSuccess = { data: CapturedData ->
-                        activeJwt = data.jwt
-                        activeSaaSessionId = data.saaSessionId
-                        activeXdToken = if (data.xdToken.isNotBlank()) {
-                            data.xdToken
+                addLog("📄 GET /ar-SA → HTTP ${pageResp.code}, Length: ${pageResp.body.length}")
+
+                // 🔍 التحقق: هل الصفحة Imperva challenge أم صفحة حقيقية؟
+                val isImpervaBlock = pageResp.body.contains("_Incapsula_Resource") ||
+                        pageResp.body.contains("Pardon Our Interruption") ||
+                        pageResp.body.contains("Incapsula incident ID")
+
+                if (isImpervaBlock) {
+                    addLog("❌ لا زال Imperva يحظر curl-impersonate")
+                    addLog("📋 Body: ${pageResp.body.take(300)}")
+                    return@withContext false
+                }
+
+                if (pageResp.code != 200) {
+                    addLog("⚠️ HTTP ${pageResp.code} - غير متوقع")
+                    return@withContext false
+                }
+
+                addLog("🎉 curl-impersonate تجاوز Imperva بنجاح!")
+
+                // 🧪 الخطوة 2: محاولة POST إلى token/initialization
+                addLog("🔄 محاولة token/initialization...")
+
+                val initResp = curlClient.execute(
+                    url = "https://dapi.saudia.com/session/auth/web/token/initialization",
+                    method = "POST",
+                    headers = mapOf(
+                        "Cookie" to reeseCookie,
+                        "x-d-token" to reeseValue,
+                        "Content-Type" to "application/x-www-form-urlencoded",
+                        "Accept" to "application/json",
+                        "platform" to "Web",
+                        "version" to "27.2",
+                        "Origin" to "https://www.saudia.com",
+                        "Referer" to "https://www.saudia.com/ar-SA"
+                    ),
+                    body = ""
+                )
+
+                addLog("📄 POST /token/init → HTTP ${initResp.code}")
+                addLog("📋 Response: ${initResp.body.take(500)}")
+
+                if (initResp.code == 200) {
+                    try {
+                        val json = JSONObject(initResp.body)
+                        val token = json.optString("access_token", json.optString("token", ""))
+                        val sessionId = json.optString("session_id", "")
+
+                        if (token.isNotBlank()) {
+                            activeJwt = if (token.startsWith("Bearer ")) token else "Bearer $token"
+                            if (sessionId.isNotBlank()) activeSaaSessionId = sessionId
+                            activeXdToken = reeseValue
+
+                            // استخراج الكوكيز من response headers
+                            val setCookies = initResp.headers.filterKeys { it.equals("set-cookie", ignoreCase = true) }
+                            activeCookie = reeseCookie
+
+                            addLog("🎉 نجحنا! JWT: ${activeJwt.take(30)}...")
+                            addLog("🆔 saa-session-id: ${if (sessionId.isNotBlank()) sessionId else "❌ فارغ"}")
+                            return@withContext true
                         } else {
-                            extractCookieValue(data.cookie, "reese84") ?: ""
+                            addLog("⚠️ 200 لكن بدون access_token في الرد")
                         }
-                        activeCookie = data.cookie
-
-                        addLog("✅ JWT: ${data.jwt.take(20)}...")
-                        addLog("🆔 saa-session-id: ${data.saaSessionId}")
-                        addLog("🎯 x-d-token: ${activeXdToken.take(40)}...")
-                        addLog("🍪 Cookies: ${data.cookie.split(";").size} كوكي")
-
-                        if (continuation.isActive) continuation.resume(true)
-                    },
-                    onError = { error: String ->
-                        addLog("❌ فشل WebView: $error")
-                        if (continuation.isActive) continuation.resume(false)
+                    } catch (e: Exception) {
+                        addLog("⚠️ فشل تحليل JSON: ${e.message}")
                     }
-                )
+                }
+
+                addLog("⚠️ token/initialization لم يعطنا JWT - سنحتاج Replay Payload")
+                return@withContext false
+
+            } catch (e: Exception) {
+                addLog("❌ فشل curl-impersonate: ${e.message}")
+                return@withContext false
             }
         }
-    }
-
-    private fun extractCookieValue(cookieStr: String?, name: String): String? {
-        if (cookieStr == null) return null
-        return cookieStr.split(";")
-            .map { it.trim() }
-            .find { it.startsWith("$name=") }
-            ?.substringAfter("=")
-            ?.trim()
     }
 
     private fun buildHeaders(
@@ -286,7 +331,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun runFullBooking(activity: android.app.Activity) {
-        currentActivity = activity
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
         if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
@@ -299,9 +343,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                val captured = captureSessionViaWebView()
+                val captured = captureSessionViaCurl()
                 if (!captured) {
-                    addLog("❌ فشل التقاط الجلسة")
+                    addLog("⚠️ التقاط الجلسة عبر curl يحتاج إلى معالجة إضافية (Replay Payload)")
                     _isRunning.value = false
                     return@launch
                 }
