@@ -12,7 +12,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 
-data class WebViewResult(val token: String)
+data class WebViewResult(
+    val token: String,
+    val cookie: String
+)
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 class HiddenWebViewManager(
@@ -48,9 +51,26 @@ class HiddenWebViewManager(
                     @JavascriptInterface
                     fun onTokenFound(token: String) {
                         Handler(Looper.getMainLooper()).post {
+                            // 👇 سحب كل الكوكيز من النطاقين
+                            val cookiesWww = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
+                            val cookiesDapi = CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: ""
+                            
+                            // دمج بدون تكرار
+                            val map = mutableMapOf<String, String>()
+                            listOf(cookiesWww, cookiesDapi).forEach { str ->
+                                str.split(";").forEach { part ->
+                                    val t = part.trim()
+                                    if (t.isNotEmpty()) {
+                                        val eq = t.indexOf('=')
+                                        if (eq > 0) map[t.substring(0, eq)] = t.substring(eq + 1)
+                                    }
+                                }
+                            }
+                            val combined = map.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                            
                             cleanup()
                             val cleanToken = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                            onSuccess(WebViewResult(cleanToken))
+                            onSuccess(WebViewResult(cleanToken, combined))
                         }
                     }
 
@@ -87,7 +107,7 @@ class HiddenWebViewManager(
                                 }, 500);
                                 setTimeout(function() {
                                     clearInterval(interval);
-                                    window.AndroidBridge.onError("Timeout: Token not found in 20s");
+                                    window.AndroidBridge.onError("Timeout: Token not found");
                                 }, 20000);
                             })();
                         """.trimIndent()
