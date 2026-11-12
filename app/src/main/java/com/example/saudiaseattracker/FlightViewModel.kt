@@ -68,11 +68,8 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // 👇 عميل curl-impersonate مع دالة السجل
-    private val curlClient = CurlImpersonateClient(
-        context = getApplication<Application>(),
-        addLog = { message -> addLog(message) }
-    )
+    // 👇 عميل httpcloak
+    private val httpCloakClient = HttpCloakClient()
 
     private var activeJwt = ""
     private var activeCookie: String? = null
@@ -185,7 +182,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun captureSessionViaCurl(): Boolean {
+    // ═══════════════════════════════════════════════════════════════
+    // 🎯 التقاط الجلسة باستخدام httpcloak (بدلاً من curl/WebView)
+    // ═══════════════════════════════════════════════════════════════
+    private suspend fun captureSessionViaHttpCloak(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 val reeseCookie = hyperSession.getCookieHeader() ?: run {
@@ -194,11 +194,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val reeseValue = reeseCookie.removePrefix("reese84=").trim()
-                addLog("🔄 اختبار curl-impersonate على الصفحة الرئيسية...")
+                addLog("🔄 اختبار httpcloak على الصفحة الرئيسية...")
 
-                val pageResp = curlClient.execute(
+                val pageResp = httpCloakClient.get(
                     url = "https://www.saudia.com/ar-SA",
-                    method = "GET",
                     headers = mapOf(
                         "Cookie" to reeseCookie,
                         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -206,30 +205,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
 
-                addLog("📄 GET /ar-SA → HTTP ${pageResp.code}, Length: ${pageResp.body.length}")
+                addLog("📄 GET /ar-SA → HTTP ${pageResp.statusCode}, Length: ${pageResp.text.length}")
 
-                val isImpervaBlock = pageResp.body.contains("_Incapsula_Resource") ||
-                        pageResp.body.contains("Pardon Our Interruption") ||
-                        pageResp.body.contains("Incapsula incident ID")
+                val isImpervaBlock = pageResp.text.contains("_Incapsula_Resource") ||
+                        pageResp.text.contains("Pardon Our Interruption") ||
+                        pageResp.text.contains("Incapsula incident ID")
 
                 if (isImpervaBlock) {
-                    addLog("❌ لا زال Imperva يحظر curl-impersonate")
-                    addLog("📋 Body: ${pageResp.body.take(300)}")
+                    addLog("❌ لا زال Imperva يحظر httpcloak")
+                    addLog("📋 Body: ${pageResp.text.take(300)}")
                     return@withContext false
                 }
 
-                if (pageResp.code != 200) {
-                    addLog("⚠️ HTTP ${pageResp.code} - غير متوقع")
+                if (pageResp.statusCode != 200) {
+                    addLog("⚠️ HTTP ${pageResp.statusCode} - غير متوقع")
                     return@withContext false
                 }
 
-                addLog("🎉 curl-impersonate تجاوز Imperva بنجاح!")
+                addLog("🎉 httpcloak تجاوز Imperva بنجاح!")
 
                 addLog("🔄 محاولة token/initialization...")
 
-                val initResp = curlClient.execute(
+                val initResp = httpCloakClient.post(
                     url = "https://dapi.saudia.com/session/auth/web/token/initialization",
-                    method = "POST",
                     headers = mapOf(
                         "Cookie" to reeseCookie,
                         "x-d-token" to reeseValue,
@@ -243,12 +241,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     body = ""
                 )
 
-                addLog("📄 POST /token/init → HTTP ${initResp.code}")
-                addLog("📋 Response: ${initResp.body.take(500)}")
+                addLog("📄 POST /token/init → HTTP ${initResp.statusCode}")
+                addLog("📋 Response: ${initResp.text.take(500)}")
 
-                if (initResp.code == 200) {
+                if (initResp.statusCode == 200) {
                     try {
-                        val json = JSONObject(initResp.body)
+                        val json = JSONObject(initResp.text)
                         val token = json.optString("access_token", json.optString("token", ""))
                         val sessionId = json.optString("session_id", "")
 
@@ -273,7 +271,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return@withContext false
 
             } catch (e: Exception) {
-                addLog("❌ فشل curl-impersonate: ${e.message}")
+                addLog("❌ فشل httpcloak: ${e.message}")
                 return@withContext false
             }
         }
@@ -337,9 +335,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                val captured = captureSessionViaCurl()
+                val captured = captureSessionViaHttpCloak()
                 if (!captured) {
-                    addLog("⚠️ التقاط الجلسة عبر curl يحتاج إلى معالجة إضافية (Replay Payload)")
+                    addLog("⚠️ التقاط الجلسة عبر httpcloak لم يكتمل")
                     _isRunning.value = false
                     return@launch
                 }
@@ -537,4 +535,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         saveCookiesFromResponse(r)
         r.isSuccessful
     } catch (e: Exception) { false }
+    
+    override fun onCleared() {
+        super.onCleared()
+        httpCloakClient.close()
+    }
 }
