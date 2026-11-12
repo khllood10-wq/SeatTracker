@@ -69,12 +69,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
-    // Networking - Retrofit فقط، بدون OkHttp العادي
+    // Networking - Retrofit فقط
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
 
-    // 👇 impersonator-okhttp يجلب نسخته المعدّلة من OkHttp و Okio
-    implementation("com.github.zhkl0228:impersonator-okhttp:1.11.0")
+    // 👇 impersonator-okhttp: نسخته الخاصة من okhttp مدمجة بداخله
+    // استخدم 1.0.13 (الإصدار المنشور على Maven Central)
+    implementation("com.github.zhkl0228:impersonator-okhttp:1.0.13")
 
     // اختبارات
     testImplementation("junit:junit:4.13.2")
