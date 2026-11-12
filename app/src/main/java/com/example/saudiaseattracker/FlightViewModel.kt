@@ -195,10 +195,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                // Log Hyper's reese84 for comparison
-                val hyperReese84 = reeseCookie.removePrefix("reese84=").trim()
-                addLog("🔹 Hyper reese84 (${hyperReese84.length} chars): ${hyperReese84.take(40)}...")
-
                 addLog("🕵️‍♂️ فتح WebView...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
@@ -214,20 +210,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                         addLog("✅ JWT: ${result.token.take(20)}...")
                         addLog("🍪 Cookies: ${result.cookie.split(";").size}")
-                        addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌ غير موجود"}")
+                        addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌"}")
 
-                        // 🔍 مقارنة reese84 من Hyper مع reese84 من WebView
-                        val wvReese84 = extractCookieValue(result.cookie, "reese84")
-                        if (!wvReese84.isNullOrBlank()) {
-                            addLog("🔹 WebView reese84 (${wvReese84.length} chars): ${wvReese84.take(40)}...")
-                            if (wvReese84 == hyperReese84) {
-                                addLog("✅ reese84 متطابق (Hyper == WebView)")
-                            } else {
-                                addLog("⚠️ reese84 مختلف! سنستخدم WebView's")
-                            }
-                        } else {
-                            addLog("❌ WebView لا يحتوي على reese84!")
-                        }
+                        // 🔍 استخراج bid_* و cid
+                        val bid = extractBidFromCookies(result.cookie)
+                        val cid = extractCidFromGa(result.cookie)
+                        val analyticsSession = extractAnalyticsSessionId(result.cookie)
+                        addLog("🔍 bid_* = ${bid ?: "❌"}")
+                        addLog("🔍 _ga cid = ${cid ?: "❌"}")
+                        addLog("🔍 analytics-session-id = ${analyticsSession?.take(30) ?: "❌"}")
 
                         if (continuation.isActive) continuation.resume(result.token)
                     },
@@ -249,14 +240,38 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             ?.trim()
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 🎯 الحل: x-d-token = WebView's reese84 (وليس Hyper's)
-    // ═══════════════════════════════════════════════════════════════
+    private fun extractBidFromCookies(cookieStr: String?): String? {
+        if (cookieStr == null) return null
+        return cookieStr.split(";")
+            .map { it.trim() }
+            .find { it.startsWith("bid_") }
+            ?.substringAfter("=")
+            ?.trim()
+    }
+
+    private fun extractCidFromGa(cookieStr: String?): String? {
+        val ga = extractCookieValue(cookieStr, "_ga") ?: return null
+        // Format: GA1.1.1665079041.1792189288
+        val parts = ga.split(".")
+        return if (parts.size >= 4) "${parts[2]}.${parts[3]}" else null
+    }
+
+    private fun extractAnalyticsSessionId(cookieStr: String?): String? {
+        val gaSession = extractCookieValue(cookieStr, "_ga_LVNZGXXWMB") ?: return null
+        // Format: GS2.1.s1794457128$o14$g1$t1794457462$j38$l0$h1303289424
+        return if (gaSession.startsWith("GS2.1.")) gaSession.removePrefix("GS2.1.") else null
+    }
+
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val nowSec = System.currentTimeMillis() / 1000
-        val gaUserId = "${Random.nextLong(1000000000L, 2000000000L)}.${Random.nextLong(1000000000L, 2000000000L)}"
+        val fallbackGaUserId = "${Random.nextLong(1000000000L, 2000000000L)}.${Random.nextLong(1000000000L, 2000000000L)}"
+        val fallbackSessionId = "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0"
+
+        // 🎯 استخراج القيم الحقيقية من الكوكيز
+        val realAnalyticsUserId = extractCidFromGa(activeCookie) ?: fallbackGaUserId
+        val realAnalyticsSessionId = extractAnalyticsSessionId(activeCookie) ?: fallbackSessionId
 
         val h = mutableMapOf(
             "accept" to "application/json",
@@ -267,9 +282,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
             "version" to "27.2",
-            "x-analytics-session-id" to "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0",
+            "x-analytics-session-id" to realAnalyticsSessionId,
             "x-analytics-type" to "GA",
-            "x-analytics-user-id" to gaUserId,
+            "x-analytics-user-id" to realAnalyticsUserId,
             "x-api-version" to apiVersion,
             "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
@@ -287,19 +302,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         val cookieSnapshot: String? = activeCookie
 
-        // 🎯 x-d-token = WebView's reese84 (يجب أن يطابق Cookie's reese84)
+        // x-d-token = WebView's reese84
         val wvReese84 = extractCookieValue(cookieSnapshot, "reese84")
         if (!wvReese84.isNullOrBlank()) {
             h["x-d-token"] = wvReese84
-            addLog("🎯 x-d-token = WebView reese84 (${wvReese84.length} chars)")
-        } else {
-            // Fallback: Hyper's reese84
-            val reeseHeader = hyperSession.getCookieHeader()
-            val hyperReese84 = reeseHeader?.removePrefix("reese84=")?.trim()
-            if (!hyperReese84.isNullOrBlank()) {
-                h["x-d-token"] = hyperReese84
-                addLog("⚠️ Fallback: Hyper reese84 (${hyperReese84.length} chars)")
-            }
         }
 
         if (!cookieSnapshot.isNullOrBlank()) {
@@ -383,6 +389,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             attempt++
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
+                // 🎯 استخراج bid_* واستخدامه كـ browserId
+                val bidValue = extractBidFromCookies(activeCookie) ?: "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
+                addLog("🔍 using browserId = $bidValue")
+
                 val resp = RetrofitClient.api.searchAirBounds(
                     headers = buildHeaders("4"),
                     request = SaudiaSearchRequest(
@@ -393,7 +403,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
+                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput(
+                            channel = "WEB",
+                            pointOfSale = "SA",
+                            currencyCode = "SAR",
+                            language = "AR",
+                            browserId = bidValue
+                        )
                     )
                 )
 
