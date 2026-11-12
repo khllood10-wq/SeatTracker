@@ -1,5 +1,9 @@
 package com.example.saudiaseattracker
 
+import com.github.zhkl0228.impersonator.ImpersonatorApi
+import com.github.zhkl0228.impersonator.ImpersonatorFactory
+import com.github.zhkl0228.impersonator.okhttp.OkHttpClientFactory
+import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.Response
@@ -85,9 +89,17 @@ data class CreateCartRequest(val airBoundIds: List<String>)
 
 object RetrofitClient {
     private const val BASE_URL = "https://dapi.saudia.com/"
+
+    // 👇 إنشاء عميل OkHttp ينتحل بصمة Chrome (Android profile)
+    private val impersonatingClient: OkHttpClient by lazy {
+        val api: ImpersonatorApi = ImpersonatorFactory.android()
+        OkHttpClientFactory.create(api).newHttpClient()
+    }
+
     val api: SaudiaApi by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
+            .client(impersonatingClient) // 👈 استخدام العميل المعدّل
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(SaudiaApi::class.java)
