@@ -1,6 +1,7 @@
 package com.example.saudiaseattracker
 
 import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +17,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import retrofit2.Response
 import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.random.Random
@@ -73,15 +75,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeJwt = ""
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
-
-    // x-v-token من التقرير
-    private val xvToken = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
+    private var activeXdToken = ""
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
             context = getApplication<Application>(),
             rawApiKey = BuildConfig.HYPER_API_KEY,
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             acceptLanguage = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
         )
     }
@@ -202,7 +202,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
-                    userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
 
                 manager.fetchAll(
@@ -211,9 +211,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeCookie = data.cookie
                         activeSaaSessionId = data.saaSessionId
 
+                        // x-d-token = reese84 (من CookieManager بعد انتظار 6 ثواني)
+                        activeXdToken = extractCookieValue(data.cookie, "reese84") ?: ""
+
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
-                        addLog("🍪 Cookie: ${data.cookie.split(";").size} كوكي")
+                        addLog("🍪 ${HiddenWebViewManager.capturedInfo}")
                         addLog("🆔 saa-session-id: ${data.saaSessionId}")
+                        addLog("🎯 x-d-token: ${activeXdToken.take(30)}...")
 
                         if (continuation.isActive) continuation.resume(true)
                     },
@@ -228,51 +232,60 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun extractCookieValue(cookieStr: String?, name: String): String? {
         if (cookieStr == null) return null
-        return cookieStr.split(";").map { it.trim() }.find { it.startsWith("$name=") }?.substringAfter("=")?.trim()
+        return cookieStr.split(";")
+            .map { it.trim() }
+            .find { it.startsWith("$name=") }
+            ?.substringAfter("=")
+            ?.trim()
     }
 
-    private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
-        val traceId = UUID.randomUUID().toString().replace("-", "")
-        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
-        val nowSec = System.currentTimeMillis() / 1000
-
+    // ═══════════════════════════════════════════════════════════════
+    // 🔧 buildHeaders = نسخة قديمة حرفياً (بدون analytics)
+    // ═══════════════════════════════════════════════════════════════
+    private fun buildHeaders(
+        apiVersion: String,
+        isWebEndpoint: Boolean = false,
+        referer: String = "https://www.saudia.com/"
+    ): Map<String, String> {
+        // Snapshots (val) لتجنب Smart Cast
         val cookieSnapshot: String? = activeCookie
         val saaSnapshot: String = activeSaaSessionId
         val jwtSnapshot: String = activeJwt
+        val xdSnapshot: String = activeXdToken
 
-        val h = mutableMapOf(
-            "accept" to "application/json",
-            "authorization" to jwtSnapshot,
-            "content-type" to "application/json",
+        val traceId = UUID.randomUUID().toString().replace("-", "")
+        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
+
+        val headers = mutableMapOf(
+            "Authorization" to jwtSnapshot,
+            "x-d-token" to xdSnapshot,
+            "saa-session-id" to saaSnapshot,
+            "x-api-version" to apiVersion,
             "platform" to "Web",
-            "request-context" to "appId=cid-v1:45124bde-070b-4e51-a925-aa883fdba652",
+            "version" to "27.2",
+            "Accept" to "application/json",
+            "Content-Type" to "application/json",
+            "Origin" to "https://www.saudia.com",
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
-            "version" to "27.2",
-            "x-analytics-session-id" to "s$nowSec\$o1\$g1\$t$nowSec\$j1\$l0\$h0",
-            "x-analytics-type" to "GA",
-            "x-analytics-user-id" to "${Random.nextLong(1000000000L, 2000000000L)}.${Random.nextLong(1000000000L, 2000000000L)}",
-            "x-api-version" to apiVersion,
             "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
             "x-datadog-sampling-priority" to "1",
-            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Origin" to "https://www.saudia.com",
-            "Referer" to referer,
-            "x-v-token" to xvToken // 👈 جديد!
+            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
         )
 
-        if (saaSnapshot.isNotBlank()) h["saa-session-id"] = saaSnapshot
+        if (isWebEndpoint) {
+            headers["x-v-token"] = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
+        } else {
+            headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
+            headers["channel"] = "MOBILE_WEB"
+        }
 
-        // x-d-token = reese84 من CookieManager
-        val reese84Value = extractCookieValue(cookieSnapshot, "reese84")
-        if (!reese84Value.isNullOrBlank()) h["x-d-token"] = reese84Value
-
-        if (!cookieSnapshot.isNullOrBlank()) h["Cookie"] = cookieSnapshot
-
-        return h
+        if (!cookieSnapshot.isNullOrBlank()) headers["Cookie"] = cookieSnapshot
+        return headers
     }
 
     fun runFullBooking(activity: android.app.Activity) {
@@ -362,6 +375,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
 
+                // 🆕 جمع الكوكيز من Set-Cookie في الرد
+                saveCookiesFromResponse(resp)
+
                 if (resp.code() == 401 || resp.code() == 403) {
                     addLog("❌ رفض (${resp.code()})")
                     return null
@@ -392,11 +408,38 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return null
     }
 
+    // 🆕 نفس دالة الكود القديم
+    private fun saveCookiesFromResponse(response: Response<*>) {
+        val setCookieHeaders = response.headers().values("Set-Cookie")
+        if (setCookieHeaders.isEmpty()) return
+        val cookieMap = mutableMapOf<String, String>()
+        
+        // ابدأ بالكوكيز الحالية
+        val currentCookie = activeCookie ?: ""
+        if (currentCookie.isNotEmpty()) {
+            currentCookie.split(";").forEach { pair ->
+                val parts = pair.trim().split("=", limit = 2)
+                if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
+            }
+        }
+        
+        // أضف الكوكيز الجديدة من الرد
+        setCookieHeaders.forEach { header ->
+            val firstPart = header.split(";").first().trim()
+            val parts = firstPart.split("=", limit = 2)
+            if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
+        }
+        
+        // دمج الكوكيز الجديدة مع القديمة (الجديدة تفوز)
+        activeCookie = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
     private suspend fun createCart(airBoundId: String): String? = try {
         val r = RetrofitClient.api.createCart(
             headers = buildHeaders("2"),
             request = CreateCartRequest(listOf(airBoundId))
         )
+        saveCookiesFromResponse(r)
         if (!r.isSuccessful) null else {
             val bodyStr = r.body()?.string() ?: ""
             val j = JSONObject(bodyStr)
@@ -413,6 +456,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = payload.toRequestBody("application/json".toMediaType())
         )
+        saveCookiesFromResponse(r)
         r.code() == 200
     } catch (e: Exception) { false }
 
@@ -423,6 +467,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = body.toRequestBody("application/json".toMediaType())
         )
+        saveCookiesFromResponse(r)
         r.isSuccessful
     } catch (e: Exception) { false }
 
@@ -434,6 +479,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = body.toRequestBody("application/json".toMediaType())
         )
+        saveCookiesFromResponse(r)
         r.isSuccessful
     } catch (e: Exception) { false }
 
@@ -443,6 +489,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = "{}".toRequestBody("application/json".toMediaType())
         )
+        saveCookiesFromResponse(r)
         if (!r.isSuccessful) null else {
             val b = r.body()?.string() ?: return null
             val pnr = Regex("\"id\"\\s*:\\s*\"([A-Z0-9]{4,8})\"").find(b)?.groupValues?.get(1) ?: return null
@@ -459,6 +506,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"),
             request = body.toRequestBody("application/json".toMediaType())
         )
+        saveCookiesFromResponse(r)
         r.isSuccessful
     } catch (e: Exception) { false }
 }
