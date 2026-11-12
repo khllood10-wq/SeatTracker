@@ -51,28 +51,43 @@ class HiddenWebViewManager(
                 webView?.addJavascriptInterface(object {
                     @JavascriptInterface
                     fun onCaptured(jwt: String, saaId: String) {
-                        Handler(Looper.getMainLooper()).post {
-                            // جمع الكوكيز من كل النطاقات
-                            val c1 = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
-                            val c2 = CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: ""
-                            val c3 = CookieManager.getInstance().getCookie("https://saudia.com") ?: ""
+                        // 👇 ننتظر 6 ثواني إضافية لجمع incap_ses_* من CookieManager
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                val c1 = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
+                                val c2 = CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: ""
+                                val c3 = CookieManager.getInstance().getCookie("https://saudia.com") ?: ""
 
-                            val map = mutableMapOf<String, String>()
-                            listOf(c1, c2, c3).forEach { str ->
-                                str.split(";").forEach { part ->
-                                    val t = part.trim()
-                                    if (t.isNotEmpty()) {
-                                        val eq = t.indexOf('=')
-                                        if (eq > 0) map[t.substring(0, eq).trim()] = t.substring(eq + 1).trim()
+                                val map = mutableMapOf<String, String>()
+                                listOf(c1, c2, c3).forEach { str ->
+                                    str.split(";").forEach { part ->
+                                        val t = part.trim()
+                                        if (t.isNotEmpty()) {
+                                            val eq = t.indexOf('=')
+                                            if (eq > 0) map[t.substring(0, eq).trim()] = t.substring(eq + 1).trim()
+                                        }
                                     }
                                 }
-                            }
-                            val combined = map.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                                val combined = map.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
-                            cleanup()
-                            val cleanToken = if (jwt.startsWith("Bearer ")) jwt else "Bearer $jwt"
-                            onSuccess(CapturedData(cleanToken, combined, saaId))
-                        }
+                                // سجل أسماء الكوكيز الحرجة
+                                val names = map.keys.toList()
+                                val hasIncap = names.any { it.startsWith("incap_ses") }
+                                val hasVisid = names.any { it.startsWith("visid_incap") }
+                                val hasReese = names.contains("reese84")
+                                val hasBid = names.any { it.startsWith("bid_") }
+
+                                cleanup()
+                                val cleanToken = if (jwt.startsWith("Bearer ")) jwt else "Bearer $jwt"
+                                
+                                // نرسل المعلومات الإضافية عبر onSuccess
+                                capturedInfo = "Cookies: ${names.size} | incap_ses: $hasIncap | visid: $hasVisid | reese84: $hasReese | bid: $hasBid"
+                                onSuccess(CapturedData(cleanToken, combined, saaId))
+                            } catch (e: Exception) {
+                                cleanup()
+                                onError("Error collecting: ${e.message}")
+                            }
+                        }, 6000)
                     }
 
                     @JavascriptInterface
@@ -146,6 +161,11 @@ class HiddenWebViewManager(
                 onError(e.message ?: "Unknown error")
             }
         }
+    }
+
+    companion object {
+        @Volatile
+        var capturedInfo: String = ""
     }
 
     private fun cleanup() {
