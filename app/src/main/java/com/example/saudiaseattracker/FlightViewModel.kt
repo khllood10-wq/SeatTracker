@@ -186,24 +186,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun captureSessionViaHttpCloak(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                // 1. اختبار httpcloak على httpbin.org
-                addLog("🔄 اختبار httpcloak على httpbin.org...")
-                val testResp = withTimeout(20_000L) {
-                    httpCloakClient.get(
-                        url = "https://httpbin.org/get",
-                        headers = mapOf("Accept" to "application/json")
-                    )
-                }
-                addLog("📄 httpbin → HTTP ${testResp.statusCode}, Length: ${testResp.text.length}")
-
-                if (testResp.statusCode != 200) {
-                    addLog("⚠️ httpbin أعاد كود ${testResp.statusCode}. المكتبة قد لا تعمل.")
-                    return@withContext false
-                }
-
-                addLog("✅ httpcloak تعمل (httpbin رد 200)")
-
-                // 2. الاختبار على السعودية
                 val reeseCookie = hyperSession.getCookieHeader() ?: run {
                     addLog("❌ لا يوجد reese84 من Hyper")
                     return@withContext false
@@ -241,7 +223,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🎉 httpcloak تجاوز Imperva بنجاح!")
 
-                // 3. محاولة token/initialization
                 addLog("🔄 محاولة token/initialization...")
                 val initResp = withTimeout(30_000L) {
                     httpCloakClient.post(
