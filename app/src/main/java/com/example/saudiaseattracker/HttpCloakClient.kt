@@ -14,9 +14,8 @@ class HttpCloakClient {
         return Session(
             SessionConfig(
                 preset = Presets.CHROME_LATEST_ANDROID,
-                timeout = 15,                   // مهلة 15 ثانية
-                httpVersion = "h1"              // إجبار HTTP/1.1 (TCP فقط)
-                // تم حذف dnsServers لأنها غير مدعومة في هذه النسخة
+                timeout = 10,             // 👈 10 ثوانٍ فقط (إذا لم يستجب، يفشل فوراً)
+                httpVersion = "h2"        
             )
         )
     }
@@ -29,7 +28,7 @@ class HttpCloakClient {
                 Log.d("HttpCloakClient", "✅ استجابة GET: HTTP ${response.statusCode}")
                 HttpCloakResponse(response.statusCode, response.text)
             } catch (e: Exception) {
-                Log.e("HttpCloakClient", "❌ فشل GET: ${e.message}", e)
+                Log.e("HttpCloakClient", "❌ فشل GET: ${e.javaClass.simpleName} - ${e.message}", e)
                 throw e
             }
         }
@@ -47,7 +46,7 @@ class HttpCloakClient {
                 Log.d("HttpCloakClient", "✅ استجابة POST: HTTP ${response.statusCode}")
                 HttpCloakResponse(response.statusCode, response.text)
             } catch (e: Exception) {
-                Log.e("HttpCloakClient", "❌ فشل POST: ${e.message}", e)
+                Log.e("HttpCloakClient", "❌ فشل POST: ${e.javaClass.simpleName} - ${e.message}", e)
                 throw e
             }
         }
