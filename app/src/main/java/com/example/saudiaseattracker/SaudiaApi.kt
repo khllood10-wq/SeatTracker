@@ -24,19 +24,10 @@ interface SaudiaApi {
         @Body request: CreateCartRequest
     ): Response<ResponseBody>
 
-    @GET("shopping/carts/{cartId}")
-    suspend fun getCartDetails(
-        @Path("cartId") cartId: String,
-        @Query("pageIdentity") pageIdentity: String = "PassengerDetails",
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
-        @Query("lang") lang: String = "ar-SA",
-        @HeaderMap headers: Map<String, String>
-    ): Response<ResponseBody>
-
     @POST("shopping/carts/{cartId}/extensions")
     suspend fun addCartExtension(
         @Path("cartId") cartId: String,
-        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08MA",
+        @Query("guestOfficeId") guestOfficeId: String = "JEDSV08AA",
         @Query("lang") lang: String = "ar-SA",
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
