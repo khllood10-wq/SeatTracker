@@ -14,9 +14,8 @@ class HttpCloakClient {
         return Session(
             SessionConfig(
                 preset = Presets.CHROME_LATEST_ANDROID,
-                timeout = 30,              
-                httpVersion = "h2"         // إجبار HTTP/2
-                // تم حذف disableHTTP3 لتجنب خطأ المترجم
+                timeout = 0,             // 👈 0 يعني بدون مهلة (انتظر للأبد)
+                httpVersion = "h2"       
             )
         )
     }
@@ -29,7 +28,6 @@ class HttpCloakClient {
                 Log.d("HttpCloakClient", "✅ استجابة GET: HTTP ${response.statusCode}، طول: ${response.text.length}")
                 HttpCloakResponse(response.statusCode, response.text)
             } catch (e: Exception) {
-                // 👇 طباعة الخطأ الداخلي بالكامل (Stack Trace)
                 Log.e("HttpCloakClient", "❌ فشل GET: ${e.javaClass.simpleName} - ${e.message}", e)
                 throw e
             }
