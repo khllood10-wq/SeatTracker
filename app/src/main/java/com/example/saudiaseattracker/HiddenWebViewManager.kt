@@ -77,7 +77,7 @@ class HiddenWebViewManager(
                                 cleanup()
                                 onError("Error collecting: ${e.message}")
                             }
-                        }, 3000) // 3 ثواني إضافية
+                        }, 3000)
                     }
 
                     @JavascriptInterface
@@ -109,7 +109,6 @@ class HiddenWebViewManager(
                                                   localStorage.getItem('saudia-access-token') ||
                                                   localStorage.getItem('rawAirData');
                                         if (jwt && jwt.indexOf('eyJ') > -1) {
-                                            // ننتظر 4 ثواني إضافية لالتقاط الـ hooks
                                             setTimeout(function() {
                                                 var sid = window.__capturedSaaId || '';
                                                 var bid = window.__capturedBid || '';
@@ -144,14 +143,14 @@ class HiddenWebViewManager(
     }
 
     companion object {
-        private const val HOOK_JS = """
+        // 👇 val (بدون const) لأن trimIndent() دالة وليست ثابتاً
+        private val HOOK_JS = """
             (function() {
                 if (window.__hooked) return;
                 window.__hooked = true;
                 window.__capturedSaaId = '';
                 window.__capturedBid = '';
                 
-                // 1. اعتراض setRequestHeader (XHR)
                 var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
                 XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
                     try {
@@ -162,7 +161,6 @@ class HiddenWebViewManager(
                     return origSetHeader.apply(this, arguments);
                 };
                 
-                // 2. اعتراض fetch
                 var origFetch = window.fetch;
                 window.fetch = function(input, init) {
                     try {
@@ -191,7 +189,6 @@ class HiddenWebViewManager(
                     return origFetch.apply(this, arguments);
                 };
                 
-                // 3. اعتراض XHR.open (بعض التطبيقات تستخدم open بدلاً من setRequestHeader)
                 var origOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
                     this.__url = url;
