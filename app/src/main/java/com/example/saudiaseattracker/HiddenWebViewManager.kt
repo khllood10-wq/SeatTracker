@@ -14,8 +14,7 @@ import android.widget.FrameLayout
 
 data class WebViewResult(
     val token: String,
-    val cookie: String,
-    val sessionId: String
+    val cookie: String
 )
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
@@ -50,7 +49,7 @@ class HiddenWebViewManager(
 
                 webView?.addJavascriptInterface(object {
                     @JavascriptInterface
-                    fun onTokensFound(token: String, sessionId: String) {
+                    fun onTokenFound(token: String) {
                         Handler(Looper.getMainLooper()).post {
                             val cookiesWww = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
                             val cookiesDapi = CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: ""
@@ -67,7 +66,7 @@ class HiddenWebViewManager(
                             val combined = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
                             cleanup()
                             val cleanToken = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                            onSuccess(WebViewResult(cleanToken, combined, sessionId))
+                            onSuccess(WebViewResult(cleanToken, combined))
                         }
                     }
 
@@ -81,17 +80,8 @@ class HiddenWebViewManager(
                 }, "AndroidBridge")
 
                 webView?.webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                        super.onPageStarted(view, url, favicon)
-                        // 👇 نحقن سكربت اعتراض fetch قبل تحميل الصفحة
-                        view?.evaluateJavascript(HOOK_JS, null)
-                    }
-
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
-                        view?.evaluateJavascript(HOOK_JS, null)
-                        
-                        // بدء البحث عن التوكن
                         val js = """
                             (function() {
                                 if (window.tokenPollingStarted) return;
@@ -101,9 +91,8 @@ class HiddenWebViewManager(
                                         var jwt = sessionStorage.getItem('saudia-access-token') || 
                                                   localStorage.getItem('saudia-access-token') ||
                                                   localStorage.getItem('rawAirData');
-                                        var sid = window.__capturedSessionId || '';
                                         if (jwt && jwt.indexOf('eyJ') > -1) {
-                                            window.AndroidBridge.onTokensFound(jwt, sid);
+                                            window.AndroidBridge.onTokenFound(jwt);
                                             return true;
                                         }
                                     } catch(e) {}
@@ -114,8 +103,8 @@ class HiddenWebViewManager(
                                 }, 500);
                                 setTimeout(function() {
                                     clearInterval(interval);
-                                    window.AndroidBridge.onError("Timeout");
-                                }, 25000);
+                                    window.AndroidBridge.onError("Timeout: Token not found");
+                                }, 20000);
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(js, null)
@@ -131,52 +120,6 @@ class HiddenWebViewManager(
                 onError(e.message ?: "Unknown error")
             }
         }
-    }
-
-    companion object {
-        private const val HOOK_JS = """
-            (function() {
-                if (window.__sessionHooked) return;
-                window.__sessionHooked = true;
-                
-                // اعتراض fetch
-                var origFetch = window.fetch;
-                window.fetch = function(input, init) {
-                    var url = typeof input === 'string' ? input : (input && input.url) || '';
-                    var p = origFetch.apply(this, arguments);
-                    if (url.indexOf('token/initialization') > -1) {
-                        p.then(function(r) {
-                            r.clone().json().then(function(data) {
-                                if (data.session_id) {
-                                    window.__capturedSessionId = data.session_id;
-                                }
-                            }).catch(function(){});
-                        }).catch(function(){});
-                    }
-                    return p;
-                };
-                
-                // اعتراض XHR
-                var origOpen = XMLHttpRequest.prototype.open;
-                var origSend = XMLHttpRequest.prototype.send;
-                XMLHttpRequest.prototype.open = function(m, u) {
-                    this.__url = u;
-                    return origOpen.apply(this, arguments);
-                };
-                XMLHttpRequest.prototype.send = function() {
-                    var self = this;
-                    if (self.__url && self.__url.indexOf('token/initialization') > -1) {
-                        self.addEventListener('load', function() {
-                            try {
-                                var d = JSON.parse(self.responseText);
-                                if (d.session_id) window.__capturedSessionId = d.session_id;
-                            } catch(e) {}
-                        });
-                    }
-                    return origSend.apply(this, arguments);
-                };
-            })();
-        """.trimIndent()
     }
 
     private fun cleanup() {
