@@ -34,6 +34,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
+    // حالة إدخال التوكن محلياً في الواجهة
+    var tokenInput by remember { mutableStateOf(viewModel.manualToken) }
+
     val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
 
     var remainingMs by remember { mutableStateOf(0L) }
@@ -54,9 +57,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = when {
-                    sessionReady && remainingMs > 60_000 -> Color(0xFFE8F5E9) // أخضر
-                    sessionReady -> Color(0xFFFFF3E0) // برتقالي
-                    else -> MaterialTheme.colorScheme.errorContainer // أحمر
+                    sessionReady && remainingMs > 60_000 -> Color(0xFFE8F5E9)
+                    sessionReady -> Color(0xFFFFF3E0)
+                    else -> MaterialTheme.colorScheme.errorContainer
                 }
             )
         ) {
@@ -95,10 +98,28 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // زر البدء: تم تعديل enabled ليسمح بالضغط حتى لو كانت الجلسة حمراء
+        // 👇 خانة إدخال التوكن (JWT) اليدوي 👇
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(12.dp)) {
+                Text("🔑 التوكن اليدوي (JWT):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                OutlinedTextField(
+                    value = tokenInput,
+                    onValueChange = { 
+                        tokenInput = it
+                        viewModel.manualToken = it // تحديث التوكن في الـ ViewModel فوراً
+                    },
+                    placeholder = { Text("Bearer eyJ...", fontSize = 10.sp) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 10.sp),
+                    singleLine = true
+                )
+            }
+        }
+
+        // زر البدء
         Button(
             onClick = { viewModel.runFullBooking() },
-            enabled = !isRunning, // 👈 التعديل هنا
+            enabled = !isRunning,
             modifier = Modifier.fillMaxWidth().height(64.dp)
         ) {
             if (isRunning) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
