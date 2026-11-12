@@ -15,8 +15,8 @@ class HttpCloakClient {
             SessionConfig(
                 preset = Presets.CHROME_LATEST_ANDROID,
                 timeout = 15,                   // مهلة 15 ثانية
-                httpVersion = "h1",             // إجبار HTTP/1.1 (TCP فقط)
-                dnsServers = listOf("8.8.8.8")  // 👈 إجبار استخدام Google DNS لحل مشكلة أندرويد
+                httpVersion = "h1"              // إجبار HTTP/1.1 (TCP فقط)
+                // تم حذف dnsServers لأنها غير مدعومة في هذه النسخة
             )
         )
     }
