@@ -6,18 +6,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import retrofit2.Response
-import kotlin.coroutines.resume
+import java.util.UUID
+import kotlin.random.Random
 
 data class PassengerData(
     val title: String = "Mr",
@@ -68,9 +65,11 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    private var currentActivity: android.app.Activity? = null
-    private var activeJwt = ""
-    private var activeCookie: String? = null
+    // ═══════════════════════════════════════════════════════════════
+    // 🔑 اختبار: JWT + x-d-token فقط (بدون كوكيز، بدون WebView)
+    // ⚠️ الصق JWT حديث (من التقاط حديث) هنا:
+    // ═══════════════════════════════════════════════════════════════
+    private var activeJwt = "Bearer الصق_التوكن_هنا"
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -178,46 +177,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun refreshTokenViaHiddenWebView(): String? {
-        return withContext(Dispatchers.Main) {
-            val activity = currentActivity ?: run {
-                addLog("❌ Activity غير متاح")
-                return@withContext null
-            }
-
-            suspendCancellableCoroutine<String?> { continuation ->
-                val reeseCookie = hyperSession.getCookieHeader() ?: ""
-                if (reeseCookie.isBlank()) {
-                    addLog("❌ لا يوجد كوكي reese84")
-                    if (continuation.isActive) continuation.resume(null)
-                    return@suspendCancellableCoroutine
-                }
-
-                addLog("🕵️‍♂️ فتح WebView خفي...")
-                val manager = HiddenWebViewManager(
-                    activity = activity,
-                    reese84Cookie = reeseCookie,
-                    userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
-
-                manager.fetchToken(
-                    onSuccess = { result: WebViewResult ->
-                        activeJwt = result.token
-                        activeCookie = result.cookie
-                        addLog("✅ JWT: ${result.token.take(30)}...")
-                        addLog("🍪 Cookies count: ${result.cookie.split(";").size}")
-                        if (continuation.isActive) continuation.resume(result.token)
-                    },
-                    onError = { error: String ->
-                        addLog("❌ فشل WebView: $error")
-                        if (continuation.isActive) continuation.resume(null)
-                    }
-                )
-            }
-        }
+    private fun extractReese84Value(cookieHeader: String?): String? {
+        if (cookieHeader == null) return null
+        // cookieHeader يبدأ بـ "reese84="
+        return cookieHeader.removePrefix("reese84=").trim().ifEmpty { null }
     }
 
-    // 👇 buildHeaders مبسطة: Bearer + Cookies فقط (كما كانت في SessionKeeper القديم)
+    // 👇 buildHeaders: JWT + x-d-token فقط (بدون Cookie)
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val h = mutableMapOf(
             "accept" to "application/json",
@@ -231,21 +197,35 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        // Bearer JWT فقط
-        if (activeJwt.isNotBlank()) h["authorization"] = activeJwt
+        // 1. Authorization (JWT)
+        if (activeJwt.isNotBlank() && activeJwt != "Bearer الصق_التوكن_هنا") {
+            h["authorization"] = activeJwt
+        } else {
+            addLog("⚠️ JWT غير مضبوط! الصق توكن حديث في الكود")
+        }
 
-        // Cookies فقط
-        val cookieSnapshot: String? = activeCookie
-        if (!cookieSnapshot.isNullOrBlank()) h["Cookie"] = cookieSnapshot
+        // 2. x-d-token (من reese84 الذي يوفره Hyper)
+        val reese84Value = extractReese84Value(hyperSession.getCookieHeader())
+        if (!reese84Value.isNullOrBlank()) {
+            h["x-d-token"] = reese84Value
+            addLog("🎯 x-d-token مُرسل (طول: ${reese84Value.length})")
+        } else {
+            addLog("❌ reese84 غير متوفر لتوليد x-d-token")
+        }
+
+        // ❌ لا Cookie - كما طلبت
 
         return h
     }
 
     fun runFullBooking(activity: android.app.Activity) {
-        currentActivity = activity
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
         if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
+        if (activeJwt == "Bearer الصق_التوكن_هنا") {
+            addLog("❌ الرجاء لصق JWT حديث في الكود أولاً")
+            return
+        }
 
         clearResults()
         _isRunning.value = true
@@ -254,14 +234,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 hyperSession.ensureFreshToken()
                 markSessionReady()
-
-                addLog("🎫 جلب التوكن الأولي عبر WebView...")
-                val token = refreshTokenViaHiddenWebView()
-                if (token == null) {
-                    addLog("❌ فشل الحصول على التوكن الأولي")
-                    _isRunning.value = false
-                    return@launch
-                }
 
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
@@ -311,7 +283,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun searchUntilFound(max: Int = 1000): FoundFlightDetails? {
         var attempt = 0
-        var refreshCount = 0
         while (attempt < max) {
             attempt++
             setStep("search", StepStatus.RUNNING, "$attempt")
@@ -331,22 +302,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    refreshCount++
-                    if (refreshCount > 2) {
-                        addLog("❌ فشل البحث بعد محاولتين")
-                        addLog("🔍 الكود: ${resp.code()}")
-                        return null
-                    }
-                    addLog("⚠️ التوكن مرفوض (${resp.code()}) - تجديد #$refreshCount")
-                    val newToken = refreshTokenViaHiddenWebView()
-                    if (newToken != null) {
-                        addLog("✅ التوكن محدث")
-                        delay(2000)
-                        attempt--
-                        continue
-                    } else {
-                        return null
-                    }
+                    addLog("❌ رفض (${resp.code()}) - لا WebView للتجديد في هذا الاختبار")
+                    return null
                 }
 
                 if (resp.isSuccessful) {
