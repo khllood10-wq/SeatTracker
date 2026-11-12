@@ -1,7 +1,7 @@
-// Top-level build file where you can add configuration options common to all sub-projects/modules.
+// build.gradle.kts (الجذر)
 plugins {
     id("com.android.application") version "8.6.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.0.0" apply false
-    // 👈 السطر الجديد لتعريف إصدار البلوجن (يجب أن يطابق إصدار Kotlin)
-    id("org.jetbrains.kotlin.plugin.compose") version "2.0.0" apply false 
+    // 👇 ترقية إصدار Kotlin إلى 2.2.0
+    id("org.jetbrains.kotlin.android") version "2.2.0" apply false 
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.0" apply false 
 }
