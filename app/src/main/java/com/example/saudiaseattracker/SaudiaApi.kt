@@ -2,7 +2,6 @@ package com.example.saudiaseattracker
 
 import com.github.zhkl0228.impersonator.ImpersonatorApi
 import com.github.zhkl0228.impersonator.ImpersonatorFactory
-import com.github.zhkl0228.impersonator.okhttp.OkHttpClientFactory
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -10,6 +9,9 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
 
 interface SaudiaApi {
     @POST("airsearch/search/air-bounds")
@@ -90,15 +92,30 @@ data class CreateCartRequest(val airBoundIds: List<String>)
 object RetrofitClient {
     private const val BASE_URL = "https://dapi.saudia.com/"
 
-    private val impersonatingClient: OkHttpClient by lazy {
+    // 👇 SSLContext يحاكي بصمة Chrome (Android profile)[reference:1]
+    private val chromeSslContext: SSLContext by lazy {
         val api: ImpersonatorApi = ImpersonatorFactory.android()
-        OkHttpClientFactory.create(api).newHttpClient()
+        api.newSSLContext(null, null)
+    }
+
+    // 👇 TrustManager افتراضي (يقبل كل الشهادات) لأن SSLContext من impersonator لا يوفر TrustManager مباشرة
+    private val trustAllManager = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    }
+
+    // 👇 OkHttpClient عادي، لكن مع SSLContext المعدّل
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .sslSocketFactory(chromeSslContext.socketFactory, trustAllManager)
+            .build()
     }
 
     val api: SaudiaApi by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
-            .client(impersonatingClient)
+            .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(SaudiaApi::class.java)
