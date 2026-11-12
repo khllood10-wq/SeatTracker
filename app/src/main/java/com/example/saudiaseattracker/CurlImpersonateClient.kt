@@ -14,7 +14,6 @@ data class CurlResponse(
 
 class CurlImpersonateClient(private val context: Context) {
 
-    // الحصول على مسار المكتبة التنفيذية
     private val curlBinary: File by lazy {
         File(context.applicationInfo.nativeLibraryDir, "libcurl-impersonate.so")
     }
@@ -31,7 +30,7 @@ class CurlImpersonateClient(private val context: Context) {
 
         val cmd = mutableListOf(
             curlBinary.absolutePath,
-            "--impersonate", "chrome131_android", // استخدام بروفايل Chrome 131 لأندرويد
+            "--impersonate", "chrome131_android",
             "--silent", "--show-error", "--include", "--max-time", "30",
             "-X", method
         )
@@ -48,7 +47,11 @@ class CurlImpersonateClient(private val context: Context) {
 
         cmd.add(url)
 
-        val process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+        // 👇 تعيين LD_LIBRARY_PATH
+        val pb = ProcessBuilder(cmd).redirectErrorStream(true)
+        pb.environment()["LD_LIBRARY_PATH"] = context.applicationInfo.nativeLibraryDir
+        val process = pb.start()
+
         val output = process.inputStream.bufferedReader().readText()
         val exitCode = process.waitFor()
 
