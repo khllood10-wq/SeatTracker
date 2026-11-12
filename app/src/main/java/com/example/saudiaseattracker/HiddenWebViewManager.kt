@@ -16,8 +16,7 @@ data class CapturedData(
     val jwt: String,
     val cookie: String,
     val saaSessionId: String,
-    val bid: String,
-    val docCookies: String
+    val bid: String
 )
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
@@ -60,7 +59,6 @@ class HiddenWebViewManager(
                                 val c3 = CookieManager.getInstance().getCookie("https://saudia.com") ?: ""
 
                                 val map = mutableMapOf<String, String>()
-                                // نجمع كل الكوكيز من CookieManager
                                 listOf(c1, c2, c3).forEach { str ->
                                     str.split(";").forEach { part ->
                                         val t = part.trim()
@@ -70,7 +68,6 @@ class HiddenWebViewManager(
                                         }
                                     }
                                 }
-                                // نضيف document.cookie
                                 docCookies.split(";").forEach { part ->
                                     val t = part.trim()
                                     if (t.isNotEmpty()) {
@@ -80,14 +77,21 @@ class HiddenWebViewManager(
                                 }
                                 val combined = map.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
+                                // استخراج bid_* من الكوكيز المدموجة
+                                var bidValue = bid
+                                if (bidValue.isBlank()) {
+                                    val bidEntry = map.entries.find { it.key.startsWith("bid_") }
+                                    if (bidEntry != null) bidValue = bidEntry.value
+                                }
+
                                 cleanup()
                                 val cleanToken = if (jwt.startsWith("Bearer ")) jwt else "Bearer $jwt"
-                                onSuccess(CapturedData(cleanToken, combined, saaId, bid, docCookies))
+                                onSuccess(CapturedData(cleanToken, combined, saaId, bidValue))
                             } catch (e: Exception) {
                                 cleanup()
                                 onError("Error collecting: ${e.message}")
                             }
-                        }, 3000)
+                        }, 2000) // ننتظر ثانيتين إضافيتين بعد onCaptured
                     }
 
                     @JavascriptInterface
@@ -119,12 +123,18 @@ class HiddenWebViewManager(
                                                   localStorage.getItem('saudia-access-token') ||
                                                   localStorage.getItem('rawAirData');
                                         if (jwt && jwt.indexOf('eyJ') > -1) {
+                                            // 🎯 ننتظر 15 ثانية كاملة (لعل السعودية تُنشئ bid_*)
                                             setTimeout(function() {
                                                 var sid = window.__capturedSaaId || '';
                                                 var bid = window.__capturedBid || '';
+                                                // اقرأ bid_* من document.cookie أيضاً
+                                                if (!bid) {
+                                                    var m = (document.cookie || '').match(/bid_[^=]+=([^;]+)/);
+                                                    if (m) bid = m[1];
+                                                }
                                                 var docCookies = document.cookie || '';
                                                 window.AndroidBridge.onCaptured(jwt, sid, bid, docCookies);
-                                            }, 4000);
+                                            }, 15000);
                                             return true;
                                         }
                                     } catch(e) {}
@@ -136,7 +146,7 @@ class HiddenWebViewManager(
                                 setTimeout(function() {
                                     clearInterval(interval);
                                     window.AndroidBridge.onError("Timeout");
-                                }, 30000);
+                                }, 45000);
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(js, null)
@@ -197,12 +207,6 @@ class HiddenWebViewManager(
                         }
                     } catch(e) {}
                     return origFetch.apply(this, arguments);
-                };
-                
-                var origOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
-                    this.__url = url;
-                    return origOpen.apply(this, arguments);
                 };
             })();
         """.trimIndent()
