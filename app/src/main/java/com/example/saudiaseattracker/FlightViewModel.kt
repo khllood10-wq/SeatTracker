@@ -71,10 +71,9 @@ data class BookingStep(
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
     private var currentActivity: android.app.Activity? = null
-
     private var activeJwt = ""
-    private var activeXdToken = ""
     private var activeCookie: String? = null
+    private var activeSaaSessionId = ""
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -184,8 +183,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun refreshTokenViaHiddenWebView(): String? {
         return withContext(Dispatchers.Main) {
-            val activity = currentActivity
-            if (activity == null) {
+            val activity = currentActivity ?: run {
                 addLog("❌ Activity غير متاح")
                 return@withContext null
             }
@@ -208,12 +206,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 manager.fetchToken(
                     onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
-                        activeXdToken = result.xdToken
                         activeCookie = result.cookie
-                        val tokenPreview = if (result.token.length > 30) "${result.token.take(30)}..." else result.token
-                        val xdPreview = if (result.xdToken.length > 20) "${result.xdToken.take(20)}..." else result.xdToken
-                        addLog("✅ توكن جديد | JWT: $tokenPreview | xd-token: $xdPreview")
-                        addLog("🍪 الكوكيز: ${result.cookie.take(80)}...")
+                        activeSaaSessionId = result.saaSessionId
+                        
+                        addLog("✅ JWT: ${result.token.take(30)}...")
+                        addLog("🍪 Cookies count: ${result.cookie.split(";").size}")
+                        addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "غير موجود!"}")
+                        
                         if (continuation.isActive) continuation.resume(result.token)
                     },
                     onError = { error: String ->
@@ -225,35 +224,55 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun extractCookieValue(cookieStr: String?, name: String): String? {
+        if (cookieStr == null) return null
+        return cookieStr.split(";")
+            .map { it.trim() }
+            .find { it.startsWith("$name=") }
+            ?.substringAfter("=")
+            ?.trim()
+    }
+
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         
+        // مطابقة هيدرات المتصفح الحقيقي (من الالتقاط)
         val h = mutableMapOf(
-            "x-api-version" to apiVersion,
+            "accept" to "application/json",
+            "content-type" to "application/json",
             "platform" to "Web",
-            "version" to "27.2",
-            "Accept" to "application/json",
-            "Content-Type" to "application/json",
-            "Origin" to "https://www.saudia.com",
-            "Referer" to referer,
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
-            "channel" to "WEB",
+            "request-context" to "appId=cid-v1:45124bde-070b-4e51-a925-aa883fdba652",
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
+            "version" to "27.2",
+            "x-api-version" to apiVersion,
             "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
             "x-datadog-sampling-priority" to "1",
-            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
+            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Origin" to "https://www.saudia.com",
+            "Referer" to referer
         )
 
-        if (activeJwt.isNotBlank()) h["Authorization"] = activeJwt
-        if (activeXdToken.isNotBlank()) h["x-d-token"] = activeXdToken
-
-        val cookieToUse = activeCookie ?: hyperSession.getCookieHeader()
-        if (!cookieToUse.isNullOrBlank()) h["Cookie"] = cookieToUse
+        // Authorization
+        if (activeJwt.isNotBlank()) h["authorization"] = activeJwt
+        
+        // ⭐ x-d-token = reese84 value (من الالتقاط!)
+        val reese84Value = extractCookieValue(activeCookie, "reese84")
+        if (!reese84Value.isNullOrBlank()) {
+            h["x-d-token"] = reese84Value
+        }
+        
+        // ⭐ saa-session-id (الحل الرئيسي!)
+        if (activeSaaSessionId.isNotBlank()) {
+            h["saa-session-id"] = activeSaaSessionId
+        }
+        
+        // Cookie
+        if (!activeCookie.isNullOrBlank()) h["Cookie"] = activeCookie
 
         return h
     }
@@ -272,9 +291,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                // 👇 نجلب التوكن فوراً عند بدء الحجز
-                addLog("🎫 جلب التوكن الأولي...")
-                refreshTokenViaHiddenWebView()
+                addLog("🎫 جلب التوكن الأولي عبر WebView...")
+                val token = refreshTokenViaHiddenWebView()
+                if (token == null) {
+                    addLog("❌ فشل الحصول على التوكن الأولي")
+                    _isRunning.value = false
+                    return@launch
+                }
 
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
@@ -339,25 +362,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
+                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput(
+                            channel = "WEB",
+                            pointOfSale = "SA",
+                            currencyCode = "SAR",
+                            language = "AR",
+                            browserId = "63a3e711-d1a3-48a9-a497-1b1be70e3817"
+                        )
                     )
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    // 👇 نحدد عدد مرات التجديد لتجنب الحلقة المفرغة
                     refreshCount++
-                    if (refreshCount > 3) {
-                        addLog("❌ تجاوزنا 3 محاولات تجديد - توقف البحث")
-                        addLog("🔍 السبب: WebView يعطي توكن لكن السيرفر يرفضه")
-                        addLog("💡 الحل: نحتاج التقاط الطلب الحقيقي من المتصفح")
+                    if (refreshCount > 2) {
+                        addLog("❌ فشل البحث بعد 2 محاولات تجديد")
+                        addLog("🔍 الكود: ${resp.code()} - ${resp.message()}")
                         return null
                     }
-                    addLog("⚠️ التوكن مرفوض - تجديد #$refreshCount")
+                    addLog("⚠️ التوكن مرفوض (${resp.code()}) - تجديد #$refreshCount")
                     val newToken = refreshTokenViaHiddenWebView()
                     if (newToken != null) {
-                        addLog("✅ التوكن محدث، إعادة المحاولة...")
+                        addLog("✅ التوكن محدث")
                         delay(2000)
-                        attempt-- // لا نحسب هذه المحاولة
+                        attempt--
                         continue
                     } else {
                         return null
