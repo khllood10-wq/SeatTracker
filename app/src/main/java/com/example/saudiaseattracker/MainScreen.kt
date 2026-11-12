@@ -89,6 +89,14 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                         )
                     }
                 }
+                
+                // 👇 زر التحديث اليدوي (تم إرجاعه)
+                IconButton(
+                    onClick = { viewModel.refreshSession() },
+                    enabled = !isRunning
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = "تجديد يدوي")
+                }
             }
         }
 
