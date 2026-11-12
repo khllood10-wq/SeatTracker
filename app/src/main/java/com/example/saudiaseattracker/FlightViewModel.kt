@@ -191,10 +191,28 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@withContext false
                 }
 
-                val reeseValue = reeseCookie.removePrefix("reese84=").trim()
-                addLog("🔄 اختبار httpcloak على الصفحة الرئيسية...")
+                // 🧪 اختبار جوجل أولاً للتأكد أن مكتبة httpcloak تعمل
+                addLog("🔄 اختبار httpcloak على Google (اختبار سريع)...")
+                val googleResp = withTimeout(15_000L) {
+                    httpCloakClient.get(
+                        url = "https://www.google.com/",
+                        headers = mapOf(
+                            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                        )
+                    )
+                }
+                
+                addLog("📄 GET google.com → HTTP ${googleResp.statusCode}, Length: ${googleResp.text.length}")
+                
+                if (googleResp.statusCode != 200) {
+                    addLog("⚠️ جوجل أعاد كود غير متوقع: ${googleResp.statusCode}. المكتبة قد لا تعمل.")
+                    return@withContext false
+                }
+                
+                addLog("✅ مكتبة httpcloak تعمل بنجاح (جوجل رد 200)")
 
-                // 👇 إضافة مهلة زمنية 30 ثانية لطلب GET
+                // الآن نكمل الاختبار على موقع السعودية
+                addLog("🔄 اختبار httpcloak على موقع السعودية...")
                 val pageResp = withTimeout(30_000L) {
                     httpCloakClient.get(
                         url = "https://www.saudia.com/ar-SA",
@@ -227,13 +245,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🔄 محاولة token/initialization...")
 
-                // 👇 إضافة مهلة زمنية 30 ثانية لطلب POST
                 val initResp = withTimeout(30_000L) {
                     httpCloakClient.post(
                         url = "https://dapi.saudia.com/session/auth/web/token/initialization",
                         headers = mapOf(
                             "Cookie" to reeseCookie,
-                            "x-d-token" to reeseValue,
+                            "x-d-token" to reeseCookie.removePrefix("reese84=").trim(),
                             "Content-Type" to "application/x-www-form-urlencoded",
                             "Accept" to "application/json",
                             "platform" to "Web",
@@ -257,7 +274,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         if (token.isNotBlank()) {
                             activeJwt = if (token.startsWith("Bearer ")) token else "Bearer $token"
                             if (sessionId.isNotBlank()) activeSaaSessionId = sessionId
-                            activeXdToken = reeseValue
+                            activeXdToken = reeseCookie.removePrefix("reese84=").trim()
                             activeCookie = reeseCookie
 
                             addLog("🎉 نجحنا! JWT: ${activeJwt.take(30)}...")
@@ -275,7 +292,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return@withContext false
 
             } catch (e: Exception) {
-                // 👇 طباعة نوع الخطأ بدقة (سواء كان Timeout أو غيره)
                 addLog("❌ فشل httpcloak: ${e.javaClass.simpleName} - ${e.message}")
                 return@withContext false
             }
