@@ -1,7 +1,6 @@
 package com.example.saudiaseattracker
 
 import android.app.Application
-import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -76,6 +75,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
+    private var activeBid = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -211,11 +211,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         activeCookie = data.cookie
                         activeSaaSessionId = data.saaSessionId
                         activeXdToken = extractCookieValue(data.cookie, "reese84") ?: ""
+                        if (data.bid.isNotBlank()) {
+                            activeBid = data.bid
+                        } else {
+                            val bidFromCookie = extractCookieValue(data.cookie, "bid_62671c5aacb31d282f1da1d3c8ee4abb")
+                            if (!bidFromCookie.isNullOrBlank()) activeBid = bidFromCookie
+                        }
 
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
-                        addLog("🍪 ${HiddenWebViewManager.capturedInfo}")
-                        addLog("🆔 saa-session-id: ${data.saaSessionId}")
+                        addLog("🍪 Cookie: ${data.cookie.split(";").size} كوكي")
+                        addLog("🆔 saa-session-id: ${if (data.saaSessionId.isNotBlank()) data.saaSessionId else "❌ فارغ"}")
                         addLog("🎯 x-d-token: ${activeXdToken.take(30)}...")
+                        addLog("🔑 bid: ${activeBid.take(20)}...")
 
                         if (continuation.isActive) continuation.resume(true)
                     },
@@ -246,6 +253,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val saaSnapshot: String = activeSaaSessionId
         val jwtSnapshot: String = activeJwt
         val xdSnapshot: String = activeXdToken
+        val bidSnapshot: String = activeBid
 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
@@ -274,7 +282,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         if (isWebEndpoint) {
             headers["x-v-token"] = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
         } else {
-            headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
+            headers["browserid"] = bidSnapshot
             headers["channel"] = "MOBILE_WEB"
         }
 
@@ -355,8 +363,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             attempt++
             setStep("search", StepStatus.RUNNING, "$attempt")
             try {
+                val bidSnapshot: String = activeBid
                 val resp = RetrofitClient.api.searchAirBounds(
-                    headers = buildHeaders("4"), // 👈 default (isWebEndpoint = false)
+                    headers = buildHeaders("4"),
                     request = SaudiaSearchRequest(
                         airBoundsSearchInputs = AirBoundsSearchInputs(
                             itineraries = listOf(
@@ -365,7 +374,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
+                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput(
+                            channel = "MOBILE_WEB",
+                            pointOfSale = "SA",
+                            currencyCode = "SAR",
+                            language = "AR",
+                            browserId = bidSnapshot
+                        )
                     )
                 )
 
@@ -405,7 +420,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isEmpty()) return
         val cookieMap = mutableMapOf<String, String>()
-        
         val currentCookie = activeCookie ?: ""
         if (currentCookie.isNotEmpty()) {
             currentCookie.split(";").forEach { pair ->
@@ -413,19 +427,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
             }
         }
-        
         setCookieHeaders.forEach { header ->
             val firstPart = header.split(";").first().trim()
             val parts = firstPart.split("=", limit = 2)
             if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
         }
-        
         activeCookie = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
     }
 
     private suspend fun createCart(airBoundId: String): String? = try {
         val r = RetrofitClient.api.createCart(
-            headers = buildHeaders("2"), // 👈 default
+            headers = buildHeaders("2"),
             request = CreateCartRequest(listOf(airBoundId))
         )
         saveCookiesFromResponse(r)
