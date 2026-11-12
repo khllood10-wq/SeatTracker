@@ -16,7 +16,9 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.util.UUID
 import kotlin.coroutines.resume
+import kotlin.random.Random
 
 data class PassengerData(
     val title: String = "Mr",
@@ -70,6 +72,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var currentActivity: android.app.Activity? = null
     private var activeJwt = ""
     private var activeCookie: String? = null
+    private var activeSaaSessionId = ""
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -192,7 +195,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView لجلب JWT + Cookies...")
+                addLog("🕵️‍♂️ فتح WebView...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
@@ -203,15 +206,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
                         activeCookie = result.cookie
+                        activeSaaSessionId = result.saaSessionId
                         
-                        addLog("✅ JWT: ${result.token.take(30)}...")
-                        addLog("🍪 Cookies: ${result.cookie.split(";").size} كوكي")
-                        
-                        // سجل أسماء الكوكيز الحرجة للتأكد
-                        val cookieNames = result.cookie.split(";").map { it.trim().substringBefore("=") }.filter { it.isNotEmpty() }
-                        val critical = listOf("reese84", "incap_ses", "visid_incap", "bid_", "bx_guest_ref")
-                        val found = cookieNames.filter { name -> critical.any { name.contains(it) } }
-                        addLog("🔍 كوكيز حرجة موجودة: ${if (found.isEmpty()) "لا شيء!" else found.joinToString(", ")}")
+                        addLog("✅ JWT: ${result.token.take(20)}...")
+                        addLog("🍪 Cookies: ${result.cookie.split(";").size}")
+                        addLog("🆔 saa-session-id: ${if (result.saaSessionId.isNotBlank()) result.saaSessionId else "❌ غير موجود"}")
                         
                         if (continuation.isActive) continuation.resume(result.token)
                     },
@@ -225,27 +224,46 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 🧪 اختبار: JWT + كل الكوكيز (بدون x-d-token، بدون saa)
+    // 🎯 JWT + كل الكوكيز + x-d-token + saa-session-id + كل الهيدرات
     // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
+        val traceId = UUID.randomUUID().toString().replace("-", "")
+        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
+        
+        // كل هيدرات المتصفح من الالتقاط
         val h = mutableMapOf(
             "accept" to "application/json",
+            "authorization" to activeJwt,
             "content-type" to "application/json",
             "platform" to "Web",
+            "request-context" to "appId=cid-v1:45124bde-070b-4e51-a925-aa883fdba652",
+            "request-id" to "|$traceId.$spanId",
+            "traceparent" to "00-$traceId-$spanId-01",
             "version" to "27.2",
             "x-api-version" to apiVersion,
+            "x-datadog-origin" to "rum",
+            "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
+            "x-datadog-sampling-priority" to "1",
+            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Origin" to "https://www.saudia.com",
             "Referer" to referer
         )
 
-        // 1. JWT
-        if (activeJwt.isNotBlank()) {
-            h["authorization"] = activeJwt
+        // 1. saa-session-id (الحقيقي)
+        if (activeSaaSessionId.isNotBlank()) {
+            h["saa-session-id"] = activeSaaSessionId
         }
 
-        // 2. كل الكوكيز
+        // 2. x-d-token = reese84 value
+        val reeseHeader = hyperSession.getCookieHeader()
+        val xdToken = reeseHeader?.removePrefix("reese84=")?.trim()
+        if (!xdToken.isNullOrBlank()) {
+            h["x-d-token"] = xdToken
+        }
+
+        // 3. Cookie (كل الكوكيز)
         val cookieSnapshot: String? = activeCookie
         if (!cookieSnapshot.isNullOrBlank()) {
             h["Cookie"] = cookieSnapshot
@@ -268,7 +286,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                addLog("🎫 جلب JWT + Cookies عبر WebView...")
+                addLog("🎫 جلب JWT + Cookies + saa-session-id...")
                 val jwt = getJwtAndCookiesViaWebView()
                 if (jwt == null) {
                     addLog("❌ فشل جلب البيانات")
@@ -343,7 +361,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("❌ رفض (${resp.code()}) - JWT + Cookies لا يكفي")
+                    addLog("❌ رفض (${resp.code()})")
                     return null
                 }
 
