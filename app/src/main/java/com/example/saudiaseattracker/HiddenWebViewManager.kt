@@ -12,8 +12,11 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 
-// 👇 هذا الكلاس المطلوب (يجب أن يكون موجوداً هنا)
-data class WebViewResult(val token: String, val cookie: String)
+data class WebViewResult(
+    val token: String,
+    val cookie: String,
+    val xdToken: String
+)
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 class HiddenWebViewManager(
@@ -47,12 +50,21 @@ class HiddenWebViewManager(
 
                 webView?.addJavascriptInterface(object {
                     @JavascriptInterface
-                    fun onTokenFound(token: String) {
+                    fun onTokensFound(token: String, xdToken: String) {
                         Handler(Looper.getMainLooper()).post {
-                            val currentCookies = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
+                            // 👇 نستخرج الكوكيز من النطاقين
+                            val cookiesWww = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
+                            val cookiesDapi = CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: ""
+                            val combinedCookies = buildString {
+                                if (cookiesWww.isNotBlank()) append(cookiesWww)
+                                if (cookiesDapi.isNotBlank()) {
+                                    if (isNotEmpty()) append("; ")
+                                    append(cookiesDapi)
+                                }
+                            }
                             cleanup()
                             val cleanToken = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                            onSuccess(WebViewResult(cleanToken, currentCookies))
+                            onSuccess(WebViewResult(cleanToken, combinedCookies, xdToken))
                         }
                     }
 
@@ -72,25 +84,32 @@ class HiddenWebViewManager(
                             (function() {
                                 if (window.tokenPollingStarted) return;
                                 window.tokenPollingStarted = true;
-                                function checkToken() {
+                                function checkTokens() {
                                     try {
-                                        var t = sessionStorage.getItem('saudia-access-token') || 
-                                                localStorage.getItem('saudia-access-token') ||
-                                                localStorage.getItem('rawAirData');
-                                        if (t && t.indexOf('eyJ') > -1) {
-                                            window.AndroidBridge.onTokenFound(t);
+                                        var jwt = sessionStorage.getItem('saudia-access-token') || 
+                                                  localStorage.getItem('saudia-access-token') ||
+                                                  localStorage.getItem('rawAirData');
+                                        
+                                        var xdToken = '';
+                                        try {
+                                            var replay = JSON.parse(localStorage.getItem('__saudia_token_replay_v1') || '{}');
+                                            xdToken = replay.xdToken || '';
+                                        } catch(e) {}
+                                        
+                                        if (jwt && jwt.indexOf('eyJ') > -1) {
+                                            window.AndroidBridge.onTokensFound(jwt, xdToken);
                                             return true;
                                         }
                                     } catch(e) {}
                                     return false;
                                 }
                                 var interval = setInterval(function() {
-                                    if (checkToken()) clearInterval(interval);
+                                    if (checkTokens()) clearInterval(interval);
                                 }, 500);
                                 setTimeout(function() {
                                     clearInterval(interval);
-                                    window.AndroidBridge.onError("Timeout: Token not found in 15s");
-                                }, 15000);
+                                    window.AndroidBridge.onError("Timeout: Token not found in 20s");
+                                }, 20000);
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(js, null)
