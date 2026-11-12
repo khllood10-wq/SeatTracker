@@ -69,6 +69,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private var currentActivity: android.app.Activity? = null
     private var activeJwt = ""
+    private var activeCookie: String? = null
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -176,7 +177,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun getJwtViaWebView(): String? {
+    private suspend fun getJwtAndCookiesViaWebView(): String? {
         return withContext(Dispatchers.Main) {
             val activity = currentActivity ?: run {
                 addLog("❌ Activity غير متاح")
@@ -191,7 +192,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView لجلب JWT...")
+                addLog("🕵️‍♂️ فتح WebView لجلب JWT + Cookies...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
@@ -201,7 +202,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 manager.fetchToken(
                     onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
+                        activeCookie = result.cookie
+                        
                         addLog("✅ JWT: ${result.token.take(30)}...")
+                        addLog("🍪 Cookies: ${result.cookie.split(";").size} كوكي")
+                        
+                        // سجل أسماء الكوكيز الحرجة للتأكد
+                        val cookieNames = result.cookie.split(";").map { it.trim().substringBefore("=") }.filter { it.isNotEmpty() }
+                        val critical = listOf("reese84", "incap_ses", "visid_incap", "bid_", "bx_guest_ref")
+                        val found = cookieNames.filter { name -> critical.any { name.contains(it) } }
+                        addLog("🔍 كوكيز حرجة موجودة: ${if (found.isEmpty()) "لا شيء!" else found.joinToString(", ")}")
+                        
                         if (continuation.isActive) continuation.resume(result.token)
                     },
                     onError = { error: String ->
@@ -214,7 +225,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 🧪 اختبار: JWT + x-d-token (من Hyper). لا كوكيز، لا saa.
+    // 🧪 اختبار: JWT + كل الكوكيز (بدون x-d-token، بدون saa)
     // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val h = mutableMapOf(
@@ -229,21 +240,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        // 1. JWT (Authorization)
+        // 1. JWT
         if (activeJwt.isNotBlank()) {
             h["authorization"] = activeJwt
-        } else {
-            addLog("⚠️ JWT فارغ!")
         }
 
-        // 2. x-d-token (من Hyper - نفس قيمة reese84)
-        val reese84Header = hyperSession.getCookieHeader() // "reese84=..."
-        val xdToken = reese84Header?.removePrefix("reese84=")?.trim()
-        if (!xdToken.isNullOrBlank()) {
-            h["x-d-token"] = xdToken
-            addLog("🎯 x-d-token مُرسل (طول: ${xdToken.length})")
-        } else {
-            addLog("⚠️ x-d-token فارغ - reese84 غير متوفر")
+        // 2. كل الكوكيز
+        val cookieSnapshot: String? = activeCookie
+        if (!cookieSnapshot.isNullOrBlank()) {
+            h["Cookie"] = cookieSnapshot
         }
 
         return h
@@ -263,10 +268,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
-                addLog("🎫 جلب JWT عبر WebView...")
-                val jwt = getJwtViaWebView()
+                addLog("🎫 جلب JWT + Cookies عبر WebView...")
+                val jwt = getJwtAndCookiesViaWebView()
                 if (jwt == null) {
-                    addLog("❌ فشل جلب JWT")
+                    addLog("❌ فشل جلب البيانات")
                     _isRunning.value = false
                     return@launch
                 }
@@ -338,7 +343,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("❌ رفض (${resp.code()}) - JWT + x-d-token لا يكفي")
+                    addLog("❌ رفض (${resp.code()}) - JWT + Cookies لا يكفي")
                     return null
                 }
 
