@@ -6,13 +6,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import kotlin.coroutines.resume
 
 data class PassengerData(
     val title: String = "Mr",
@@ -63,11 +67,8 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // ═══════════════════════════════════════════════════════════════
-    // 🔑 احتفظ بالـ JWT الذي يعمل عندك الآن (لا تغيره إذا كان يعمل)
-    // إذا كان فارغاً، الصق التوكن هنا:
-    // ═══════════════════════════════════════════════════════════════
-    private var activeJwt = "Bearer الصق_التوكن_هنا"
+    private var currentActivity: android.app.Activity? = null
+    private var activeJwt = ""
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -175,8 +176,46 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // يفتح WebView لجلب JWT فقط
+    private suspend fun getJwtViaWebView(): String? {
+        return withContext(Dispatchers.Main) {
+            val activity = currentActivity ?: run {
+                addLog("❌ Activity غير متاح")
+                return@withContext null
+            }
+
+            suspendCancellableCoroutine<String?> { continuation ->
+                val reeseCookie = hyperSession.getCookieHeader() ?: ""
+                if (reeseCookie.isBlank()) {
+                    addLog("❌ لا يوجد كوكي reese84")
+                    if (continuation.isActive) continuation.resume(null)
+                    return@suspendCancellableCoroutine
+                }
+
+                addLog("🕵️‍♂️ فتح WebView لجلب JWT...")
+                val manager = HiddenWebViewManager(
+                    activity = activity,
+                    reese84Cookie = reeseCookie,
+                    userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                )
+
+                manager.fetchToken(
+                    onSuccess = { result: WebViewResult ->
+                        activeJwt = result.token
+                        addLog("✅ JWT: ${result.token.take(30)}...")
+                        if (continuation.isActive) continuation.resume(result.token)
+                    },
+                    onError = { error: String ->
+                        addLog("❌ فشل WebView: $error")
+                        if (continuation.isActive) continuation.resume(null)
+                    }
+                )
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
-    // 🧪 اختبار: JWT فقط + هيدرات أساسية (لا كوكيز، لا x-d-token، لا saa)
+    // 🧪 اختبار حاسم: JWT فقط. لا كوكيز، لا x-d-token، لا saa.
     // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val h = mutableMapOf(
@@ -191,25 +230,21 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Referer" to referer
         )
 
-        // 👇 JWT فقط. لا شيء آخر.
-        if (activeJwt.isNotBlank() && activeJwt != "Bearer الصق_التوكن_هنا") {
+        // 👇 JWT فقط
+        if (activeJwt.isNotBlank()) {
             h["authorization"] = activeJwt
-            addLog("🔑 JWT مُرسل (${activeJwt.take(20)}...)")
         } else {
-            addLog("⚠️ JWT فارغ! الصق التوكن في الكود")
+            addLog("⚠️ JWT فارغ!")
         }
 
         return h
     }
 
     fun runFullBooking(activity: android.app.Activity) {
+        currentActivity = activity
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
         if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
-        if (activeJwt == "Bearer الصق_التوكن_هنا" || activeJwt.isBlank()) {
-            addLog("❌ الرجاء لصق JWT في الكود أولاً")
-            return
-        }
 
         clearResults()
         _isRunning.value = true
@@ -219,6 +254,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 hyperSession.ensureFreshToken()
                 markSessionReady()
 
+                // جلب JWT أولاً
+                addLog("🎫 جلب JWT عبر WebView...")
+                val jwt = getJwtViaWebView()
+                if (jwt == null) {
+                    addLog("❌ فشل جلب JWT")
+                    _isRunning.value = false
+                    return@launch
+                }
+
+                // الآن البحث بـ JWT فقط
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
                     setStep("search", StepStatus.FAILED); _isRunning.value = false; return@launch
