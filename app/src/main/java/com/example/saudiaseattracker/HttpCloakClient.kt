@@ -30,7 +30,7 @@ class HttpCloakClient {
         body: Body? = null
     ): HttpCloakResponse = withContext(Dispatchers.IO) {
         newSession().use { session ->
-            val response = session.post(url, headers, body)
+            val response = session.post(url, body, headers)
             HttpCloakResponse(response.statusCode, response.text)
         }
     }
