@@ -14,8 +14,7 @@ import android.widget.FrameLayout
 
 data class WebViewResult(
     val token: String,
-    val cookie: String,
-    val saaSessionId: String
+    val cookie: String
 )
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
@@ -50,16 +49,30 @@ class HiddenWebViewManager(
 
                 webView?.addJavascriptInterface(object {
                     @JavascriptInterface
-                    fun onTokensFound(token: String, saaSessionId: String) {
+                    fun onTokenFound(token: String) {
                         Handler(Looper.getMainLooper()).post {
-                            // نسحب الكوكيز من النطاقين
+                            // 👇 استخراج الكوكيز من النطاقين
                             val cookiesWww = CookieManager.getInstance().getCookie("https://www.saudia.com") ?: ""
                             val cookiesDapi = CookieManager.getInstance().getCookie("https://dapi.saudia.com") ?: ""
-                            val combined = mergeCookies(cookiesWww, cookiesDapi)
+                            
+                            // دمج الكوكيز (بدون تكرار)
+                            val cookieMap = mutableMapOf<String, String>()
+                            listOf(cookiesWww, cookiesDapi).forEach { str ->
+                                str.split(";").forEach { part ->
+                                    val trimmed = part.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        val eq = trimmed.indexOf('=')
+                                        if (eq > 0) {
+                                            cookieMap[trimmed.substring(0, eq)] = trimmed.substring(eq + 1)
+                                        }
+                                    }
+                                }
+                            }
+                            val combined = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
                             
                             cleanup()
                             val cleanToken = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                            onSuccess(WebViewResult(cleanToken, combined, saaSessionId))
+                            onSuccess(WebViewResult(cleanToken, combined))
                         }
                     }
 
@@ -85,55 +98,20 @@ class HiddenWebViewManager(
                                         var jwt = sessionStorage.getItem('saudia-access-token') || 
                                                   localStorage.getItem('saudia-access-token') ||
                                                   localStorage.getItem('rawAirData');
-                                        
-                                        // البحث عن saa-session-id في كل الأماكن
-                                        var saaSessionId = 
-                                            sessionStorage.getItem('saa-session-id') || 
-                                            sessionStorage.getItem('saaSessionId') ||
-                                            sessionStorage.getItem('saa_session_id') ||
-                                            localStorage.getItem('saa-session-id') || 
-                                            localStorage.getItem('saaSessionId') ||
-                                            localStorage.getItem('saa_session_id') ||
-                                            '';
-                                        
-                                        // إذا لم نجده، ابحث في كل مفاتيح sessionStorage
-                                        if (!saaSessionId) {
-                                            for (var i = 0; i < sessionStorage.length; i++) {
-                                                var k = sessionStorage.key(i);
-                                                if (k && k.toLowerCase().indexOf('saa') > -1 && k.toLowerCase().indexOf('session') > -1) {
-                                                    saaSessionId = sessionStorage.getItem(k) || '';
-                                                    if (saaSessionId) break;
-                                                }
-                                            }
-                                        }
-                                        
-                                        // إذا لم نجده، ابحث في كل مفاتيح localStorage
-                                        if (!saaSessionId) {
-                                            for (var j = 0; j < localStorage.length; j++) {
-                                                var k2 = localStorage.key(j);
-                                                if (k2 && k2.toLowerCase().indexOf('saa') > -1 && k2.toLowerCase().indexOf('session') > -1) {
-                                                    saaSessionId = localStorage.getItem(k2) || '';
-                                                    if (saaSessionId) break;
-                                                }
-                                            }
-                                        }
-                                        
                                         if (jwt && jwt.indexOf('eyJ') > -1) {
-                                            window.AndroidBridge.onTokensFound(jwt, saaSessionId);
+                                            window.AndroidBridge.onTokenFound(jwt);
                                             return true;
                                         }
                                     } catch(e) {}
                                     return false;
                                 }
-                                
                                 var interval = setInterval(function() {
                                     if (checkTokens()) clearInterval(interval);
                                 }, 500);
-                                
                                 setTimeout(function() {
                                     clearInterval(interval);
-                                    window.AndroidBridge.onError("Timeout: Token not found in 25s");
-                                }, 25000);
+                                    window.AndroidBridge.onError("Timeout: Token not found");
+                                }, 20000);
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(js, null)
@@ -149,24 +127,6 @@ class HiddenWebViewManager(
                 onError(e.message ?: "Unknown error")
             }
         }
-    }
-
-    private fun mergeCookies(c1: String, c2: String): String {
-        val map = mutableMapOf<String, String>()
-        for (cookieStr in listOf(c1, c2)) {
-            cookieStr.split(";").forEach { part ->
-                val trimmed = part.trim()
-                if (trimmed.isNotEmpty()) {
-                    val eq = trimmed.indexOf('=')
-                    if (eq > 0) {
-                        val name = trimmed.substring(0, eq).trim()
-                        val value = trimmed.substring(eq + 1).trim()
-                        map[name] = value
-                    }
-                }
-            }
-        }
-        return map.entries.joinToString("; ") { "${it.key}=${it.value}" }
     }
 
     private fun cleanup() {
