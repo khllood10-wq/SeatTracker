@@ -197,7 +197,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     return@suspendCancellableCoroutine
                 }
 
-                addLog("🕵️‍♂️ فتح WebView لالتقاط الجلسة...")
+                addLog("🕵️‍♂️ فتح WebView...")
                 val manager = HiddenWebViewManager(
                     activity = activity,
                     reese84Cookie = reeseCookie,
@@ -208,19 +208,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     onSuccess = { data: CapturedData ->
                         activeJwt = data.jwt
                         activeSaaSessionId = data.saaSessionId
-                        // 🎯 x-d-token يُلتقط من WebView (hook) أو من reese84
                         activeXdToken = if (data.xdToken.isNotBlank()) {
                             data.xdToken
                         } else {
                             extractCookieValue(data.cookie, "reese84") ?: ""
                         }
-                        // 🎯 لا نضع أي كوكيز! تبدأ فارغة ثم تجمع من Set-Cookie
-                        activeCookie = null
+                        activeCookie = data.cookie
 
                         addLog("✅ JWT: ${data.jwt.take(20)}...")
                         addLog("🆔 saa-session-id: ${data.saaSessionId}")
                         addLog("🎯 x-d-token: ${activeXdToken.take(40)}...")
-                        addLog("🍪 Cookies: لن نرسل أي كوكيز الآن (فارغة)")
+                        addLog("🍪 Cookies: ${data.cookie.split(";").size} كوكي")
 
                         if (continuation.isActive) continuation.resume(true)
                     },
@@ -242,9 +240,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             ?.trim()
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 🎯 buildHeaders = مطابق 100% للكود القديم الناجح
-    // ═══════════════════════════════════════════════════════════════
     private fun buildHeaders(
         apiVersion: String,
         isWebEndpoint: Boolean = false,
@@ -377,11 +372,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
 
-                // 🎯 جمع الكوكيز من Set-Cookie بعد كل استجابة
                 saveCookiesFromResponse(resp)
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("❌ رفض (${resp.code()})")
+                    // 🔍 اطبع جسم الاستجابة لنعرف السبب
+                    val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
+                    addLog("🚨 403 Response Body: ${errBody.take(500)}")
+                    addLog("📋 Headers: ${resp.headers().toString().take(300)}")
                     return null
                 }
 
@@ -410,7 +407,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return null
     }
 
-    // 🎯 نفس دالة الكود القديم
     private fun saveCookiesFromResponse(response: Response<*>) {
         val setCookieHeaders = response.headers().values("Set-Cookie")
         if (setCookieHeaders.isEmpty()) return
