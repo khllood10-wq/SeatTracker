@@ -168,7 +168,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun sessionExpiryMs(): Long = hyperSession.expiryAt()
 
-    // 👇 دالة التجديد اليدوي (التي كانت مفقودة)
     fun refreshSession() {
         viewModelScope.launch {
             try {
@@ -183,6 +182,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // 👇 هنا تم إضافة الأنواع صراحةً (result: WebViewResult) و (error: String)
     private suspend fun refreshTokenViaHiddenWebView(): String? {
         return withContext(Dispatchers.Main) {
             val activity = currentActivity
@@ -209,13 +209,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 
                 manager.fetchToken(
-                    onSuccess = { result ->
+                    onSuccess = { result: WebViewResult ->
                         activeJwt = result.token
                         activeCookie = result.cookie
                         addLog("✅ تم تجديد التوكن والكوكيز بنجاح عبر WebView الخفي")
                         if (continuation.isActive) continuation.resume(result.token)
                     },
-                    onError = { error ->
+                    onError = { error: String ->
                         addLog("❌ فشل التجديد عبر WebView: $error")
                         if (continuation.isActive) continuation.resume(null)
                     }
