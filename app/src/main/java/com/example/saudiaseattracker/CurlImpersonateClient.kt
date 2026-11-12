@@ -1,7 +1,6 @@
 package com.example.saudiaseattracker
 
 import android.content.Context
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -14,11 +13,10 @@ data class CurlResponse(
     val headers: Map<String, String>
 )
 
-class CurlImpersonateClient(private val context: Context) {
-
-    companion object {
-        const val TAG = "CurlDiag"
-    }
+class CurlImpersonateClient(
+    private val context: Context,
+    private val addLog: (String) -> Unit
+) {
 
     @Volatile
     private var cachedBinary: File? = null
@@ -26,33 +24,26 @@ class CurlImpersonateClient(private val context: Context) {
     @Volatile
     private var cachedUseLinker: Boolean = false
 
-    /**
-     * البحث الشامل عن الملف التنفيذي:
-     * 1. nativeLibraryDir مباشرة
-     * 2. نسخ من nativeLibraryDir إلى filesDir
-     * 3. استخراج من APK إلى filesDir (خطة احتياطية)
-     */
     private suspend fun findAndPrepareBinary(): File? = withContext(Dispatchers.IO) {
         val nativeDir = File(context.applicationInfo.nativeLibraryDir)
-        Log.e(TAG, "═══ DIAGNOSTIC START ═══")
-        Log.e(TAG, "nativeLibraryDir: ${nativeDir.absolutePath}")
-        Log.e(TAG, "nativeLibraryDir exists: ${nativeDir.exists()}")
-        Log.e(TAG, "nativeLibraryDir files: ${nativeDir.list()?.joinToString() ?: "EMPTY"}")
+        addLog("═══ CurlDiag START ═══")
+        addLog("nativeLibraryDir: ${nativeDir.absolutePath}")
+        addLog("exists: ${nativeDir.exists()}")
+        addLog("files: ${nativeDir.list()?.joinToString() ?: "EMPTY"}")
 
         val filesDir = context.filesDir
-        Log.e(TAG, "filesDir: ${filesDir.absolutePath}")
-        Log.e(TAG, "filesDir files: ${filesDir.list()?.joinToString() ?: "EMPTY"}")
+        addLog("filesDir: ${filesDir.absolutePath}")
+        addLog("filesDir contents: ${filesDir.list()?.joinToString() ?: "EMPTY"}")
 
         val candidates = listOf(
             "libcurl-impersonate-chrome.so",
             "libcurl-impersonate.so"
         )
 
-        // ═══ المحاولة 1: النسخ من nativeLibraryDir ═══
         for (name in candidates) {
             val direct = File(nativeDir, name)
-            Log.e(TAG, "── Checking: ${direct.absolutePath}")
-            Log.e(TAG, "   exists=${direct.exists()}, canRead=${direct.canRead()}, length=${if (direct.exists()) direct.length() else 0}")
+            addLog("── Checking: $name")
+            addLog("   exists=${direct.exists()}, length=${if (direct.exists()) direct.length() else 0}")
 
             if (direct.exists() && direct.canRead()) {
                 val copied = File(filesDir, name)
@@ -61,7 +52,7 @@ class CurlImpersonateClient(private val context: Context) {
                         copied.outputStream().use { output -> input.copyTo(output) }
                     }
                     copied.setExecutable(true, false)
-                    Log.e(TAG, "   ✅ Copied to filesDir: ${copied.absolutePath}")
+                    addLog("   ✅ Copied: ${copied.length()} bytes")
 
                     if (testBinary(copied, useLinker = false)) {
                         cachedUseLinker = false
@@ -72,30 +63,24 @@ class CurlImpersonateClient(private val context: Context) {
                         return@withContext copied
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "   ❌ Copy failed: ${e.message}")
+                    addLog("   ❌ Copy failed: ${e.message}")
                 }
             }
         }
 
-        // ═══ المحاولة 2: استخراج من APK ═══
         val apkPath = context.applicationInfo.sourceDir
-        Log.e(TAG, "── Fallback: extract from APK: $apkPath")
-        Log.e(TAG, "   APK exists: ${File(apkPath).exists()}, size: ${File(apkPath).length()}")
+        addLog("── APK fallback: $apkPath")
+        addLog("   APK exists: ${File(apkPath).exists()}")
 
         try {
             ZipFile(apkPath).use { zip ->
-                val entries = zip.entries().toList()
+                val matching = zip.entries().toList()
                     .filter { it.name.contains("curl-impersonate", ignoreCase = true) }
                     .map { it.name }
-                Log.e(TAG, "   APK entries matching 'curl-impersonate': $entries")
+                addLog("   APK entries with 'curl-impersonate': $matching")
 
                 for (name in candidates) {
-                    val possiblePaths = listOf(
-                        "lib/arm64-v8a/$name",
-                        "lib/arm64/$name",
-                        name
-                    )
-                    for (path in possiblePaths) {
+                    for (path in listOf("lib/arm64-v8a/$name", "lib/arm64/$name")) {
                         val entry = zip.getEntry(path)
                         if (entry != null) {
                             val out = File(filesDir, name)
@@ -103,7 +88,7 @@ class CurlImpersonateClient(private val context: Context) {
                                 out.outputStream().use { output -> input.copyTo(output) }
                             }
                             out.setExecutable(true, false)
-                            Log.e(TAG, "   ✅ Extracted from APK: $path → ${out.absolutePath}")
+                            addLog("   ✅ Extracted: $path → ${out.length()} bytes")
 
                             if (testBinary(out, useLinker = false)) {
                                 cachedUseLinker = false
@@ -118,10 +103,10 @@ class CurlImpersonateClient(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "   ❌ APK extraction failed: ${e.message}")
+            addLog("   ❌ APK extraction failed: ${e.message}")
         }
 
-        Log.e(TAG, "═══ DIAGNOSTIC END: NO WORKING BINARY ═══")
+        addLog("═══ NO WORKING BINARY ═══")
         return@withContext null
     }
 
@@ -132,7 +117,7 @@ class CurlImpersonateClient(private val context: Context) {
             } else {
                 listOf(binary.absolutePath, "--version")
             }
-            Log.e(TAG, "   Testing (linker=$useLinker): ${cmd.joinToString(" ")}")
+            addLog("   Testing (linker=$useLinker)...")
 
             val pb = ProcessBuilder(cmd).redirectErrorStream(true)
             pb.environment()["LD_LIBRARY_PATH"] = context.applicationInfo.nativeLibraryDir
@@ -140,10 +125,10 @@ class CurlImpersonateClient(private val context: Context) {
             val output = process.inputStream.bufferedReader().readText()
             val exitCode = process.waitFor()
 
-            Log.e(TAG, "   Result: exit=$exitCode, output=${output.take(300)}")
+            addLog("   exit=$exitCode, output=${output.take(100)}")
             exitCode == 0 && output.contains("curl", ignoreCase = true)
         } catch (e: Exception) {
-            Log.e(TAG, "   Exception in testBinary: ${e.message}")
+            addLog("   ❌ Exception: ${e.message}")
             false
         }
     }
@@ -154,9 +139,9 @@ class CurlImpersonateClient(private val context: Context) {
         headers: Map<String, String> = emptyMap(),
         body: String? = null
     ): CurlResponse = withContext(Dispatchers.IO) {
-        val binary = cachedBinary ?: findAndPrepareBinary() ?: throw IOException(
-            "لم يتم العثور على ملف curl-impersonate. راجع سجل CurlDiag في Logcat."
-        ).also { cachedBinary = null }
+        val binary = cachedBinary ?: findAndPrepareBinary()
+            ?: throw IOException("لم يتم العثور على curl-impersonate. راجع سجل التطبيق.")
+
         cachedBinary = binary
         val useLinker = cachedUseLinker
 
@@ -189,7 +174,7 @@ class CurlImpersonateClient(private val context: Context) {
         val exitCode = process.waitFor()
 
         if (exitCode != 0) {
-            throw IOException("curl failed (exit=$exitCode): ${output.take(500)}")
+            throw IOException("curl failed (exit=$exitCode): ${output.take(300)}")
         }
 
         val headerEnd = output.indexOf("\r\n\r\n")
