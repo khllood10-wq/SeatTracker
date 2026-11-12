@@ -68,8 +68,11 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // 👇 عميل curl-impersonate
-    private val curlClient = CurlImpersonateClient(getApplication<Application>())
+    // 👇 عميل curl-impersonate مع دالة السجل
+    private val curlClient = CurlImpersonateClient(
+        context = getApplication<Application>(),
+        addLog = { message -> addLog(message) }
+    )
 
     private var activeJwt = ""
     private var activeCookie: String? = null
@@ -182,9 +185,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 🎯 التقاط الجلسة باستخدام curl-impersonate (بدلاً من WebView)
-    // ═══════════════════════════════════════════════════════════════
     private suspend fun captureSessionViaCurl(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -196,7 +196,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val reeseValue = reeseCookie.removePrefix("reese84=").trim()
                 addLog("🔄 اختبار curl-impersonate على الصفحة الرئيسية...")
 
-                // 🧪 الخطوة 1: اختبار هل curl-impersonate يتجاوز Imperva
                 val pageResp = curlClient.execute(
                     url = "https://www.saudia.com/ar-SA",
                     method = "GET",
@@ -209,7 +208,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("📄 GET /ar-SA → HTTP ${pageResp.code}, Length: ${pageResp.body.length}")
 
-                // 🔍 التحقق: هل الصفحة Imperva challenge أم صفحة حقيقية؟
                 val isImpervaBlock = pageResp.body.contains("_Incapsula_Resource") ||
                         pageResp.body.contains("Pardon Our Interruption") ||
                         pageResp.body.contains("Incapsula incident ID")
@@ -227,7 +225,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 addLog("🎉 curl-impersonate تجاوز Imperva بنجاح!")
 
-                // 🧪 الخطوة 2: محاولة POST إلى token/initialization
                 addLog("🔄 محاولة token/initialization...")
 
                 val initResp = curlClient.execute(
@@ -259,9 +256,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             activeJwt = if (token.startsWith("Bearer ")) token else "Bearer $token"
                             if (sessionId.isNotBlank()) activeSaaSessionId = sessionId
                             activeXdToken = reeseValue
-
-                            // استخراج الكوكيز من response headers
-                            val setCookies = initResp.headers.filterKeys { it.equals("set-cookie", ignoreCase = true) }
                             activeCookie = reeseCookie
 
                             addLog("🎉 نجحنا! JWT: ${activeJwt.take(30)}...")
