@@ -81,8 +81,11 @@ dependencies {
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
     // 👇 الحل: انتحال بصمة TLS/JA3/JA4 و HTTP/2 الخاصة بـ Chrome
-    // نستخدم الإصدار 1.11.0 (الأحدث) بدون استبعاد okhttp
-    implementation("com.github.zhkl0228:impersonator-okhttp:1.11.0")
+    implementation("com.github.zhkl0228:impersonator-okhttp:1.11.0") {
+        // استبعاد okhttp و okio من المكتبة، لأننا سنفرض نسخة واحدة عبر resolutionStrategy
+        exclude(group = "com.squareup.okhttp3", module = "okhttp")
+        exclude(group = "com.squareup.okio", module = "okio")
+    }
 
     // اختبارات
     testImplementation("junit:junit:4.13.2")
@@ -94,7 +97,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-// 👇 حل تعارض الإصدارات بين okhttp المضمن في impersonator-okhttp والنسخة المستقلة
+// 👇 الحل النهائي: فرض إصدار واحد لكل من okhttp و okio
 configurations.all {
     resolutionStrategy {
         force("com.squareup.okhttp3:okhttp:4.12.0")
