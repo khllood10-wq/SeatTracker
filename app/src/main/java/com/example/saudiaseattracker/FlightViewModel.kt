@@ -7,9 +7,11 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -61,10 +63,14 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
+    // ═══════ الحالة ═══════
     private var activeJwt = ""
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
+    private var jwtExpiryMs: Long = 0L  // ← وقت انتهاء JWT
+
+    private var autoLoopJob: Job? = null
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -102,9 +108,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _finalSadad = MutableStateFlow("")
     val finalSadad: StateFlow<String> = _finalSadad
 
-    private val _foundFlight = MutableStateFlow<FoundFlightDetails?>(null)
-    val foundFlight: StateFlow<FoundFlightDetails?> = _foundFlight
-
     private val _sessionReady = MutableStateFlow(false)
     val sessionReady: StateFlow<Boolean> = _sessionReady
 
@@ -113,6 +116,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _debugEntries = MutableStateFlow<List<DebugEntry>>(emptyList())
     val debugEntries: StateFlow<List<DebugEntry>> = _debugEntries
+
+    // ═══════ حالة الحلقة التلقائية ═══════
+    private val _autoLoopActive = MutableStateFlow(false)
+    val autoLoopActive: StateFlow<Boolean> = _autoLoopActive
+
+    private val _needsWebViewRefresh = MutableStateFlow(false)
+    val needsWebViewRefresh: StateFlow<Boolean> = _needsWebViewRefresh
+
+    private val _autoLoopLastCycle = MutableStateFlow("")
+    val autoLoopLastCycle: StateFlow<String> = _autoLoopLastCycle
 
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
@@ -138,14 +151,42 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun hasToken(): Boolean = activeJwt.isNotBlank() && hyperSession.hasFreshToken()
+    // ═══════════════════════════════════════════════════════════
+    //  JWT Helpers — فحص صلاحية JWT
+    // ═══════════════════════════════════════════════════════════
+    private fun parseJwtExpiry(jwt: String): Long {
+        return try {
+            val clean = jwt.removePrefix("Bearer ").trim()
+            val parts = clean.split(".")
+            if (parts.size < 2) return 0L
+            val part = parts[1]
+            val padded = part + "=".repeat((4 - part.length % 4) % 4)
+            val payload = String(android.util.Base64.decode(padded, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP))
+            val exp = JSONObject(payload).optLong("exp", 0L)
+            exp * 1000L  // إلى ميلي ثانية
+        } catch (e: Exception) { 0L }
+    }
+
+    fun isJwtFresh(minRemainingMs: Long = 5 * 60_000L): Boolean {
+        if (activeJwt.isBlank()) return false
+        if (jwtExpiryMs == 0L) return false
+        return (jwtExpiryMs - System.currentTimeMillis()) > minRemainingMs
+    }
+
+    fun jwtRemainingMinutes(): Long {
+        if (jwtExpiryMs == 0L) return 0L
+        return ((jwtExpiryMs - System.currentTimeMillis()) / 60_000L).coerceAtLeast(0L)
+    }
+
+    fun hasToken(): Boolean = isJwtFresh() && hyperSession.hasFreshToken()
 
     fun markSessionReady() {
         _sessionReady.value = hyperSession.hasFreshToken()
-        _sessionStatus.value = if (activeJwt.isNotBlank())
-            "✅ جلسة Hyper + JWT جاهزة"
-        else
-            "✅ Hyper جاهز — افتح WebView لالتقاط JWT"
+        _sessionStatus.value = when {
+            isJwtFresh(0) -> "✅ كل شيء جاهز (JWT: ${jwtRemainingMinutes()}د)"
+            hyperSession.hasFreshToken() -> "✅ Hyper جاهز — افتح WebView لالتقاط JWT"
+            else -> "⏳ جاهزة عند أول طلب"
+        }
     }
 
     fun markSessionPreparing() {
@@ -188,111 +229,176 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════ WebView Integration ═══════
-    fun showWebViewCapture(): String? {
-        return hyperSession.getToken()
-    }
+    // ═══════════════════════════════════════════════════════════
+    //  WebView Integration — JWT فقط
+    // ═══════════════════════════════════════════════════════════
+    fun showWebViewCapture(): String? = hyperSession.getToken()
 
     fun onWebViewJwtCaptured(jwt: String, sid: String) {
         activeJwt = jwt
         if (sid.isNotBlank()) activeSaaSessionId = sid
         activeCookie = hyperSession.getCookieHeader()
-        addLog("🎉 JWT محفوظ: ${jwt.take(40)}...")
+        jwtExpiryMs = parseJwtExpiry(jwt)
+
+        val remainingMin = if (jwtExpiryMs > 0)
+            ((jwtExpiryMs - System.currentTimeMillis()) / 60_000L)
+        else 0L
+
+        addLog("🎉 JWT محفوظ — صالح $remainingMin دقيقة")
+        pushDebug(DebugEntry(
+            source = DebugSource.APP,
+            title = "🎉 JWT captured",
+            body = "jwt.prefix=${jwt.take(40)}...\nexpiry_in_min=$remainingMin\nsid=$sid"
+        ))
+
         markSessionReady()
+        _needsWebViewRefresh.value = false
     }
 
-    fun dismissWebView() {
-        // لا شيء — MainScreen تدير العرض
-    }
+    fun dismissWebView() { /* لا شيء */ }
 
-    // ═══════ Diagnostic ═══════
-    fun testDirectApi() {
-        viewModelScope.launch {
-            try {
-                addLog("🎯 اختبار reese84 مباشرة على dapi...")
-                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
-                val reeseCookie = hyperSession.getCookieHeader() ?: run {
-                    addLog("❌ لا reese84"); return@launch
+    // ═══════════════════════════════════════════════════════════
+    //  🔁 الحلقة التلقائية — كل 10 دقائق: تحديث reese84 + بحث + حجز
+    // ═══════════════════════════════════════════════════════════
+    fun startAutoLoop() {
+        if (autoLoopJob?.isActive == true) return
+        if (autoLoopJob?.isActive != true && !passengerData.isValid()) {
+            addLog("❌ بيانات المسافر ناقصة"); return
+        }
+        if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
+
+        _autoLoopActive.value = true
+        _needsWebViewRefresh.value = false
+
+        autoLoopJob = viewModelScope.launch {
+            addLog("🔁 بدء الحلقة التلقائية...")
+            var cycle = 0
+
+            while (isActive && _autoLoopActive.value) {
+                cycle++
+                val cycleTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                    .format(java.util.Date())
+                _autoLoopLastCycle.value = "#$cycle @ $cycleTime"
+                addLog("🔄 دورة #$cycle")
+
+                try {
+                    // ─── 1) تأكد من JWT ───
+                    if (!isJwtFresh(minRemainingMs = 3 * 60_000L)) {
+                        addLog("⏳ JWT منتهي — طلب WebView...")
+                        _needsWebViewRefresh.value = true
+                        // انتظار يدوي من المستخدم
+                        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) {
+                            delay(2000)
+                        }
+                        if (!isJwtFresh(0)) {
+                            addLog("⏸️ لا JWT — إيقاف مؤقت")
+                            break
+                        }
+                    }
+
+                    // ─── 2) تأكد من reese84 ───
+                    withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
+                    if (activeCookie.isNullOrBlank()) {
+                        activeCookie = hyperSession.getCookieHeader()
+                    }
+
+                    // ─── 3) البحث ───
+                    addLog("🔍 البحث...")
+                    val flight = searchUntilFound(max = 1) // محاولة واحدة فقط
+                    if (flight == null) {
+                        addLog("⚠️ لم توجد الرحلة — انتظار")
+                    } else {
+                        addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
+                        clearResults()
+                        val success = executeBooking(flight)
+                        if (success) {
+                            addLog("🎉 حجز ناجح! PNR: ${_finalPnr.value}")
+                            _autoLoopActive.value = false
+                            break
+                        } else {
+                            addLog("❌ فشل الحجز — إعادة المحاولة في الدورة القادمة")
+                        }
+                    }
+                } catch (e: Exception) {
+                    addLog("❌ خطأ في الدورة: ${e.message}")
                 }
-                activeCookie = reeseCookie
-                addLog("✅ reese84: ${reeseCookie.take(40)}... (${reeseCookie.length}c)")
 
-                val resp = RetrofitClient.api.searchAirBounds(
-                    headers = buildDirectHeaders(
-                        cookie = reeseCookie,
-                        referer = "https://www.saudia.com/ar-SA",
-                        secFetchDest = "empty",
-                        secFetchMode = "cors",
-                        extra = mapOf(
-                            "x-api-version" to "4",
-                            "platform" to "Web",
-                            "version" to "27.2",
-                            "Origin" to "https://www.saudia.com"
-                        )
-                    ),
-                    request = SaudiaSearchRequest(
-                        airBoundsSearchInputs = AirBoundsSearchInputs(
-                            itineraries = listOf(Itinerary(flightData.from, flightData.to, "${flightData.date}T00:00:00.000")),
-                            travelers = listOf(Traveler()),
-                            searchPreferences = SearchPreferences()
-                        ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
-                    )
-                )
-                addLog("📄 /airsearch → HTTP ${resp.code()}")
-                pushDebug(DebugEntry(
-                    source = DebugSource.SEARCH,
-                    method = "POST",
-                    url = "airsearch",
-                    statusCode = resp.code(),
-                    title = "🔍 ${resp.code()}",
-                    body = if (resp.isSuccessful) "OK" else (resp.errorBody()?.string() ?: "").take(3000)
-                ))
-            } catch (e: Exception) {
-                addLog("❌ ${e.javaClass.simpleName}: ${e.message}")
+                // ─── 4) انتظر 10 دقائق قبل الدورة القادمة ───
+                addLog("⏳ انتظار 10 دقائق قبل الدورة القادمة...")
+                delay(10 * 60_000L)
             }
+
+            addLog("⏹️ الحلقة التلقائية توقفت")
+            _autoLoopActive.value = false
         }
     }
 
-    fun testHttpCloak() {
-        viewModelScope.launch {
-            try {
-                addLog("🧪 اختبار httpcloak...")
-                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
-                addLog("✅ reese84 جاهز")
-            } catch (e: Exception) {
-                addLog("❌ ${e.message}")
+    fun stopAutoLoop() {
+        autoLoopJob?.cancel()
+        autoLoopJob = null
+        _autoLoopActive.value = false
+        _needsWebViewRefresh.value = false
+        addLog("⏹️ تم إيقاف الحلقة يدوياً")
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  تنفيذ الحجز الكامل (المراحل 1-7)
+    // ═══════════════════════════════════════════════════════════
+    private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
+        try {
+            setStep("search", StepStatus.SUCCESS, "${flight.price} SAR")
+            delay(1000)
+
+            setStep("cart", StepStatus.RUNNING)
+            val cid = createCart(flight.airBoundId) ?: run {
+                setStep("cart", StepStatus.FAILED); return false
             }
+            setStep("cart", StepStatus.SUCCESS, cid); delay(1000)
+
+            setStep("passenger", StepStatus.RUNNING)
+            if (!confirmPassenger(cid)) { setStep("passenger", StepStatus.FAILED); return false }
+            setStep("passenger", StepStatus.SUCCESS); delay(1000)
+
+            setStep("extension", StepStatus.RUNNING)
+            if (!addExtension(cid)) { setStep("extension", StepStatus.FAILED); return false }
+            setStep("extension", StepStatus.SUCCESS); delay(1000)
+
+            setStep("contacts", StepStatus.RUNNING)
+            if (!saveContacts(cid)) { setStep("contacts", StepStatus.FAILED); return false }
+            setStep("contacts", StepStatus.SUCCESS); delay(1000)
+
+            setStep("order", StepStatus.RUNNING)
+            val ord = createOrder(cid) ?: run {
+                setStep("order", StepStatus.FAILED); return false
+            }
+            _finalPnr.value = ord.first
+            _finalSadad.value = ord.second
+            setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}")
+            delay(1000)
+
+            if (monitoringMode) {
+                setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط")
+                return true
+            }
+
+            setStep("payment", StepStatus.RUNNING)
+            if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); return false }
+            setStep("payment", StepStatus.SUCCESS, "✅ SADAD: ${ord.second}")
+            return true
+        } catch (e: Exception) {
+            addLog("❌ خطأ في الحجز: ${e.message}")
+            return false
         }
     }
 
-    private fun buildDirectHeaders(
-        cookie: String, referer: String, secFetchDest: String, secFetchMode: String,
-        extra: Map<String, String> = emptyMap()
-    ): Map<String, String> = buildMap {
-        put("Cookie", cookie)
-        put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36")
-        put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-        put("Accept-Language", "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7")
-        put("Accept-Encoding", "gzip, deflate, br")
-        put("Sec-Ch-Ua", "\"Chromium\";v=\"155\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"155\"")
-        put("Sec-Ch-Ua-Mobile", "?0")
-        put("Sec-Ch-Ua-Platform", "\"Windows\"")
-        put("Sec-Fetch-Site", if (referer.endsWith("/ar-SA")) "same-origin" else "none")
-        put("Sec-Fetch-Mode", secFetchMode)
-        put("Sec-Fetch-Dest", secFetchDest)
-        put("Sec-Fetch-User", "?1")
-        put("Upgrade-Insecure-Requests", "1")
-        put("Referer", referer)
-        extra.forEach { (k, v) -> put(k, v) }
-    }
-
-    // ═══════ Full Booking ═══════
-    fun runFullBooking(activity: android.app.Activity) {
+    // ═══════════════════════════════════════════════════════════
+    //  حجز مرة واحدة (بدون حلقة) — للاختبار
+    // ═══════════════════════════════════════════════════════════
+    fun runOnceBooking(activity: android.app.Activity) {
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
         if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
-        if (activeJwt.isBlank()) { addLog("❌ لا JWT — استخدم WebView أولاً"); return }
+        if (!isJwtFresh(0)) { addLog("❌ لا JWT — افتح WebView أولاً"); return }
 
         clearResults()
         _isRunning.value = true
@@ -300,64 +406,32 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
-                markSessionReady()
+                if (activeCookie.isNullOrBlank()) activeCookie = hyperSession.getCookieHeader()
 
-                if (activeCookie.isNullOrBlank()) {
-                    activeCookie = hyperSession.getCookieHeader()
-                }
-                addLog("✅ JWT + reese84 جاهزان")
-
+                addLog("🚀 بدء حجز واحد...")
                 setStep("search", StepStatus.RUNNING)
-                val flight = searchUntilFound() ?: run {
-                    setStep("search", StepStatus.FAILED); _isRunning.value = false; return@launch
+                val flight = searchUntilFound(max = 3)
+                if (flight == null) {
+                    addLog("❌ لم توجد الرحلة")
+                    setStep("search", StepStatus.FAILED)
+                    _isRunning.value = false
+                    return@launch
                 }
-                setStep("search", StepStatus.SUCCESS, "${flight.price} SAR"); _foundFlight.value = flight
-                delay(1200)
-
-                setStep("cart", StepStatus.RUNNING)
-                val cid = createCart(flight.airBoundId) ?: run {
-                    setStep("cart", StepStatus.FAILED); _isRunning.value = false; return@launch
-                }
-                setStep("cart", StepStatus.SUCCESS, cid); delay(1200)
-
-                setStep("passenger", StepStatus.RUNNING)
-                if (!confirmPassenger(cid)) { setStep("passenger", StepStatus.FAILED); _isRunning.value = false; return@launch }
-                setStep("passenger", StepStatus.SUCCESS); delay(1200)
-
-                setStep("extension", StepStatus.RUNNING)
-                if (!addExtension(cid)) { setStep("extension", StepStatus.FAILED); _isRunning.value = false; return@launch }
-                setStep("extension", StepStatus.SUCCESS); delay(1200)
-
-                setStep("contacts", StepStatus.RUNNING)
-                if (!saveContacts(cid)) { setStep("contacts", StepStatus.FAILED); _isRunning.value = false; return@launch }
-                setStep("contacts", StepStatus.SUCCESS); delay(1200)
-
-                setStep("order", StepStatus.RUNNING)
-                val ord = createOrder(cid) ?: run {
-                    setStep("order", StepStatus.FAILED); _isRunning.value = false; return@launch
-                }
-                _finalPnr.value = ord.first; _finalSadad.value = ord.second
-                setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}"); delay(1200)
-
-                if (monitoringMode) {
-                    setStep("payment", StepStatus.SKIPPED, "👁️ لم يُرسل الدفع")
-                    _isRunning.value = false; return@launch
-                }
-
-                setStep("payment", StepStatus.RUNNING)
-                if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); _isRunning.value = false; return@launch }
-                setStep("payment", StepStatus.SUCCESS, "✅ SADAD جاهز")
+                executeBooking(flight)
             } catch (e: Exception) {
                 addLog("❌ ${e.message}")
             } finally { _isRunning.value = false }
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  البحث
+    // ═══════════════════════════════════════════════════════════
     private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
         var attempt = 0
         while (attempt < max) {
             attempt++
-            setStep("search", StepStatus.RUNNING, "$attempt")
+            setStep("search", StepStatus.RUNNING, "محاولة $attempt/$max")
             try {
                 val resp = RetrofitClient.api.searchAirBounds(
                     headers = buildHeaders("4"),
@@ -371,10 +445,19 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
                 saveCookiesFromResponse(resp)
-                if (resp.code() == 401 || resp.code() == 403) {
-                    addLog("🚨 ${resp.code()}")
+
+                if (resp.code() == 401) {
+                    addLog("🚨 JWT منتهي — يجب تحديثه")
+                    jwtExpiryMs = 0L
                     return null
                 }
+                if (resp.code() == 403) {
+                    addLog("🚨 Imperva رفض (reese84 غير صالح؟)")
+                    withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
+                    if (activeCookie.isNullOrBlank()) activeCookie = hyperSession.getCookieHeader()
+                    return null
+                }
+
                 if (resp.isSuccessful) {
                     val g = resp.body()?.data?.airBoundGroups?.firstOrNull { gg ->
                         gg.boundDetails?.segments?.any {
@@ -391,13 +474,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         cheapest.fareFamilyCode ?: "N/A",
                         cheapest.airBoundId ?: ""
                     )
+                } else {
+                    addLog("⚠️ بحث $attempt: HTTP ${resp.code()}")
                 }
             } catch (e: Exception) { addLog("❌ ${e.message}") }
-            delay(15_000)
+            if (attempt < max) delay(15_000)
         }
         return null
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  API calls
+    // ═══════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
@@ -500,4 +588,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             request = body.toRequestBody("application/json".toMediaType()))
         saveCookiesFromResponse(r); r.isSuccessful
     } catch (e: Exception) { false }
+
+    // ═══════ Diagnostics ═══════
+    fun testDirectApi() {
+        viewModelScope.launch {
+            try {
+                addLog("🎯 اختبار مباشر...")
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
+                addLog("✅ reese84 جاهز — JWT: ${if (isJwtFresh(0)) "موجود" else "غير موجود"}")
+            } catch (e: Exception) { addLog("❌ ${e.message}") }
+        }
+    }
 }
