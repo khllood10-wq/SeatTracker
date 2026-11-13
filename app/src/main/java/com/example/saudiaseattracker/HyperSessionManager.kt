@@ -22,7 +22,13 @@ class HyperSessionManager(
 
     companion object {
         const val TAG = "HyperSessionError"
-        const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+        // ⚠️ UA موحّد مع HttpCloakClient.UA — Android Chrome 131
+        // حتى يُوقَّع reese84 لبصمة أندرويد، ويطابق بصمة TLS في httpcloak
+        const val DEFAULT_UA = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/131.0.0.0 Mobile Safari/537.36"
+
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
         const val IP_FETCH_URL = "https://ip.hypersolutions.co/ip"
         const val SAUDIA_HOST = "www.saudia.com"
@@ -59,6 +65,7 @@ class HyperSessionManager(
     }
 
     fun getToken(): String? = currentToken
+
     fun getCookieHeader(): String? {
         val t = currentToken ?: return null
         return "reese84=$t"
@@ -71,7 +78,8 @@ class HyperSessionManager(
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HYPER,
                 title = "♻️ Hyper: التوكن الحالي صالح",
-                body = "expiry=${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(expiryMs))}\nremaining=${(expiryMs - System.currentTimeMillis()) / 1000}s"
+                body = "expiry=${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(expiryMs))}\n" +
+                        "remaining=${(expiryMs - System.currentTimeMillis()) / 1000}s"
             ))
             return
         }
@@ -91,7 +99,7 @@ class HyperSessionManager(
         DebugBus.emit(DebugEntry(
             source = DebugSource.HYPER,
             title = "🔄 Hyper: بدء تجديد reese84",
-            body = "forceRenew=$forceRenew"
+            body = "forceRenew=$forceRenew\nUA=$userAgent"
         ))
 
         try {
@@ -149,7 +157,10 @@ class HyperSessionManager(
         DebugBus.emit(DebugEntry(
             source = DebugSource.HYPER,
             title = "✅ Hyper: reese84 جاهز",
-            body = "token.prefix=${result.token.take(40)}...\nlength=${result.token.length}\nrenewInSec=${result.renewInSec}\ncookieDomain=${result.cookieDomain}"
+            body = "token.prefix=${result.token.take(40)}...\n" +
+                    "length=${result.token.length}\n" +
+                    "renewInSec=${result.renewInSec}\n" +
+                    "cookieDomain=${result.cookieDomain}"
         ))
     }
 
@@ -273,7 +284,7 @@ class HyperSessionManager(
             url = "$HYPER_BASE/reese84",
             title = "📤 Hyper: POST /reese84 (generate sensor)",
             headers = "x-api-key: <redacted>\nContent-Type: application/json",
-            body = "request.size=${body.length}c\nscript.size=${script.length}c\nip=$ip"
+            body = "request.size=${body.length}c\nscript.size=${script.length}c\nip=$ip\nuserAgent=$userAgent"
         ))
 
         val req = Request.Builder()
@@ -345,7 +356,10 @@ class HyperSessionManager(
                 url = url,
                 statusCode = resp.code,
                 title = "✅ Hyper: تم الحصول على reese84 → ${resp.code}",
-                body = "token.prefix=${token.take(40)}...\nlength=${token.length}\nrenewInSec=$renewInSec\ncookieDomain=$cookieDomain"
+                body = "token.prefix=${token.take(40)}...\n" +
+                        "length=${token.length}\n" +
+                        "renewInSec=$renewInSec\n" +
+                        "cookieDomain=$cookieDomain"
             ))
 
             return TokenResult(token, renewInSec, cookieDomain)
