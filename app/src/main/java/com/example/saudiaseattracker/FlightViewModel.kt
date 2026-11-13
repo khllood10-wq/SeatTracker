@@ -187,8 +187,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun markSessionReady() {
         _sessionReady.value = hyperSession.hasFreshToken()
         _sessionStatus.value = when {
-            isJwtFresh(0) -> "✅ كل شيء جاهز (JWT: ${jwtRemainingMinutes()}د)"
-            hyperSession.hasFreshToken() -> "✅ Hyper جاهز — افتح WebView لالتقاط JWT"
+            isJwtFresh(0) && activeSaaSessionId.isNotBlank() ->
+                "✅ كل شيء جاهز (JWT: ${jwtRemainingMinutes()}د)"
+            isJwtFresh(0) && activeSaaSessionId.isBlank() ->
+                "⚠️ JWT موجود — sid مفقود"
+            hyperSession.hasFreshToken() ->
+                "✅ Hyper جاهز — افتح WebView لالتقاط JWT"
             else -> "⏳ جاهزة عند أول طلب"
         }
     }
@@ -248,16 +252,20 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             ((jwtExpiryMs - System.currentTimeMillis()) / 60_000L)
         else 0L
 
-        addLog("🎉 JWT محفوظ — صالح $remainingMin دقيقة")
+        val sidStatus = if (sid.isNotBlank()) "✅" else "⏳"
+        addLog("🎉 JWT محفوظ — صالح $remainingMin دقيقة (sid: $sidStatus)")
         pushDebug(DebugEntry(
             source = DebugSource.APP,
             title = "🎉 JWT captured",
-            body = "expiry_in_min=$remainingMin\nsid=$sid"
+            body = "expiry_in_min=$remainingMin\nsid=${sid.ifBlank { "(empty)" }}"
         ))
 
         markSessionReady()
-        _needsWebViewRefresh.value = false
-        _autoCaptureMode.value = false
+        // نغلق الحاجة فقط عند اكتمال JWT + sid
+        if (activeJwt.isNotBlank() && activeSaaSessionId.isNotBlank()) {
+            _needsWebViewRefresh.value = false
+            _autoCaptureMode.value = false
+        }
     }
 
     fun dismissWebView() {
@@ -288,15 +296,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("🔄 دورة #$cycle")
 
                 try {
-                    // ─── 1) تأكد من reese84 (تلقائي) ───
                     withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                     if (activeCookie.isNullOrBlank()) {
                         activeCookie = hyperSession.getCookieHeader()
                     }
 
-                    // ─── 2) تأكد من JWT ───
-                    if (!isJwtFresh(minRemainingMs = 5 * 60_000L)) {
-                        addLog("⏸️ JWT ينتهي — فتح WebView تلقائياً...")
+                    if (!isJwtFresh(minRemainingMs = 5 * 60_000L) || activeSaaSessionId.isBlank()) {
+                        addLog("⏸️ JWT/sid ناقص — فتح WebView تلقائياً...")
                         _needsWebViewRefresh.value = true
                         _autoCaptureMode.value = true
 
@@ -304,14 +310,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             delay(2000)
                         }
 
-                        if (!isJwtFresh(0)) {
-                            addLog("⏸️ لا JWT — إيقاف الحلقة مؤقتاً")
+                        if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
+                            addLog("⏸️ JWT/sid غير مكتمل — إيقاف الحلقة مؤقتاً")
                             break
                         }
-                        addLog("✅ JWT مُحدّث — استئناف البحث")
+                        addLog("✅ JWT + sid جاهزان — استئناف")
                     }
 
-                    // ─── 3) البحث ───
                     addLog("🔍 البحث...")
                     val flight = searchUntilFound(max = 1)
                     if (flight == null) {
@@ -405,6 +410,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
         if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
         if (!isJwtFresh(0)) { addLog("❌ لا JWT — افتح WebView أولاً"); return }
+        if (activeSaaSessionId.isBlank()) { addLog("❌ لا saa-session-id — أعد التقاط JWT"); return }
 
         clearResults()
         _isRunning.value = true
@@ -580,6 +586,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     } catch (e: Exception) { null }
 
+    // ⚠️ هذا هو المكان الذي ستعدّله بنفسك — لم ألمسه
     private suspend fun submitPayment(pnr: String): Boolean = try {
         val p = passengerData
         val body = """{"orderPaymentRequest":{"paymentRequests":[{"paymentMethod":{"paymentType":"CustomPayment","id":"SADAD"}}]},"emailParameters":{"displayParameters":{"alharamain":true,"baggage":true,"bookingCom":true,"eatmarna":false,"electronicVisa":false,"plusgrade":true,"rental":true,"seat":true,"wifi":true,"onDemandTeasers":[]}},"isCardholderAbsent":false,"isQueuePlacementEnabled":false}"""
@@ -595,7 +602,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 addLog("🎯 اختبار مباشر...")
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
-                addLog("✅ reese84 جاهز — JWT: ${if (isJwtFresh(0)) "موجود" else "غير موجود"}")
+                addLog("✅ reese84 جاهز — JWT: ${if (isJwtFresh(0)) "موجود" else "غير موجود"} — sid: ${if (activeSaaSessionId.isNotBlank()) "موجود" else "مفقود"}")
             } catch (e: Exception) { addLog("❌ ${e.message}") }
         }
     }
