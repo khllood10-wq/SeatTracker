@@ -43,7 +43,25 @@ data class OfferCodeAvailabilityInput(
 )
 
 data class SaudiaResponse(@SerializedName("data") val data: SaudiaData?)
-data class SaudiaData(@SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?)
+
+data class SaudiaData(
+    @SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?,
+    // 🆕 dictionaries.flight لاستخراج arrivalTime
+    @SerializedName("dictionaries") val dictionaries: Dictionaries? = null
+)
+
+// 🆕 استخراج dictionaries
+data class Dictionaries(
+    @SerializedName("flight") val flight: Map<String, FlightInfo>? = null
+)
+
+data class FlightInfo(
+    @SerializedName("arrival") val arrival: ArrivalInfo? = null
+)
+
+data class ArrivalInfo(
+    @SerializedName("dateTime") val dateTime: String? = null
+)
 
 data class AirBoundGroup(
     @SerializedName("boundDetails") val boundDetails: BoundDetails?,
@@ -64,7 +82,18 @@ data class AirBound(
     @SerializedName("fareFamilyCode") val fareFamilyCode: String?,
     @SerializedName("status") val status: FlightStatus?,
     @SerializedName("availabilityDetails") val availabilityDetails: List<AvailabilityDetail>? = null,
+    // 🆕 prices (أولوية السعر في السكريبت)
+    @SerializedName("prices") val prices: AirBoundPrices? = null,
     @SerializedName("airOffer") val airOffer: AirOffer?
+)
+
+// 🆕 نماذج أسعار المصفوفة
+data class AirBoundPrices(
+    @SerializedName("totalPrices") val totalPrices: List<PriceEntry>? = null
+)
+
+data class PriceEntry(
+    @SerializedName("total") val total: Double? = null
 )
 
 data class AvailabilityDetail(
@@ -89,6 +118,7 @@ data class TotalPrice(
 data class ParsedFlight(
     val flightNumber: String,
     val departTime: String,
+    val arrivalTime: String,  // 🆕 من dictionaries
     val origin: String,
     val destination: String,
     val isDirect: Boolean,
