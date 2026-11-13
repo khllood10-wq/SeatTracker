@@ -19,11 +19,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 
@@ -31,6 +35,7 @@ import androidx.navigation.NavController
 @Composable
 fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val steps by viewModel.steps.collectAsStateWithLifecycle()
     val isRunning by viewModel.isRunning.collectAsStateWithLifecycle()
@@ -49,7 +54,20 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     var showWebView by remember { mutableStateOf(false) }
     var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
 
-    // التحقق من جاهزية الجلسة بالكامل
+    // حالة صلاحية البطارية
+    var isBatteryUnrestricted by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)) }
+
+    // تحديث حالة الصلاحية عند العودة من إعدادات النظام
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isBatteryUnrestricted = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val hyperReady = viewModel.hasToken()
     val sidReady = viewModel.isSidReady()
     val allReady = hyperReady && jwtReady && sidReady
@@ -96,9 +114,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = when {
-                        allReady -> Color(0xFF006341) // أخضر داكن
-                        hyperReady -> Color(0xFFE65100) // برتقالي
-                        else -> Color(0xFFB71C1C) // أحمر
+                        allReady -> Color(0xFF006341)
+                        hyperReady -> Color(0xFFE65100)
+                        else -> Color(0xFFB71C1C)
                     }
                 )
             ) {
@@ -205,7 +223,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ═══ بطاقة التذكرة (خلفية سوداء + أسماء الفئات العربية الدقيقة) ═══
+            // ═══ بطاقة التذكرة النهائية ═══
             if (pnr.isNotEmpty()) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
@@ -232,7 +250,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                                 }
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text("الفئة", fontSize = 11.sp, color = Color.Gray)
-                                    // عرض اسم الفئة العربية الدقيق المرتبط بالكود
                                     Text(FareFamilies.getArabicNameForCode(bookedFlight.fareFamily), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
                                 }
                             }
@@ -259,7 +276,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ═══ زر بدء/إيقاف البحث (لا يتفعل إلا بجاهزية Hyper + JWT + sid) ═══
+            // ═══ زر بدء/إيقاف البحث ═══
             Button(
                 onClick = {
                     if (autoLoopActive) viewModel.stopAutoLoop()
@@ -276,6 +293,26 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     if (autoLoopActive) "⏹️ إيقاف البحث"
                     else "🔁 بدء البحث",
                     fontWeight = FontWeight.Bold, fontSize = 15.sp
+                )
+            }
+
+            // ═══ 🆕 زر السماح بالعمل في الخلفية ═══
+            if (!isBatteryUnrestricted) {
+                OutlinedButton(
+                    onClick = { BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context) },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFA726)),
+                    border = BorderStroke(2.dp, Color(0xFFFFA726))
+                ) {
+                    Text("🔋 السماح بالعمل في الخلفية (بدون قيود)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            } else {
+                Text(
+                    "✅ التطبيق يعمل بدون قيود في الخلفية",
+                    fontSize = 11.sp,
+                    color = Color(0xFF00C853),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
                 )
             }
 
