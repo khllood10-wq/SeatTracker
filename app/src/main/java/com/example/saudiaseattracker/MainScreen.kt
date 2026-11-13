@@ -40,6 +40,8 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     val clipboard = LocalClipboardManager.current
     var expandedDebugId by remember { mutableStateOf<Long?>(null) }
+    var showWebView by remember { mutableStateOf(false) }
+    var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         if (viewModel.hasToken()) viewModel.markSessionReady()
@@ -47,6 +49,23 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     }
 
     val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
+
+    // عرض WebView فوق الشاشة
+    if (showWebView && reeseTokenForWebView != null) {
+        WebViewTokenCapture(
+            reese84Token = reeseTokenForWebView!!,
+            onSuccess = { jwt, sid ->
+                viewModel.onWebViewJwtCaptured(jwt, sid)
+                showWebView = false
+                reeseTokenForWebView = null
+            },
+            onCancel = {
+                showWebView = false
+                reeseTokenForWebView = null
+            }
+        )
+        return
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -60,41 +79,39 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ═══════ الأزرار الأساسية ═══════
-
-        // 1. تجديد جلسة Hyper
         Button(
             onClick = { viewModel.refreshSession() },
             modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFA726))
+        ) { Text("🔄 تجديد جلسة Hyper (reese84)", fontWeight = FontWeight.Bold) }
+
+        // 🌐 زر WebView لالتقاط JWT (الأهم الآن)
+        Button(
+            onClick = {
+                val token = viewModel.showWebViewCapture()
+                if (token != null) {
+                    reeseTokenForWebView = token
+                    showWebView = true
+                } else {
+                    viewModel.addLog("❌ لا reese84 — جدد أولاً")
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(64.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853))
         ) {
-            Text("🔄 تجديد جلسة Hyper (reese84)", fontWeight = FontWeight.Bold)
+            Text("🌐 التقاط JWT (WebView + reese84)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
 
-        // 2. اختبار httpcloak (تشخيص شامل)
-        OutlinedButton(
-            onClick = { viewModel.testHttpCloak() },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF2196F3)),
-            border = BorderStroke(2.dp, Color(0xFF2196F3))
-        ) {
-            Text("🧪 اختبار httpcloak (تشخيص شامل)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        }
-
-        // 3. اختبار reese84 مباشرة على dapi (جديد)
         OutlinedButton(
             onClick = { viewModel.testDirectApi() },
             modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00C853)),
-            border = BorderStroke(2.dp, Color(0xFF00C853))
-        ) {
-            Text("🎯 اختبار reese84 مباشرة على dapi", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        }
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0)),
+            border = BorderStroke(2.dp, Color(0xFF9C27B0))
+        ) { Text("🎯 اختبار reese84 مباشرة على dapi", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
 
-        // 4. بدء الحجز
         Button(
             onClick = { activity?.let { viewModel.runFullBooking(it) } },
-            enabled = !isRunning && sessionReady,
+            enabled = !isRunning && viewModel.hasToken(),
             modifier = Modifier.fillMaxWidth().height(64.dp)
         ) {
             if (isRunning) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
@@ -104,7 +121,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             )
         }
 
-        // ═══════ وضع المراقبة ═══════
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -115,15 +131,12 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ═══════ الاختبارات ═══════
         OutlinedButton({ navController.navigate(Screen.GetTest.route) }, Modifier.fillMaxWidth()) {
             Text("🧪 اختبار GET", fontSize = 12.sp)
         }
         OutlinedButton({ navController.navigate(Screen.TokenInitTester.route) }, Modifier.fillMaxWidth()) {
             Text("🔬 اختبار token/init", fontSize = 12.sp)
         }
-
-        // ═══════ بيانات المسافر والرحلة ═══════
         OutlinedButton({ navController.navigate(Screen.Passenger.route) }, Modifier.fillMaxWidth()) {
             Text("👤 ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}", fontSize = 12.sp)
         }
@@ -131,13 +144,11 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("✈️ ${viewModel.flightData.from} → ${viewModel.flightData.to}", fontSize = 12.sp)
         }
 
-        // ═══════ المراحل ═══════
         if (steps.any { it.status != StepStatus.PENDING }) {
             Text("المراحل:", fontWeight = FontWeight.Bold)
             steps.forEach { s -> StepRow(s) }
         }
 
-        // ═══════ PNR/SADAD ═══════
         if (pnr.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(
@@ -158,7 +169,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ═══════ السجل ═══════
         if (logs.isNotEmpty()) {
             Text("📝 السجل:", fontWeight = FontWeight.Bold)
             Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -172,10 +182,8 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ═══════ قسم Debug ═══════
         if (debugEntries.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -194,35 +202,19 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                                 appendLine("[${e.source.label}] $time  ${e.method} ${e.url}")
                                 appendLine("STATUS: ${e.statusCode ?: "-"}")
                                 appendLine("TITLE : ${e.title}")
-                                if (e.headers.isNotBlank()) {
-                                    appendLine("HEADERS:")
-                                    appendLine(e.headers)
-                                }
-                                appendLine("BODY:")
-                                appendLine(e.body)
+                                if (e.headers.isNotBlank()) { appendLine("HEADERS:"); appendLine(e.headers) }
+                                appendLine("BODY:"); appendLine(e.body)
                             }
                         }
                         clipboard.setText(AnnotatedString(all))
-                    }) {
-                        Text("📋 نسخ الكل", fontSize = 11.sp)
-                    }
+                    }) { Text("📋 نسخ الكل", fontSize = 11.sp) }
                 }
             }
-
             debugEntries.take(50).forEach { entry ->
                 DebugCard(
                     entry = entry,
                     expanded = expandedDebugId == entry.id,
-                    onToggle = {
-                        expandedDebugId = if (expandedDebugId == entry.id) null else entry.id
-                    }
-                )
-            }
-            if (debugEntries.size > 50) {
-                Text(
-                    "… يعرض 50 من ${debugEntries.size}. استخدم نسخ الكل.",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    onToggle = { expandedDebugId = if (expandedDebugId == entry.id) null else entry.id }
                 )
             }
         }
@@ -247,8 +239,7 @@ private fun StepRow(step: BookingStep) {
                     StepStatus.FAILED -> Icons.Default.Error
                     StepStatus.SKIPPED -> Icons.Default.RemoveCircleOutline
                     else -> Icons.Default.RadioButtonUnchecked
-                },
-                null,
+                }, null,
                 tint = when (step.status) {
                     StepStatus.SUCCESS -> Color(0xFF00C853)
                     StepStatus.FAILED -> Color(0xFFD32F2F)
@@ -266,15 +257,10 @@ private fun StepRow(step: BookingStep) {
 }
 
 @Composable
-private fun DebugCard(
-    entry: DebugEntry,
-    expanded: Boolean,
-    onToggle: () -> Unit
-) {
+private fun DebugCard(entry: DebugEntry, expanded: Boolean, onToggle: () -> Unit) {
     val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
         .format(java.util.Date(entry.timestamp))
     val accent = Color(entry.source.colorHex.toInt())
-
     Card(
         Modifier.fillMaxWidth().clickable { onToggle() },
         colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.08f)),
@@ -283,26 +269,18 @@ private fun DebugCard(
         Column(Modifier.padding(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(color = accent, shape = MaterialTheme.shapes.small) {
-                    Text(
-                        entry.source.label,
-                        color = Color.White,
-                        fontSize = 9.sp,
+                    Text(entry.source.label, color = Color.White, fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                 }
                 Spacer(Modifier.width(6.dp))
-                Text(
-                    "HTTP ${entry.statusCode ?: "-"}",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
+                Text("HTTP ${entry.statusCode ?: "-"}", fontSize = 10.sp, fontWeight = FontWeight.Bold,
                     color = when {
                         entry.statusCode == null -> MaterialTheme.colorScheme.onSurface
                         entry.statusCode in 200..299 -> Color(0xFF00C853)
                         entry.statusCode in 400..499 -> Color(0xFFD32F2F)
                         else -> Color(0xFFFF6F00)
-                    }
-                )
+                    })
                 Spacer(Modifier.weight(1f))
                 Text(time, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
             }
@@ -315,38 +293,16 @@ private fun DebugCard(
                 SelectionContainer {
                     Column {
                         if (entry.headers.isNotBlank()) {
-                            Text(
-                                "─ Headers ─",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = accent
-                            )
-                            Text(
-                                entry.headers,
-                                fontSize = 9.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            Text("─ Headers ─", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accent)
+                            Text(entry.headers, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                             Spacer(Modifier.height(6.dp))
                         }
-                        Text(
-                            "─ Body ─",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accent
-                        )
-                        Text(
-                            entry.body,
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
+                        Text("─ Body ─", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accent)
+                        Text(entry.body, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                     }
                 }
             } else {
-                Text(
-                    "👆 اضغط للتفاصيل",
-                    fontSize = 9.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("👆 اضغط للتفاصيل", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
