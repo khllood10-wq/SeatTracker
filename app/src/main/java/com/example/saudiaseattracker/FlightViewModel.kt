@@ -114,27 +114,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _debugEntries = MutableStateFlow<List<DebugEntry>>(emptyList())
     val debugEntries: StateFlow<List<DebugEntry>> = _debugEntries
 
-    // ═══════ حالة WebView ═══════
-    private val _webViewToken by mutableStateOf<String?>(null)
-    val webViewToken: String? get() = _webViewToken
-
-    fun showWebViewCapture(): String? {
-        return hyperSession.getToken()
-    }
-
-    fun onWebViewJwtCaptured(jwt: String, sid: String) {
-        activeJwt = jwt
-        if (sid.isNotBlank()) activeSaaSessionId = sid
-        activeCookie = hyperSession.getCookieHeader()
-        _webViewToken = null
-        addLog("🎉 JWT محفوظ: ${jwt.take(40)}...")
-        markSessionReady()
-    }
-
-    fun dismissWebView() {
-        _webViewToken = null
-    }
-
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
 
@@ -209,31 +188,28 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun testHttpCloak() {
-        viewModelScope.launch {
-            try {
-                addLog("🧪 اختبار httpcloak...")
-                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
-                val reeseCookie = hyperSession.getCookieHeader() ?: run {
-                    addLog("❌ لا reese84"); return@launch
-                }
-                addLog("✅ reese84: ${reeseCookie.take(40)}...")
-            } catch (e: Exception) {
-                addLog("❌ ${e.message}")
-            }
-        }
+    // ═══════ WebView Integration ═══════
+    fun showWebViewCapture(): String? {
+        return hyperSession.getToken()
     }
 
+    fun onWebViewJwtCaptured(jwt: String, sid: String) {
+        activeJwt = jwt
+        if (sid.isNotBlank()) activeSaaSessionId = sid
+        activeCookie = hyperSession.getCookieHeader()
+        addLog("🎉 JWT محفوظ: ${jwt.take(40)}...")
+        markSessionReady()
+    }
+
+    fun dismissWebView() {
+        // لا شيء — MainScreen تدير العرض
+    }
+
+    // ═══════ Diagnostic ═══════
     fun testDirectApi() {
         viewModelScope.launch {
             try {
                 addLog("🎯 اختبار reese84 مباشرة على dapi...")
-                pushDebug(DebugEntry(
-                    source = DebugSource.APP,
-                    title = "═══ 🎯 اختبار reese84 ═══",
-                    body = "اختبار: /airsearch مع reese84 فقط"
-                ))
-
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 val reeseCookie = hyperSession.getCookieHeader() ?: run {
                     addLog("❌ لا reese84"); return@launch
@@ -241,59 +217,52 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 activeCookie = reeseCookie
                 addLog("✅ reese84: ${reeseCookie.take(40)}... (${reeseCookie.length}c)")
 
-                addLog("▶️ /airsearch مع reese84 فقط")
-                val searchResult1 = tryDirectSearch(reeseCookie, label = "1-reese-only")
-
-                if (searchResult1 != null && searchResult1.code() in 200..299) {
-                    addLog("🎉🎉 /airsearch نجح! HTTP ${searchResult1.code()}")
-                } else {
-                    addLog("⚠️ HTTP ${searchResult1?.code() ?: "?"} — متوقع (يحتاج JWT)")
-                }
-
-                addLog("📊 الخلاصة: Imperva مفتوح! نحتاج JWT فقط → استخدم WebView")
+                val resp = RetrofitClient.api.searchAirBounds(
+                    headers = buildDirectHeaders(
+                        cookie = reeseCookie,
+                        referer = "https://www.saudia.com/ar-SA",
+                        secFetchDest = "empty",
+                        secFetchMode = "cors",
+                        extra = mapOf(
+                            "x-api-version" to "4",
+                            "platform" to "Web",
+                            "version" to "27.2",
+                            "Origin" to "https://www.saudia.com"
+                        )
+                    ),
+                    request = SaudiaSearchRequest(
+                        airBoundsSearchInputs = AirBoundsSearchInputs(
+                            itineraries = listOf(Itinerary(flightData.from, flightData.to, "${flightData.date}T00:00:00.000")),
+                            travelers = listOf(Traveler()),
+                            searchPreferences = SearchPreferences()
+                        ),
+                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
+                    )
+                )
+                addLog("📄 /airsearch → HTTP ${resp.code()}")
+                pushDebug(DebugEntry(
+                    source = DebugSource.SEARCH,
+                    method = "POST",
+                    url = "airsearch",
+                    statusCode = resp.code(),
+                    title = "🔍 ${resp.code()}",
+                    body = if (resp.isSuccessful) "OK" else (resp.errorBody()?.string() ?: "").take(3000)
+                ))
             } catch (e: Exception) {
                 addLog("❌ ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }
 
-    private suspend fun tryDirectSearch(reeseCookie: String, label: String): Response<SaudiaResponse>? {
-        return try {
-            val resp = RetrofitClient.api.searchAirBounds(
-                headers = buildDirectHeaders(
-                    cookie = reeseCookie,
-                    referer = "https://www.saudia.com/ar-SA",
-                    secFetchDest = "empty",
-                    secFetchMode = "cors",
-                    extra = mapOf(
-                        "x-api-version" to "4",
-                        "platform" to "Web",
-                        "version" to "27.2",
-                        "Origin" to "https://www.saudia.com"
-                    )
-                ),
-                request = SaudiaSearchRequest(
-                    airBoundsSearchInputs = AirBoundsSearchInputs(
-                        itineraries = listOf(Itinerary(flightData.from, flightData.to, "${flightData.date}T00:00:00.000")),
-                        travelers = listOf(Traveler()),
-                        searchPreferences = SearchPreferences()
-                    ),
-                    offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
-                )
-            )
-            val errBody = if (!resp.isSuccessful) try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" } else ""
-            pushDebug(DebugEntry(
-                source = DebugSource.SEARCH,
-                method = "POST",
-                url = "airsearch ($label)",
-                statusCode = resp.code(),
-                title = "🔍 ($label) → ${resp.code()}",
-                body = if (resp.isSuccessful) "OK" else errBody.take(4000)
-            ))
-            resp
-        } catch (e: Exception) {
-            addLog("❌ ${e.message}")
-            null
+    fun testHttpCloak() {
+        viewModelScope.launch {
+            try {
+                addLog("🧪 اختبار httpcloak...")
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
+                addLog("✅ reese84 جاهز")
+            } catch (e: Exception) {
+                addLog("❌ ${e.message}")
+            }
         }
     }
 
@@ -318,6 +287,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         extra.forEach { (k, v) -> put(k, v) }
     }
 
+    // ═══════ Full Booking ═══════
     fun runFullBooking(activity: android.app.Activity) {
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
