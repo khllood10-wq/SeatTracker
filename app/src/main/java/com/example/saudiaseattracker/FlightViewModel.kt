@@ -137,8 +137,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _debugEntries.value = curr.take(300)
             }
         }
-        
-        // ⏱️ عداد الجلسة يعمل تلقائياً طوال عمر التطبيق (بغض النظر عن البحث)
+
         viewModelScope.launch {
             while (isActive) {
                 val remaining = ((hyperSession.expiryAt() - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
@@ -365,11 +364,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
             setStep("order", StepStatus.RUNNING)
             val ord = createOrder(cid) ?: run { setStep("order", StepStatus.FAILED); return false }
-            
+
             _finalPnr.value = ord.first
             _finalSadad.value = ord.second
             lastBookedFlight = flight
-            
+
             setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}")
 
             if (monitoringMode) { setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط"); return true }
@@ -384,6 +383,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🔍 البحث — 100% مطابق للسكريبت
+    // ═══════════════════════════════════════════════════════════
     private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
         var attempt = 0
         val wantedTime = FlightData.normalizeTime(flightData.departureTime)
@@ -442,7 +444,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                                 val isMatched = f.flightNumber == matchedFlightNumber
                                 val prefix = if (isMatched) "🎯" else "  "
                                 val directStr = if (f.isDirect) "مباشر" else "${f.stops}st"
-                                appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime} | $directStr")
+                                appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime}→${f.arrivalTime} | $directStr")
                                 f.fares.forEach { fare ->
                                     val status = if (fare.isAvailable) "✅" else "❌"
                                     val star = if (isMatched && fare.code == matchedFareCode) " ⬅ المختارة" else ""
@@ -478,19 +480,36 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return null
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  parseAirBounds — 100% مطابق لـ parseAirBounds في السكريبت
+    // ═══════════════════════════════════════════════════════════
     private fun parseAirBounds(response: SaudiaResponse): List<ParsedFlight> {
         val groups = response.data?.airBoundGroups ?: return emptyList()
+        val flightDict = response.data?.dictionaries?.flight ?: emptyMap()
         val flights = mutableListOf<ParsedFlight>()
+
         for (group in groups) {
             val bd = group.boundDetails ?: continue
             val segments = bd.segments ?: continue
             if (segments.isEmpty()) continue
+
             val flightId = segments[0].flightId ?: continue
+
+            // استخراج رقم الرحلة
             val fnMatch = Regex("SEG-([A-Z]{2}\\d+)-").find(flightId)
             val flightNumber = fnMatch?.groupValues?.get(1) ?: "?"
-            val dtMatch = Regex("-(\\d{4})$").find(flightId)
-            val timeRaw = dtMatch?.groupValues?.get(1) ?: "0000"
-            val departTime = "${timeRaw.substring(0, 2)}:${timeRaw.substring(2, 4)}"
+
+            // استخراج وقت الإقلاع (نفس regex السكريبت: -YYYY-MM-DD-HHMM$)
+            val dtMatch = Regex("-(\\d{4}-\\d{2}-\\d{2})-(\\d{4})$").find(flightId)
+            val timeRaw = dtMatch?.groupValues?.get(2) ?: "0000"
+            val departTime = timeRaw.substring(0, 2) + ":" + timeRaw.substring(2, 4)
+
+            // استخراج وقت الوصول من dictionaries (نفس السكريبت)
+            val flightInfo = flightDict[flightId]
+            val arrivalDateTime = flightInfo?.arrival?.dateTime ?: ""
+            val arrMatch = Regex("T(\\d{2}:\\d{2})").find(arrivalDateTime)
+            val arrivalTime = arrMatch?.groupValues?.get(1) ?: "?"
+
             val fares = mutableListOf<ParsedFare>()
             for (ab in group.airBounds ?: emptyList()) {
                 val code = ab.fareFamilyCode ?: "?"
@@ -498,24 +517,74 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val avail = ab.availabilityDetails?.firstOrNull()
                 val quota = avail?.quota ?: 0
                 val statusCode = avail?.statusCode ?: ""
+
+                // شرط الإتاحة (نفس السكريبت حرفياً)
                 val isAvailable = !isSoldOut && quota > 0 && statusCode == "HK"
-                val price = (ab.airOffer?.totalPrice?.value ?: 0.0) / 100.0
+
+                // السعر — نفس السكريبت: prices.totalPrices[0].total || airOffer.totalPrice.value || 0
+                val priceValue = ab.prices?.totalPrices?.firstOrNull()?.total
+                    ?: ab.airOffer?.totalPrice?.value
+                    ?: 0.0
+                val price = priceValue / 100.0
+
                 fares.add(ParsedFare(code, quota, statusCode, price, isAvailable, ab.airBoundId ?: ""))
             }
+
             flights.add(ParsedFlight(
-                flightNumber = flightNumber, departTime = departTime,
-                origin = bd.origin ?: "", destination = bd.destination ?: "",
-                isDirect = segments.size == 1, stops = segments.size - 1, fares = fares
+                flightNumber = flightNumber,
+                departTime = departTime,
+                arrivalTime = arrivalTime,
+                origin = bd.origin ?: "",
+                destination = bd.destination ?: "",
+                isDirect = segments.size == 1,
+                stops = segments.size - 1,
+                fares = fares
             ))
         }
         return flights
     }
 
-    private fun findMatchingFlight(flights: List<ParsedFlight>, wantedTime: String, wantedCodes: List<String>): Pair<ParsedFlight, ParsedFare>? {
+    // ═══════════════════════════════════════════════════════════
+    //  findMatchingFlight — 100% مطابق للسكريبت
+    // ═══════════════════════════════════════════════════════════
+    private fun findMatchingFlight(
+        flights: List<ParsedFlight>,
+        wantedTime: String,
+        wantedCodes: List<String>
+    ): Pair<ParsedFlight, ParsedFare>? {
         for (flight in flights) {
+            // 1. فلتر المباشر (السكريبت: directOnly !== false && !isDirect → skip)
             if (flightData.directOnly && !flight.isDirect) continue
-            if (wantedTime.isNotBlank() && flight.departTime != wantedTime) continue
-            val matchedFare = flight.fares.firstOrNull { it.isAvailable && wantedCodes.contains(it.code) } ?: continue
+
+            // 2. مطابقة الوقت/رقم الرحلة (نفس منطق السكريبت)
+            if (wantedTime.isNotBlank()) {
+                val t = wantedTime.trim()
+                val tu = t.uppercase()
+                val isFlightNumber = Regex("^SV\\d{3,4}$").matches(tu)
+                val isTimeFormat = Regex("^\\d{1,2}:\\d{2}$").matches(t)
+
+                var matchedTime = false
+                when {
+                    isFlightNumber -> {
+                        if (flight.flightNumber == tu) matchedTime = true
+                    }
+                    isTimeFormat -> {
+                        // مطابقة وقت الإقلاع أو وقت الوصول (نفس السكريبت)
+                        if (flight.departTime == t || flight.arrivalTime == t) matchedTime = true
+                    }
+                    else -> {
+                        // Fallback: بحث جزئي (نفس السكريبت)
+                        if (flight.flightNumber.contains(t) || flight.departTime.contains(t)) matchedTime = true
+                    }
+                }
+                if (!matchedTime) continue
+            }
+
+            // 3. إيجاد فئة سعر متاحة ومطابقة (نفس السكريبت)
+            val matchedFare = flight.fares.firstOrNull {
+                it.isAvailable && wantedCodes.contains(it.code)
+            } ?: continue
+
             return Pair(flight, matchedFare)
         }
         return null
