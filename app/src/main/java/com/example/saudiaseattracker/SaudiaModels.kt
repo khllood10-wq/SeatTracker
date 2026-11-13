@@ -26,9 +26,7 @@ data class Itinerary(
     @SerializedName("isRequestedBound") val isRequestedBound: Boolean = true
 )
 
-data class Traveler(
-    @SerializedName("passengerTypeCode") val passengerTypeCode: String = "ADT"
-)
+data class Traveler(@SerializedName("passengerTypeCode") val passengerTypeCode: String = "ADT")
 
 data class SearchPreferences(
     @SerializedName("showUnavailableEntries") val showUnavailableEntries: Boolean = false,
@@ -44,13 +42,8 @@ data class OfferCodeAvailabilityInput(
     @SerializedName("browserId") val browserId: String = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
 )
 
-data class SaudiaResponse(
-    @SerializedName("data") val data: SaudiaData?
-)
-
-data class SaudiaData(
-    @SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?
-)
+data class SaudiaResponse(@SerializedName("data") val data: SaudiaData?)
+data class SaudiaData(@SerializedName("airBoundGroups") val airBoundGroups: List<AirBoundGroup>?)
 
 data class AirBoundGroup(
     @SerializedName("boundDetails") val boundDetails: BoundDetails?,
@@ -60,29 +53,54 @@ data class AirBoundGroup(
 data class BoundDetails(
     @SerializedName("originLocationCode") val origin: String?,
     @SerializedName("destinationLocationCode") val destination: String?,
+    @SerializedName("duration") val duration: Long?,
     @SerializedName("segments") val segments: List<Segment>?
 )
 
-data class Segment(
-    @SerializedName("flightId") val flightId: String?
-)
+data class Segment(@SerializedName("flightId") val flightId: String?)
 
 data class AirBound(
     @SerializedName("airBoundId") val airBoundId: String?,
     @SerializedName("fareFamilyCode") val fareFamilyCode: String?,
     @SerializedName("status") val status: FlightStatus?,
+    @SerializedName("availabilityDetails") val availabilityDetails: List<AvailabilityDetail>? = null,
     @SerializedName("airOffer") val airOffer: AirOffer?
 )
 
-data class FlightStatus(
-    @SerializedName("value") val value: String?
+data class AvailabilityDetail(
+    @SerializedName("flightId") val flightId: String?,
+    @SerializedName("cabin") val cabin: String?,
+    @SerializedName("bookingClass") val bookingClass: String?,
+    @SerializedName("statusCode") val statusCode: String?,
+    @SerializedName("quota") val quota: Int?
 )
 
-data class AirOffer(
-    @SerializedName("totalPrice") val totalPrice: TotalPrice?
-)
-
+data class FlightStatus(@SerializedName("value") val value: String?)
+data class AirOffer(@SerializedName("totalPrice") val totalPrice: TotalPrice?)
 data class TotalPrice(
     @SerializedName("value") val value: Double?,
     @SerializedName("currencyCode") val currencyCode: String?
+)
+
+// ═══════════════════════════════════════════════════════════
+//  نماذج محلّلة (منطق السكريبت)
+// ═══════════════════════════════════════════════════════════
+
+data class ParsedFlight(
+    val flightNumber: String,
+    val departTime: String,
+    val origin: String,
+    val destination: String,
+    val isDirect: Boolean,
+    val stops: Int,
+    val fares: List<ParsedFare>
+)
+
+data class ParsedFare(
+    val code: String,
+    val quota: Int,
+    val statusCode: String,
+    val price: Double,
+    val isAvailable: Boolean,
+    val airBoundId: String
 )
