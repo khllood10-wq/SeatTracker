@@ -13,8 +13,6 @@ class HttpCloakClient {
 
     companion object {
         private const val TAG = "HttpCloakClient"
-        
-        // ✅ UA لـ Chrome 155 (مطابق للـ preset)
         const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/155.0.0.0 Safari/537.36"
@@ -32,10 +30,10 @@ class HttpCloakClient {
             val newS = Session(
                 SessionConfig(
                     preset = Presets.CHROME_LATEST_WINDOWS,
-                    timeout = 20,                  // مهلة داخلية 20 ثانية
-                    httpVersion = "auto",          // ✅ بديل "h1" — يسمح بالتفاوض التلقائي
-                    retry = 0,                     // لا إعادة محاولة (لتجنب التأخير)
-                    withoutClientHints = true      // نعتمد على هيدرز الجلسة
+                    timeout = 15,                  // مهلة داخلية أقصر
+                    httpVersion = "auto",          
+                    retry = 0,                     
+                    withoutClientHints = true      
                 )
             )
             session = newS
@@ -43,7 +41,7 @@ class HttpCloakClient {
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HTTPCLOAK,
                 title = "🆕 Session جديدة (Windows 155)",
-                body = "preset=CHROME_LATEST_WINDOWS\ntimeout=20s\nhttpVersion=auto\nretry=0\nwithoutClientHints=true\nUA=$UA"
+                body = "preset=CHROME_LATEST_WINDOWS\ntimeout=15s\nhttpVersion=auto\nUA=$UA"
             ))
             return newS
         }
@@ -56,16 +54,31 @@ class HttpCloakClient {
         sessionCreatedAt = 0
     }
 
+    // ✅ دالة جديدة: تهيئة الجلسة (Warmup)
+    suspend fun warmup(url: String, headers: Map<String, String>): HttpCloakResponse =
+        withContext(Dispatchers.IO) {
+            withTimeout(20_000L) {
+                val sess = getSession()
+                try {
+                    // إرسال طلب خفيف لتهيئة الاتصال وتجنب التعليق
+                    val resp = sess.get(url, headers)
+                    HttpCloakResponse(resp.statusCode, resp.text, "")
+                } catch (e: Exception) {
+                    throw e
+                }
+            }
+        }
+
     suspend fun get(url: String, headers: Map<String, String> = emptyMap()): HttpCloakResponse =
         withContext(Dispatchers.IO) {
-            withTimeout(25_000L) { // 25 ثانية كحد أقصى
+            withTimeout(20_000L) {
                 doRequest("GET", url, headers, null)
             }
         }
 
     suspend fun post(url: String, headers: Map<String, String> = emptyMap(), body: Body? = null): HttpCloakResponse =
         withContext(Dispatchers.IO) {
-            withTimeout(25_000L) {
+            withTimeout(20_000L) {
                 doRequest("POST", url, headers, body)
             }
         }
@@ -89,7 +102,7 @@ class HttpCloakClient {
                 url = url,
                 statusCode = resp.statusCode,
                 title = "$method ${url.takeLast(55)} → ${resp.statusCode} (${dt}ms, ${resp.text.length}c)",
-                headers = "── REQUEST HEADERS ──\n" + headersIn.entries.joinToString("\n") { "  ${it.key}: ${it.value.take(100)}" },
+                headers = "── REQUEST ──\n" + headersIn.entries.joinToString("\n") { "  ${it.key}: ${it.value.take(100)}" },
                 body = resp.text.take(5000)
             ))
             return HttpCloakResponse(resp.statusCode, resp.text, "")
