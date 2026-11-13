@@ -1,6 +1,7 @@
 package com.example.saudiaseattracker
 
 import android.app.Application
+import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -63,12 +64,12 @@ data class BookingStep(
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
 
-    // ═══════ الحالة ═══════
+    // ═══════ حالة الجلسة ═══════
     private var activeJwt = ""
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
-    private var jwtExpiryMs: Long = 0L  // ← وقت انتهاء JWT
+    private var jwtExpiryMs: Long = 0L
 
     private var autoLoopJob: Job? = null
 
@@ -127,6 +128,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _autoLoopLastCycle = MutableStateFlow("")
     val autoLoopLastCycle: StateFlow<String> = _autoLoopLastCycle
 
+    private val _autoCaptureMode = MutableStateFlow(false)
+    val autoCaptureMode: StateFlow<Boolean> = _autoCaptureMode
+
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
 
@@ -152,7 +156,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  JWT Helpers — فحص صلاحية JWT
+    //  JWT Helpers
     // ═══════════════════════════════════════════════════════════
     private fun parseJwtExpiry(jwt: String): Long {
         return try {
@@ -161,9 +165,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             if (parts.size < 2) return 0L
             val part = parts[1]
             val padded = part + "=".repeat((4 - part.length % 4) % 4)
-            val payload = String(android.util.Base64.decode(padded, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP))
+            val payload = String(Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP))
             val exp = JSONObject(payload).optLong("exp", 0L)
-            exp * 1000L  // إلى ميلي ثانية
+            exp * 1000L
         } catch (e: Exception) { 0L }
     }
 
@@ -230,7 +234,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  WebView Integration — JWT فقط
+    //  WebView Integration
     // ═══════════════════════════════════════════════════════════
     fun showWebViewCapture(): String? = hyperSession.getToken()
 
@@ -248,23 +252,25 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         pushDebug(DebugEntry(
             source = DebugSource.APP,
             title = "🎉 JWT captured",
-            body = "jwt.prefix=${jwt.take(40)}...\nexpiry_in_min=$remainingMin\nsid=$sid"
+            body = "expiry_in_min=$remainingMin\nsid=$sid"
         ))
 
         markSessionReady()
         _needsWebViewRefresh.value = false
+        _autoCaptureMode.value = false
     }
 
-    fun dismissWebView() { /* لا شيء */ }
+    fun dismissWebView() {
+        _needsWebViewRefresh.value = false
+        _autoCaptureMode.value = false
+    }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔁 الحلقة التلقائية — كل 10 دقائق: تحديث reese84 + بحث + حجز
+    //  🔁 الحلقة التلقائية
     // ═══════════════════════════════════════════════════════════
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
-        if (autoLoopJob?.isActive != true && !passengerData.isValid()) {
-            addLog("❌ بيانات المسافر ناقصة"); return
-        }
+        if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
         if (!flightData.isValid()) { addLog("❌ بيانات الرحلة ناقصة"); return }
 
         _autoLoopActive.value = true
@@ -282,29 +288,32 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("🔄 دورة #$cycle")
 
                 try {
-                    // ─── 1) تأكد من JWT ───
-                    if (!isJwtFresh(minRemainingMs = 3 * 60_000L)) {
-                        addLog("⏳ JWT منتهي — طلب WebView...")
-                        _needsWebViewRefresh.value = true
-                        // انتظار يدوي من المستخدم
-                        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) {
-                            delay(2000)
-                        }
-                        if (!isJwtFresh(0)) {
-                            addLog("⏸️ لا JWT — إيقاف مؤقت")
-                            break
-                        }
-                    }
-
-                    // ─── 2) تأكد من reese84 ───
+                    // ─── 1) تأكد من reese84 (تلقائي) ───
                     withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                     if (activeCookie.isNullOrBlank()) {
                         activeCookie = hyperSession.getCookieHeader()
                     }
 
+                    // ─── 2) تأكد من JWT ───
+                    if (!isJwtFresh(minRemainingMs = 5 * 60_000L)) {
+                        addLog("⏸️ JWT ينتهي — فتح WebView تلقائياً...")
+                        _needsWebViewRefresh.value = true
+                        _autoCaptureMode.value = true
+
+                        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) {
+                            delay(2000)
+                        }
+
+                        if (!isJwtFresh(0)) {
+                            addLog("⏸️ لا JWT — إيقاف الحلقة مؤقتاً")
+                            break
+                        }
+                        addLog("✅ JWT مُحدّث — استئناف البحث")
+                    }
+
                     // ─── 3) البحث ───
                     addLog("🔍 البحث...")
-                    val flight = searchUntilFound(max = 1) // محاولة واحدة فقط
+                    val flight = searchUntilFound(max = 1)
                     if (flight == null) {
                         addLog("⚠️ لم توجد الرحلة — انتظار")
                     } else {
@@ -316,19 +325,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _autoLoopActive.value = false
                             break
                         } else {
-                            addLog("❌ فشل الحجز — إعادة المحاولة في الدورة القادمة")
+                            addLog("❌ فشل الحجز — إعادة في الدورة القادمة")
                         }
                     }
                 } catch (e: Exception) {
                     addLog("❌ خطأ في الدورة: ${e.message}")
                 }
 
-                // ─── 4) انتظر 10 دقائق قبل الدورة القادمة ───
-                addLog("⏳ انتظار 10 دقائق قبل الدورة القادمة...")
+                addLog("⏳ انتظار 10 دقائق...")
                 delay(10 * 60_000L)
             }
 
-            addLog("⏹️ الحلقة التلقائية توقفت")
+            addLog("⏹️ الحلقة توقفت")
             _autoLoopActive.value = false
         }
     }
@@ -338,11 +346,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         autoLoopJob = null
         _autoLoopActive.value = false
         _needsWebViewRefresh.value = false
+        _autoCaptureMode.value = false
         addLog("⏹️ تم إيقاف الحلقة يدوياً")
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  تنفيذ الحجز الكامل (المراحل 1-7)
+    //  تنفيذ الحجز
     // ═══════════════════════════════════════════════════════════
     private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
         try {
@@ -391,9 +400,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  حجز مرة واحدة (بدون حلقة) — للاختبار
-    // ═══════════════════════════════════════════════════════════
     fun runOnceBooking(activity: android.app.Activity) {
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
@@ -424,9 +430,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  البحث
-    // ═══════════════════════════════════════════════════════════
     private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
         var attempt = 0
         while (attempt < max) {
@@ -447,12 +450,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(resp)
 
                 if (resp.code() == 401) {
-                    addLog("🚨 JWT منتهي — يجب تحديثه")
+                    addLog("🚨 JWT منتهي")
                     jwtExpiryMs = 0L
                     return null
                 }
                 if (resp.code() == 403) {
-                    addLog("🚨 Imperva رفض (reese84 غير صالح؟)")
+                    addLog("🚨 Imperva رفض")
                     withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                     if (activeCookie.isNullOrBlank()) activeCookie = hyperSession.getCookieHeader()
                     return null
@@ -483,9 +486,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return null
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  API calls
-    // ═══════════════════════════════════════════════════════════
     private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
