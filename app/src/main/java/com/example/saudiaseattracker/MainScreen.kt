@@ -6,7 +6,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -22,7 +21,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -46,11 +44,15 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionTimerSeconds by viewModel.sessionTimerSeconds.collectAsStateWithLifecycle()
     val jwtReady by viewModel.jwtReady.collectAsStateWithLifecycle()
 
-    // 🆕 استدعاء تفاصيل الرحلة
     val bookedFlight = viewModel.lastBookedFlight
 
     var showWebView by remember { mutableStateOf(false) }
     var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
+
+    // التحقق من جاهزية الجلسة بالكامل
+    val hyperReady = viewModel.hasToken()
+    val sidReady = viewModel.isSidReady()
+    val allReady = hyperReady && jwtReady && sidReady
 
     LaunchedEffect(Unit) {
         if (viewModel.hasToken()) viewModel.markSessionReady()
@@ -91,23 +93,29 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // ═══ شريط الحالة العلوي ═══
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = when {
+                        allReady -> Color(0xFF006341) // أخضر داكن
+                        hyperReady -> Color(0xFFE65100) // برتقالي
+                        else -> Color(0xFFB71C1C) // أحمر
+                    }
+                )
+            ) {
                 Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(sessionStatus, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(sessionStatus, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
                         Spacer(Modifier.height(4.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 "JWT: ${if (jwtReady) "✅" else "⏳"}",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (jwtReady) Color(0xFF00C853) else Color(0xFFD32F2F)
+                                fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                color = if (jwtReady) Color(0xFF69F0AE) else Color.White
                             )
                             Text(
-                                "sid: ${if (viewModel.isSidReady()) "✅" else "⏳"}",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (viewModel.isSidReady()) Color(0xFF00C853) else Color(0xFFD32F2F)
+                                "sid: ${if (sidReady) "✅" else "⏳"}",
+                                fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                color = if (sidReady) Color(0xFF69F0AE) else Color.White
                             )
                             val minutes = sessionTimerSeconds / 60
                             val seconds = sessionTimerSeconds % 60
@@ -116,21 +124,15 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                             else "⏱️ --:--"
                             Text(
                                 timerText,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = when {
-                                    sessionTimerSeconds <= 0L -> Color(0xFFD32F2F)
-                                    sessionTimerSeconds < 60L -> Color(0xFFFF9800)
-                                    else -> Color(0xFF00C853)
-                                }
+                                fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White
                             )
                             if (autoLoopActive) {
-                                Text("🔁 $lastCycle", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("🔁 $lastCycle", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
                         }
                     }
                     IconButton(onClick = { viewModel.refreshSession() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "تجديد Hyper", tint = Color(0xFFFFA726))
+                        Icon(Icons.Default.Refresh, contentDescription = "تجديد Hyper", tint = Color.White)
                     }
                 }
             }
@@ -203,18 +205,17 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ═══ 🆕 بطاقة التذكرة الكاملة (PNR/SADAD + تفاصيل الرحلة) ═══
+            // ═══ بطاقة التذكرة (خلفية سوداء + أسماء الفئات العربية الدقيقة) ═══
             if (pnr.isNotEmpty()) {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
                     border = BorderStroke(3.dp, Color(0xFF00C853))
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        // تفاصيل الرحلة
                         if (bookedFlight != null) {
                             Text(
                                 "✈️ ${bookedFlight.origin} → ${bookedFlight.destination}",
-                                fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.Black
+                                fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White
                             )
                             Spacer(Modifier.height(4.dp))
                             Row(
@@ -222,26 +223,26 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                                 horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("الرحلة", fontSize = 11.sp, color = Color.DarkGray)
-                                    Text(bookedFlight.flightNumber, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text("الرحلة", fontSize = 11.sp, color = Color.Gray)
+                                    Text(bookedFlight.flightNumber, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
                                 }
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("الإقلاع", fontSize = 11.sp, color = Color.DarkGray)
-                                    Text(bookedFlight.departureTime, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text("الإقلاع", fontSize = 11.sp, color = Color.Gray)
+                                    Text(bookedFlight.departureTime, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
                                 }
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("الفئة", fontSize = 11.sp, color = Color.DarkGray)
-                                    Text(bookedFlight.fareFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text("الفئة", fontSize = 11.sp, color = Color.Gray)
+                                    // عرض اسم الفئة العربية الدقيق المرتبط بالكود
+                                    Text(FareFamilies.getArabicNameForCode(bookedFlight.fareFamily), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
                                 }
                             }
                             Spacer(Modifier.height(12.dp))
-                            HorizontalDivider(color = Color.Black.copy(alpha = 0.2f), thickness = 1.dp)
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.2f), thickness = 1.dp)
                             Spacer(Modifier.height(12.dp))
                         }
 
-                        // PNR و SADAD
-                        Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
-                        Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
+                        Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White)
+                        Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White)
                         
                         Spacer(Modifier.height(12.dp))
                         Button(
@@ -258,15 +259,17 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ═══ زر بدء/إيقاف البحث ═══
+            // ═══ زر بدء/إيقاف البحث (لا يتفعل إلا بجاهزية Hyper + JWT + sid) ═══
             Button(
                 onClick = {
                     if (autoLoopActive) viewModel.stopAutoLoop()
                     else viewModel.startAutoLoop()
                 },
+                enabled = allReady || autoLoopActive,
                 modifier = Modifier.fillMaxWidth().height(64.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (autoLoopActive) Color(0xFFD32F2F) else Color(0xFF9C27B0)
+                    containerColor = if (autoLoopActive) Color(0xFFD32F2F) else Color(0xFF1976D2),
+                    disabledContainerColor = Color.Gray
                 )
             ) {
                 Text(
