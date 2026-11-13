@@ -7,19 +7,17 @@ import io.github.sardanioss.httpcloak.SessionConfig
 import io.github.sardanioss.httpcloak.Body
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 class HttpCloakClient {
 
     companion object {
         private const val TAG = "HttpCloakClient"
-
-        // ⚠️ Windows Chrome/131 — يطابق HyperSessionManager.DEFAULT_UA
         const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/131.0.0.0 Safari/537.36"
     }
 
-    // ═══════ جلسة واحدة دائمة — تحل مشكلة فقدان الكوكيز ═══════
     private var session: Session? = null
     private var sessionCreatedAt: Long = 0L
 
@@ -31,10 +29,10 @@ class HttpCloakClient {
             try { existing?.close() } catch (_: Exception) {}
             val newS = Session(
                 SessionConfig(
-                    // ✅ Preset صحيح — Windows (لأن Hyper يوقّع Windows)
                     preset = Presets.CHROME_LATEST_WINDOWS,
-                    timeout = 30,
-                    httpVersion = "h2"
+                    timeout = 25,              // ← مهلة داخل المكتبة
+                    httpVersion = "auto",      // ✅ بدل "h2" الإجباري
+                    retry = 1                  // ✅ إعادة محاولة واحدة
                 )
             )
             session = newS
@@ -42,7 +40,7 @@ class HttpCloakClient {
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HTTPCLOAK,
                 title = "🆕 Session جديدة (Windows)",
-                body = "preset=CHROME_LATEST_WINDOWS\ntimeout=30s\nhttpVersion=h2\nUA=$UA"
+                body = "preset=CHROME_LATEST_WINDOWS\ntimeout=25s\nhttpVersion=auto\nretry=1\nUA=$UA"
             ))
             return newS
         }
@@ -53,27 +51,22 @@ class HttpCloakClient {
         try { session?.close() } catch (_: Exception) {}
         session = null
         sessionCreatedAt = 0
-        DebugBus.emit(DebugEntry(
-            source = DebugSource.HTTPCLOAK,
-            title = "🔄 Session أُعيد ضبطها",
-            body = "بداية نظيفة"
-        ))
     }
 
-    suspend fun get(
-        url: String,
-        headers: Map<String, String> = emptyMap()
-    ): HttpCloakResponse = withContext(Dispatchers.IO) {
-        doRequest("GET", url, headers, null)
-    }
+    suspend fun get(url: String, headers: Map<String, String> = emptyMap()): HttpCloakResponse =
+        withContext(Dispatchers.IO) {
+            // ✅ تغليف بـ withTimeout لضمان عدم التعليق
+            withTimeout(35_000L) {
+                doRequest("GET", url, headers, null)
+            }
+        }
 
-    suspend fun post(
-        url: String,
-        headers: Map<String, String> = emptyMap(),
-        body: Body? = null
-    ): HttpCloakResponse = withContext(Dispatchers.IO) {
-        doRequest("POST", url, headers, body)
-    }
+    suspend fun post(url: String, headers: Map<String, String> = emptyMap(), body: Body? = null): HttpCloakResponse =
+        withContext(Dispatchers.IO) {
+            withTimeout(35_000L) {
+                doRequest("POST", url, headers, body)
+            }
+        }
 
     private suspend fun doRequest(
         method: String,
@@ -89,16 +82,11 @@ class HttpCloakClient {
             appendLine("── headers (${headersIn.size}) ──")
             headersIn.forEach { (k, v) -> appendLine("  $k: ${v.take(350)}") }
             appendLine("── body ──")
-            if (body != null) appendLine("  type=${body::class.simpleName}")
-            else appendLine("  (null)")
+            if (body != null) appendLine("  type=${body::class.simpleName}") else appendLine("  (null)")
         }
 
         try {
-            val resp = if (method == "GET") {
-                sess.get(url, headersIn)
-            } else {
-                sess.post(url, body, headersIn)
-            }
+            val resp = if (method == "GET") sess.get(url, headersIn) else sess.post(url, body, headersIn)
             val dt = System.currentTimeMillis() - t0
             val respBodyStr = resp.text
 
@@ -111,35 +99,19 @@ class HttpCloakClient {
                 headers = reqSnapshot,
                 body = respBodyStr.take(15000)
             ))
-
-            Log.d(TAG, "$method $url → ${resp.statusCode} (${respBodyStr.length}c)")
-
-            return HttpCloakResponse(
-                statusCode = resp.statusCode,
-                text = respBodyStr,
-                headers = ""
-            )
+            return HttpCloakResponse(resp.statusCode, respBodyStr, "")
         } catch (e: Exception) {
             val dt = System.currentTimeMillis() - t0
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HTTPCLOAK,
                 method = method,
                 url = url,
-                title = "❌ $method ${url.takeLast(55)} → exception (${dt}ms)",
-                body = buildString {
-                    appendLine(reqSnapshot)
-                    appendLine("── EXCEPTION ──")
-                    appendLine("${e.javaClass.simpleName}: ${e.message}")
-                    appendLine(e.stackTraceToString().take(3000))
-                }
+                title = "❌ $method ${url.takeLast(55)} → ${e.javaClass.simpleName} (${dt}ms)",
+                body = "$reqSnapshot\n── EXCEPTION ──\n${e.javaClass.simpleName}: ${e.message}"
             ))
             throw e
         }
     }
 }
 
-data class HttpCloakResponse(
-    val statusCode: Int,
-    val text: String,
-    val headers: String = ""
-)
+data class HttpCloakResponse(val statusCode: Int, val text: String, val headers: String = "")
