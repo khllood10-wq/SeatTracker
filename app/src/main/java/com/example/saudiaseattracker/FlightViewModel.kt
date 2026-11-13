@@ -44,9 +44,11 @@ data class FlightData(
     }
 }
 
+// 🆕 أضفنا departureTime
 data class FoundFlightDetails(
     val flightNumber: String, val date: String, val origin: String,
-    val destination: String, val price: Double, val fareFamily: String, val airBoundId: String
+    val destination: String, val departureTime: String, val price: Double,
+    val fareFamily: String, val airBoundId: String
 )
 
 enum class StepStatus { PENDING, RUNNING, SUCCESS, FAILED, SKIPPED }
@@ -62,6 +64,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private var autoLoopJob: Job? = null
     private var timerJob: Job? = null
+
+    // 🆕 حفظ تفاصيل الرحلة التي تم حجزها بنجاح
+    var lastBookedFlight by mutableStateOf<FoundFlightDetails?>(null)
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -119,14 +124,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _sessionTimerSeconds = MutableStateFlow(0L)
     val sessionTimerSeconds: StateFlow<Long> = _sessionTimerSeconds
 
-    // 🆕 مؤشر JWT
     private val _jwtReady = MutableStateFlow(false)
     val jwtReady: StateFlow<Boolean> = _jwtReady
 
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
     fun isSidReady(): Boolean = activeSaaSessionId.isNotBlank()
-
     fun hasToken(): Boolean = hyperSession.hasFreshToken() && activeSaaSessionId.isNotBlank() && activeJwt.isNotBlank()
 
     init {
@@ -182,6 +185,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _steps.value = _steps.value.map { it.copy(status = StepStatus.PENDING, detail = "") }
         _finalPnr.value = ""
         _finalSadad.value = ""
+        lastBookedFlight = null
         _searchLogs.value = emptyList()
         _searchResponseText.value = "بدء البحث..."
     }
@@ -371,7 +375,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
             setStep("order", StepStatus.RUNNING)
             val ord = createOrder(cid) ?: run { setStep("order", StepStatus.FAILED); return false }
-            _finalPnr.value = ord.first; _finalSadad.value = ord.second
+            
+            _finalPnr.value = ord.first
+            _finalSadad.value = ord.second
+            lastBookedFlight = flight // 🆕 حفظ الرحلة عشان تظهر في الواجهة
+            
             setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}")
 
             if (monitoringMode) { setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط"); return true }
@@ -463,6 +471,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             date = flightData.date,
                             origin = flight.origin,
                             destination = flight.destination,
+                            departureTime = flight.departTime, // 🆕
                             price = fare.price,
                             fareFamily = fare.code,
                             airBoundId = fare.airBoundId
