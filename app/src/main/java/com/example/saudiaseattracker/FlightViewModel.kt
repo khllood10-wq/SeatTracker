@@ -123,11 +123,28 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _sessionStatus = MutableStateFlow("⏳ جاري تجهيز جلسة Hyper...")
     val sessionStatus: StateFlow<String> = _sessionStatus
 
+    // ════════════ Debug ════════════
+    private val _debugEntries = MutableStateFlow<List<DebugEntry>>(emptyList())
+    val debugEntries: StateFlow<List<DebugEntry>> = _debugEntries
+
+    fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
+    fun clearDebugLog() { _debugEntries.value = emptyList() }
+
     init {
+        // 1) جامع كل أحداث التشخيص
+        viewModelScope.launch {
+            DebugBus.flow.collect { entry ->
+                val curr = _debugEntries.value.toMutableList()
+                curr.add(0, entry)
+                _debugEntries.value = curr.take(300)
+            }
+        }
+
+        // 2) تهيئة Hyper — في IO لتجنب تعليق الـ UI
         viewModelScope.launch {
             try {
                 addLog("🔄 تهيئة جلسة Hyper...")
-                hyperSession.ensureFreshToken()
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 markSessionReady()
                 addLog("✅ جلسة Hyper جاهزة")
             } catch (e: Exception) {
@@ -136,6 +153,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
+
+    fun hasToken(): Boolean = hyperSession.hasFreshToken()
 
     fun markSessionReady() {
         _sessionReady.value = hyperSession.hasFreshToken()
@@ -172,7 +191,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 markSessionPreparing()
-                hyperSession.ensureFreshToken(forceRenew = true)
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                 markSessionReady()
                 addLog("✅ تم تجديد reese84 يدوياً")
             } catch (e: Exception) {
@@ -182,97 +201,130 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun captureSessionViaHttpCloak(): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                val reeseCookie = hyperSession.getCookieHeader() ?: run {
-                    addLog("❌ لا يوجد reese84 من Hyper")
-                    return@withContext false
-                }
-                val reeseValue = reeseCookie.removePrefix("reese84=").trim()
-
-                addLog("🔄 اختبار httpcloak على موقع السعودية...")
-                
-                // 👇 بدون مؤقت
-                val pageResp = httpCloakClient.get(
-                    url = "https://www.saudia.com/ar-SA",
-                    headers = mapOf(
-                        "Cookie" to reeseCookie,
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
-                    )
-                )
-
-                addLog("📄 GET /ar-SA → HTTP ${pageResp.statusCode}, Length: ${pageResp.text.length}")
-
-                val isImpervaBlock = pageResp.text.contains("_Incapsula_Resource") ||
-                        pageResp.text.contains("Pardon Our Interruption") ||
-                        pageResp.text.contains("Incapsula incident ID")
-
-                if (isImpervaBlock) {
-                    addLog("❌ لا زال Imperva يحظر httpcloak")
-                    addLog("📋 Body: ${pageResp.text.take(300)}")
-                    return@withContext false
-                }
-
-                if (pageResp.statusCode != 200) {
-                    addLog("⚠️ HTTP ${pageResp.statusCode} - غير متوقع")
-                    return@withContext false
-                }
-
-                addLog("🎉 httpcloak تجاوز Imperva بنجاح!")
-
-                addLog("🔄 محاولة token/initialization...")
-                
-                // 👇 بدون مؤقت
-                val initResp = httpCloakClient.post(
-                    url = "https://dapi.saudia.com/session/auth/web/token/initialization",
-                    headers = mapOf(
-                        "Cookie" to reeseCookie,
-                        "x-d-token" to reeseValue,
-                        "Content-Type" to "application/x-www-form-urlencoded",
-                        "Accept" to "application/json",
-                        "platform" to "Web",
-                        "version" to "27.2",
-                        "Origin" to "https://www.saudia.com",
-                        "Referer" to "https://www.saudia.com/ar-SA"
-                    ),
-                    body = Body.form(emptyMap())
-                )
-
-                addLog("📄 POST /token/init → HTTP ${initResp.statusCode}")
-                addLog("📋 Response: ${initResp.text.take(500)}")
-
-                if (initResp.statusCode == 200) {
-                    try {
-                        val json = JSONObject(initResp.text)
-                        val token = json.optString("access_token", json.optString("token", ""))
-                        val sessionId = json.optString("session_id", "")
-
-                        if (token.isNotBlank()) {
-                            activeJwt = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                            if (sessionId.isNotBlank()) activeSaaSessionId = sessionId
-                            activeXdToken = reeseValue
-                            activeCookie = reeseCookie
-
-                            addLog("🎉 نجحنا! JWT: ${activeJwt.take(30)}...")
-                            addLog("🆔 saa-session-id: ${if (sessionId.isNotBlank()) sessionId else "❌ فارغ"}")
-                            return@withContext true
-                        } else {
-                            addLog("⚠️ 200 لكن بدون access_token في الرد")
-                        }
-                    } catch (e: Exception) {
-                        addLog("⚠️ فشل تحليل JSON: ${e.message}")
-                    }
-                }
-
-                addLog("⚠️ token/initialization لم يعطنا JWT - سنحتاج Replay Payload")
-                return@withContext false
-
-            } catch (e: Exception) {
-                addLog("❌ فشل httpcloak: ${e.javaClass.simpleName} - ${e.message}")
+    private suspend fun captureSessionViaHttpCloak(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val reeseCookie = hyperSession.getCookieHeader() ?: run {
+                addLog("❌ لا يوجد reese84 من Hyper")
+                pushDebug(DebugEntry(
+                    source = DebugSource.APP,
+                    title = "❌ لا يوجد reese84 من Hyper",
+                    body = "تحقق من نجاح ensureFreshToken() قبل هذه الخطوة"
+                ))
                 return@withContext false
             }
+            val reeseValue = reeseCookie.removePrefix("reese84=").trim()
+
+            addLog("🔄 اختبار httpcloak على موقع السعودية...")
+
+            val pageResp = httpCloakClient.get(
+                url = "https://www.saudia.com/ar-SA",
+                headers = mapOf(
+                    "Cookie" to reeseCookie,
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
+                )
+            )
+
+            addLog("📄 GET /ar-SA → HTTP ${pageResp.statusCode}, Length: ${pageResp.text.length}")
+            pushDebug(DebugEntry(
+                source = DebugSource.HTTPCLOAK,
+                method = "GET",
+                url = "https://www.saudia.com/ar-SA",
+                statusCode = pageResp.statusCode,
+                title = "GET /ar-SA → ${pageResp.statusCode} (${pageResp.text.length}c)",
+                headers = "Cookie: reese84=<${reeseValue.length}c>\nAccept: text/html...",
+                body = pageResp.text.take(8000)
+            ))
+
+            val isImpervaBlock = pageResp.text.contains("_Incapsula_Resource") ||
+                    pageResp.text.contains("Pardon Our Interruption") ||
+                    pageResp.text.contains("Incapsula incident ID")
+
+            if (isImpervaBlock) {
+                addLog("❌ لا زال Imperva يحظر httpcloak")
+                pushDebug(DebugEntry(
+                    source = DebugSource.HTTPCLOAK,
+                    title = "❌ Imperva block على /ar-SA",
+                    body = "body.preview=${pageResp.text.take(500)}"
+                ))
+                return@withContext false
+            }
+
+            if (pageResp.statusCode != 200) {
+                addLog("⚠️ HTTP ${pageResp.statusCode} - غير متوقع")
+                return@withContext false
+            }
+
+            addLog("🎉 httpcloak تجاوز Imperva بنجاح!")
+
+            addLog("🔄 محاولة token/initialization...")
+
+            val initResp = httpCloakClient.post(
+                url = "https://dapi.saudia.com/session/auth/web/token/initialization",
+                headers = mapOf(
+                    "Cookie" to reeseCookie,
+                    "x-d-token" to reeseValue,
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "Accept" to "application/json",
+                    "platform" to "Web",
+                    "version" to "27.2",
+                    "Origin" to "https://www.saudia.com",
+                    "Referer" to "https://www.saudia.com/ar-SA"
+                ),
+                body = Body.form(emptyMap())
+            )
+
+            addLog("📄 POST /token/init → HTTP ${initResp.statusCode}")
+            addLog("📋 Response: ${initResp.text.take(500)}")
+            pushDebug(DebugEntry(
+                source = DebugSource.HTTPCLOAK,
+                method = "POST",
+                url = "https://dapi.saudia.com/session/auth/web/token/initialization",
+                statusCode = initResp.statusCode,
+                title = "POST /token/init → ${initResp.statusCode} (${initResp.text.length}c)",
+                headers = "Cookie: reese84=<${reeseValue.length}c>\nx-d-token: <${reeseValue.length}c>\nBody: <empty form>",
+                body = initResp.text.take(8000)
+            ))
+
+            if (initResp.statusCode == 200) {
+                try {
+                    val json = JSONObject(initResp.text)
+                    val token = json.optString("access_token", json.optString("token", ""))
+                    val sessionId = json.optString("session_id", "")
+
+                    if (token.isNotBlank()) {
+                        activeJwt = if (token.startsWith("Bearer ")) token else "Bearer $token"
+                        if (sessionId.isNotBlank()) activeSaaSessionId = sessionId
+                        activeXdToken = reeseValue
+                        activeCookie = reeseCookie
+
+                        addLog("🎉 نجحنا! JWT: ${activeJwt.take(30)}...")
+                        addLog("🆔 saa-session-id: ${if (sessionId.isNotBlank()) sessionId else "❌ فارغ"}")
+                        pushDebug(DebugEntry(
+                            source = DebugSource.APP,
+                            title = "🎉 JWT captured",
+                            body = "jwt.prefix=${activeJwt.take(60)}...\nsaa-session-id=$sessionId\nx-d-token.length=${activeXdToken.length}"
+                        ))
+                        return@withContext true
+                    } else {
+                        addLog("⚠️ 200 لكن بدون access_token في الرد")
+                    }
+                } catch (e: Exception) {
+                    addLog("⚠️ فشل تحليل JSON: ${e.message}")
+                }
+            }
+
+            addLog("⚠️ token/initialization لم يعطنا JWT - سنحتاج Replay Payload")
+            return@withContext false
+
+        } catch (e: Exception) {
+            addLog("❌ فشل httpcloak: ${e.javaClass.simpleName} - ${e.message}")
+            pushDebug(DebugEntry(
+                source = DebugSource.HTTPCLOAK,
+                title = "❌ استثناء في httpcloak",
+                body = "${e.javaClass.simpleName}: ${e.message}\n${e.stackTraceToString().take(2000)}"
+            ))
+            return@withContext false
         }
     }
 
@@ -331,7 +383,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                hyperSession.ensureFreshToken()
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 markSessionReady()
 
                 val captured = captureSessionViaHttpCloak()
@@ -383,6 +435,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setStep("payment", StepStatus.SUCCESS, "✅ SADAD جاهز — ادفع خلال 24 ساعة")
             } catch (e: Exception) {
                 addLog("❌ ${e.message}")
+                pushDebug(DebugEntry(
+                    source = DebugSource.APP,
+                    title = "❌ runFullBooking exception",
+                    body = "${e.javaClass.simpleName}: ${e.message}\n${e.stackTraceToString().take(2000)}"
+                ))
             } finally { _isRunning.value = false }
         }
     }
@@ -412,10 +469,38 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (resp.code() == 401 || resp.code() == 403) {
                     val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
                     addLog("🚨 ${resp.code()} Body: ${errBody.take(200)}")
+                    pushDebug(DebugEntry(
+                        source = DebugSource.SEARCH,
+                        method = "POST",
+                        url = "airsearch/search/air-bounds",
+                        statusCode = resp.code(),
+                        title = "🚨 بحث #$attempt فشل → ${resp.code()}",
+                        body = "═══ ERROR BODY (${errBody.length}c) ═══\n${errBody.take(8000)}"
+                    ))
                     return null
                 }
 
                 if (resp.isSuccessful) {
+                    // سجّل حجم الرد الكامل حتى لو لم نجد تطابق
+                    val rawBody = try {
+                        com.google.gson.Gson().toJson(resp.body())
+                    } catch (e: Exception) { "" }
+
+                    pushDebug(DebugEntry(
+                        source = DebugSource.SEARCH,
+                        method = "POST",
+                        url = "airsearch/search/air-bounds",
+                        statusCode = resp.code(),
+                        title = "🔍 بحث #$attempt → ${resp.code()} (body=${rawBody.length}c)",
+                        body = buildString {
+                            appendLine("═══ ITINERARIES (one-way, ${flightData.from}→${flightData.to} @ ${flightData.date}) ═══")
+                            appendLine("looking for flightNumber=${flightData.flightNumber}")
+                            appendLine()
+                            appendLine("═══ RESPONSE (${rawBody.length}c) ═══")
+                            appendLine(rawBody.take(10000))
+                        }
+                    ))
+
                     val g = resp.body()?.data?.airBoundGroups?.firstOrNull { gg ->
                         gg.boundDetails?.segments?.any {
                             it.flightId?.contains(flightData.flightNumber, true) == true
@@ -423,18 +508,34 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     val cheapest = g?.airBounds?.filter { it.status?.value != "soldOut" }
                         ?.minByOrNull { it.airOffer?.totalPrice?.value ?: Double.MAX_VALUE }
-                    if (cheapest != null) return FoundFlightDetails(
-                        flightData.flightNumber, flightData.date,
-                        g.boundDetails?.origin ?: flightData.from,
-                        g.boundDetails?.destination ?: flightData.to,
-                        (cheapest.airOffer?.totalPrice?.value ?: 0.0) / 100.0,
-                        cheapest.fareFamilyCode ?: "N/A",
-                        cheapest.airBoundId ?: ""
-                    )
+
+                    if (cheapest != null) {
+                        val found = FoundFlightDetails(
+                            flightData.flightNumber, flightData.date,
+                            g.boundDetails?.origin ?: flightData.from,
+                            g.boundDetails?.destination ?: flightData.to,
+                            (cheapest.airOffer?.totalPrice?.value ?: 0.0) / 100.0,
+                            cheapest.fareFamilyCode ?: "N/A",
+                            cheapest.airBoundId ?: ""
+                        )
+                        pushDebug(DebugEntry(
+                            source = DebugSource.APP,
+                            title = "✅ تم إيجاد الرحلة المطابقة",
+                            body = "flightNumber=${found.flightNumber}\n${found.origin} → ${found.destination}\nprice=${found.price} SAR\nfare=${found.fareFamily}\nairBoundId=${found.airBoundId}"
+                        ))
+                        return found
+                    }
                 } else {
                     addLog("❌ بحث ${attempt}: HTTP ${resp.code()}")
                 }
-            } catch (e: Exception) { addLog("❌ ${e.message}") }
+            } catch (e: Exception) {
+                addLog("❌ ${e.message}")
+                pushDebug(DebugEntry(
+                    source = DebugSource.SEARCH,
+                    title = "❌ بحث #$attempt exception",
+                    body = "${e.javaClass.simpleName}: ${e.message}"
+                ))
+            }
             delay(15_000)
         }
         return null
