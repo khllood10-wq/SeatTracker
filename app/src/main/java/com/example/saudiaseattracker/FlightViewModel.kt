@@ -71,14 +71,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var _consecutiveSilentBlocks = 0
     private var _totalSilentBlocksInSession = 0
 
-    // 🆕 Throttling — نافذة 5 دقائق
+    // 🆕 Throttling — نافذة 10 دقائق
     private val _requestTimestamps = mutableListOf<Long>()
-    private val THROTTLE_WINDOW_MS = 5 * 60_000L
-    private val THROTTLE_WARN_THRESHOLD = 40
-    private val THROTTLE_STOP_THRESHOLD = 55
-    private val THROTTLE_STOP_DURATION_MS = 30_000L
+    private val THROTTLE_WINDOW_MS = 10 * 60_000L        // 10 دقائق
+    private val THROTTLE_WARN_THRESHOLD = 25             // 25 طلب → تبطيء
+    private val THROTTLE_STOP_THRESHOLD = 40             // 40 طلب → توقف
+    private val THROTTLE_STOP_DURATION_MS = 15_000L      // 🆕 15 ثانية فقط
 
-    // 🆕 WakeLock + WifiLock للخلفية
+    // 🆕 WakeLock + WifiLock
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -197,7 +197,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 "SaudiaSeatTracker::SearchWakeLock"
             ).apply {
                 setReferenceCounted(false)
-                acquire(3 * 60 * 60 * 1000L) // 3 ساعات
+                acquire(3 * 60 * 60 * 1000L)
             }
             addLog("✅ WakeLock مُفعّل — المعالج لن ينام")
         } catch (e: Exception) {
@@ -234,46 +234,52 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 Throttling — حساب الفاصل الزمني الذكي
+    //  🆕 Throttling — نافذة 10 دقائق + توقف 15ث + تصفير فوري
     // ═══════════════════════════════════════════════════════════
     private suspend fun calculateThrottleDelay(): Long {
         val now = System.currentTimeMillis()
-        // احذف الطلبات القديمة (أكثر من 5 دقائق)
         _requestTimestamps.removeAll { it < now - THROTTLE_WINDOW_MS }
 
         val recentCount = _requestTimestamps.size
+        val oldestAge = if (_requestTimestamps.isNotEmpty())
+            (now - _requestTimestamps.first()) / 1000 else 0L
+
+        addLog("📊 Throttle: $recentCount طلب | أقدم: ${oldestAge}s")
 
         return when {
             recentCount < THROTTLE_WARN_THRESHOLD -> {
-                // سرعة كاملة: 3-5 ثوانٍ
+                // سرعة كاملة 3-5 ثوانٍ
                 Random.nextLong(3_000L, 5_000L)
             }
             recentCount < THROTTLE_STOP_THRESHOLD -> {
-                // تبطيء: 6-8 ثوانٍ
-                addLog("🐢 تبطيء تلقائي: $recentCount/${THROTTLE_STOP_THRESHOLD} طلب في 5 دقائق")
+                // تبطيء 6-8 ثوانٍ
+                addLog("🐢 تبطيء: $recentCount/${THROTTLE_STOP_THRESHOLD}")
                 _searchResponseText.value = buildString {
                     appendLine("🐢 تبطيء استباقي")
                     appendLine()
-                    appendLine("📊 الطلبات في آخر 5 دقائق: $recentCount/${THROTTLE_STOP_THRESHOLD}")
-                    appendLine("⏱️ زيادة الفاصل إلى 6-8 ثوانٍ")
+                    appendLine("📊 الطلبات في آخر 10 دقائق: $recentCount/${THROTTLE_STOP_THRESHOLD}")
+                    appendLine("⏱️ الفاصل الآن: 6-8 ثوانٍ")
+                    appendLine("💡 عند الوصول لـ ${THROTTLE_STOP_THRESHOLD} → توقف 15 ثانية")
                     appendLine()
-                    appendLine("✅ هذا يحميك من الحظر")
+                    appendLine("✅ يحميك من الحظر")
                 }
                 Random.nextLong(6_000L, 8_000L)
             }
             else -> {
-                // توقف استباقي: 30 ثانية
-                addLog("⏸️ توقف استباقي: $recentCount طلب في 5 دقائق")
+                // 🆕 توقف 15 ثانية + تصفير فوري
+                addLog("⏸️ توقف: $recentCount طلب — انتظار 15ث ثم تصفير")
                 _searchResponseText.value = buildString {
-                    appendLine("⏸️ توقف استباقي")
+                    appendLine("⏸️ توقف استباقي (${recentCount} طلب)")
                     appendLine()
-                    appendLine("📊 الطلبات في آخر 5 دقائق: $recentCount")
-                    appendLine("⏳ انتظار 30 ثانية لكسر النمط...")
+                    appendLine("📊 تجاوزت ${THROTTLE_STOP_THRESHOLD} طلب في 10 دقائق")
+                    appendLine("⏳ انتظار 15 ثانية لكسر النمط...")
+                    appendLine("🔄 ثم تصفير العداد — استئناف بسرعة كاملة")
                     appendLine()
                     appendLine("✅ هذا يحميك من الحظر قبل حدوثه")
                 }
-                delay(THROTTLE_STOP_DURATION_MS)
-                _requestTimestamps.clear()
+                delay(THROTTLE_STOP_DURATION_MS)   // 15 ثانية
+                _requestTimestamps.clear()          // 🆕 تصفير فوري
+                addLog("🔄 تصفير العداد — استئناف بسرعة كاملة")
                 Random.nextLong(3_000L, 5_000L)
             }
         }
@@ -362,7 +368,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _totalSilentBlocksInSession = 0
         _requestTimestamps.clear()
 
-        // 🆕 تفعيل WakeLock + WifiLock
         acquireWakeLocks()
 
         autoLoopJob = viewModelScope.launch {
@@ -441,7 +446,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         continue
                     }
 
-                    // 🆕 حساب الفاصل الزمني الذكي (Throttling)
                     val throttleDelay = calculateThrottleDelay()
 
                     attempt++
@@ -467,7 +471,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             delay(10000)
                         }
                     } else {
-                        // 🆕 انتظار Throttling (3-5s عادي، 6-8s تبطيء، 30s توقف)
                         delay(throttleDelay)
                     }
                 } catch (e: Exception) {
@@ -505,13 +508,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return false
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🛡️ الاستراتيجية المتدرجة (للحظر الصامت)
-    // ═══════════════════════════════════════════════════════════
     private suspend fun handleSilentBlock(attempt: Int): Boolean {
         _consecutiveSilentBlocks++
         _totalSilentBlocksInSession++
-
         val level = _consecutiveSilentBlocks
 
         when {
@@ -526,9 +525,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     appendLine("  2️⃣ تجديد JWT (WebView)")
                     appendLine("  3️⃣ استئناف البحث")
                     appendLine()
-                    appendLine("📊 الإحصائيات:")
-                    appendLine("   • المتتالي: $level")
-                    appendLine("   • الإجمالي: $_totalSilentBlocksInSession")
+                    appendLine("📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession")
                 }
                 addLog("🛡️ حظر صامت #1 — تجديد فوري")
                 return true
@@ -595,7 +592,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         setStep("search", StepStatus.RUNNING, "محاولة $attempt")
         _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
 
-        // 🆕 سجّل هذا الطلب في Throttling
         _requestTimestamps.add(System.currentTimeMillis())
 
         try {
@@ -644,17 +640,22 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val matchedFlightNumber = match?.first?.flightNumber
                 val matchedFareCode = match?.second?.code
 
-                // 🆕 عرض عداد Throttling
+                // 🆕 عداد Throttling — دائماً في السطر الأول
+                val nowMs = System.currentTimeMillis()
+                _requestTimestamps.removeAll { it < nowMs - THROTTLE_WINDOW_MS }
                 val recentCount = _requestTimestamps.size
-                val throttleStatus = when {
-                    recentCount < THROTTLE_WARN_THRESHOLD -> "✅ سرعة كاملة ($recentCount/${THROTTLE_WARN_THRESHOLD})"
-                    recentCount < THROTTLE_STOP_THRESHOLD -> "🐢 تبطيء ($recentCount/${THROTTLE_STOP_THRESHOLD})"
-                    else -> "⏸️ توقف استباقي ($recentCount)"
+                val counterStatus = when {
+                    recentCount < THROTTLE_WARN_THRESHOLD ->
+                        "🟢 $recentCount/${THROTTLE_WARN_THRESHOLD} طلب في 10د (سرعة كاملة)"
+                    recentCount < THROTTLE_STOP_THRESHOLD ->
+                        "🟡 $recentCount/${THROTTLE_STOP_THRESHOLD} طلب في 10د (تبطيء)"
+                    else ->
+                        "🔴 $recentCount/${THROTTLE_STOP_THRESHOLD} طلب في 10د (توقف)"
                 }
 
                 _searchResponseText.value = buildString {
+                    appendLine(counterStatus)
                     appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
-                    appendLine("$throttleStatus")
                     appendLine()
                     if (flights.isEmpty()) {
                         appendLine("⚠️ لم تُستخرج أي رحلة")
