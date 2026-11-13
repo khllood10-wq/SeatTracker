@@ -1,6 +1,7 @@
 package com.example.saudiaseattracker
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -10,9 +11,11 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -25,6 +28,10 @@ import com.example.saudiaseattracker.ui.theme.SaudiaSeatTrackerTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 🔥 إبقاء الشاشة مضاءة طوال فترة عمل التطبيق
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        
         setContent {
             SaudiaSeatTrackerTheme {
                 Surface(
@@ -46,6 +53,15 @@ fun AppNavigation() {
     val viewModel: FlightViewModel = viewModel()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDest = backStackEntry?.destination
+
+    // 🛡️ حماية إضافية: إبقاء الشاشة مضاءة على مستوى الـ Compose View أيضاً
+    val localView = LocalView.current
+    DisposableEffect(Unit) {
+        localView.keepScreenOn = true
+        onDispose {
+            // لا نزيلها هنا لأن Activity قد تبقى حية، لكننا نتركها آمنة
+        }
+    }
 
     val tabs = listOf(
         BottomTab(Screen.Home, Icons.Default.Home),
