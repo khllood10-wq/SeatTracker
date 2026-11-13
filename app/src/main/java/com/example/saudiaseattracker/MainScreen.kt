@@ -39,8 +39,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val debugEntries by viewModel.debugEntries.collectAsStateWithLifecycle()
 
     val clipboard = LocalClipboardManager.current
-
-    var needRefresh by remember { mutableStateOf(false) }
     var expandedDebugId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(Unit) {
@@ -50,167 +48,161 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
 
     val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+
+        if (!sessionReady) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Text("⚠️ لا جلسة Hyper — اضغط '🔄 تجديد الجلسة'", Modifier.padding(10.dp), fontSize = 12.sp)
+            }
+        }
+
+        // 🔄 تجديد جلسة Hyper (بدل WebView)
+        Button(
+            onClick = { viewModel.refreshSession() },
+            modifier = Modifier.fillMaxWidth().height(60.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFA726))
         ) {
-            Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("🔄 تجديد جلسة Hyper (reese84)", fontWeight = FontWeight.Bold)
+        }
 
-            if (!sessionReady) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Text("⚠️ لا جلسة — استخدم 'التقاط الجلسة'", Modifier.padding(10.dp), fontSize = 12.sp)
+        // البدء
+        Button(
+            onClick = { activity?.let { viewModel.runFullBooking(it) } },
+            enabled = !isRunning && sessionReady,
+            modifier = Modifier.fillMaxWidth().height(64.dp)
+        ) {
+            if (isRunning) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            else Text(
+                if (viewModel.monitoringMode) "👁️ بدء المراقبة" else "🚀 بدء الحجز",
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        // وضع المراقبة
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("👁️ وضع المراقبة", fontWeight = FontWeight.Bold)
+                    Text(if (viewModel.monitoringMode) "✅ يصل للدفع بدون إتمام" else "معطّل", fontSize = 11.sp)
                 }
+                Switch(viewModel.monitoringMode, { viewModel.monitoringMode = it }, enabled = !isRunning)
             }
+        }
 
-            // التقاط الجلسة (WebView) — fallback
-            Button(
-                onClick = { viewModel.markSessionPreparing(); needRefresh = true },
-                modifier = Modifier.fillMaxWidth().height(60.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFA726))
+        // اختبارات
+        OutlinedButton({ navController.navigate(Screen.GetTest.route) }, Modifier.fillMaxWidth()) {
+            Text("🧪 اختبار GET", fontSize = 12.sp)
+        }
+        OutlinedButton({ navController.navigate(Screen.TokenInitTester.route) }, Modifier.fillMaxWidth()) {
+            Text("🔬 اختبار token/init", fontSize = 12.sp)
+        }
+
+        // بيانات
+        OutlinedButton({ navController.navigate(Screen.Passenger.route) }, Modifier.fillMaxWidth()) {
+            Text("👤 ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}", fontSize = 12.sp)
+        }
+        OutlinedButton({ navController.navigate(Screen.Flight.route) }, Modifier.fillMaxWidth()) {
+            Text("✈️ ${viewModel.flightData.from} → ${viewModel.flightData.to}", fontSize = 12.sp)
+        }
+
+        // المراحل
+        if (steps.any { it.status != StepStatus.PENDING }) {
+            Text("المراحل:", fontWeight = FontWeight.Bold)
+            steps.forEach { s -> StepRow(s) }
+        }
+
+        // PNR/SADAD
+        if (pnr.isNotEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (paymentStatus == StepStatus.SUCCESS)
+                        Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
+                ),
+                border = BorderStroke(3.dp, Color(0xFF00C853))
             ) {
-                Text("🌐 التقاط الجلسة (WebView)", fontWeight = FontWeight.Bold)
-            }
-
-            // البدء
-            Button(
-                onClick = { activity?.let { viewModel.runFullBooking(it) } },
-                enabled = !isRunning && sessionReady,
-                modifier = Modifier.fillMaxWidth().height(64.dp)
-            ) {
-                if (isRunning) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                else Text(
-                    if (viewModel.monitoringMode) "👁️ بدء المراقبة" else "🚀 بدء الحجز",
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            // وضع المراقبة
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("👁️ وضع المراقبة", fontWeight = FontWeight.Bold)
-                        Text(if (viewModel.monitoringMode) "✅ يصل للدفع بدون إتمام" else "معطّل", fontSize = 11.sp)
-                    }
-                    Switch(viewModel.monitoringMode, { viewModel.monitoringMode = it }, enabled = !isRunning)
-                }
-            }
-
-            // اختبارات
-            OutlinedButton({ navController.navigate(Screen.GetTest.route) }, Modifier.fillMaxWidth()) {
-                Text("🧪 اختبار GET", fontSize = 12.sp)
-            }
-            OutlinedButton({ navController.navigate(Screen.TokenInitTester.route) }, Modifier.fillMaxWidth()) {
-                Text("🔬 اختبار token/init", fontSize = 12.sp)
-            }
-
-            // بيانات
-            OutlinedButton({ navController.navigate(Screen.Passenger.route) }, Modifier.fillMaxWidth()) {
-                Text("👤 ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}", fontSize = 12.sp)
-            }
-            OutlinedButton({ navController.navigate(Screen.Flight.route) }, Modifier.fillMaxWidth()) {
-                Text("✈️ ${viewModel.flightData.from} → ${viewModel.flightData.to}", fontSize = 12.sp)
-            }
-
-            // المراحل
-            if (steps.any { it.status != StepStatus.PENDING }) {
-                Text("المراحل:", fontWeight = FontWeight.Bold)
-                steps.forEach { s -> StepRow(s) }
-            }
-
-            // PNR/SADAD
-            if (pnr.isNotEmpty()) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (paymentStatus == StepStatus.SUCCESS)
-                            Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    border = BorderStroke(3.dp, Color(0xFF00C853))
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        if (sadad.isNotEmpty()) {
-                            Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Button({ clipboard.setText(AnnotatedString(sadad)) }, Modifier.fillMaxWidth()) {
-                                Text("📋 نسخ SADAD")
-                            }
+                Column(Modifier.padding(14.dp)) {
+                    Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    if (sadad.isNotEmpty()) {
+                        Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Button({ clipboard.setText(AnnotatedString(sadad)) }, Modifier.fillMaxWidth()) {
+                            Text("📋 نسخ SADAD")
                         }
                     }
-                }
-            }
-
-            // السجل القديم
-            if (logs.isNotEmpty()) {
-                Text("📝 السجل:", fontWeight = FontWeight.Bold)
-                Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-                    SelectionContainer {
-                        Column(Modifier.padding(10.dp)) {
-                            logs.take(20).forEach {
-                                Text(it, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ═══════════════ قسم Debug الجديد ═══════════════
-            if (debugEntries.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("🐞 Debug (${debugEntries.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(onClick = { viewModel.clearDebugLog() }) {
-                            Text("مسح", fontSize = 11.sp)
-                        }
-                        TextButton(onClick = {
-                            val all = debugEntries.joinToString("\n\n══════════════════\n\n") { e ->
-                                val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
-                                    .format(java.util.Date(e.timestamp))
-                                buildString {
-                                    appendLine("[${e.source.label}] $time  ${e.method} ${e.url}")
-                                    appendLine("STATUS: ${e.statusCode ?: "-"}")
-                                    appendLine("TITLE : ${e.title}")
-                                    if (e.headers.isNotBlank()) {
-                                        appendLine("HEADERS:")
-                                        appendLine(e.headers)
-                                    }
-                                    appendLine("BODY:")
-                                    appendLine(e.body)
-                                }
-                            }
-                            clipboard.setText(AnnotatedString(all))
-                        }) {
-                            Text("📋 نسخ الكل", fontSize = 11.sp)
-                        }
-                    }
-                }
-
-                debugEntries.take(50).forEach { entry ->
-                    DebugCard(
-                        entry = entry,
-                        expanded = expandedDebugId == entry.id,
-                        onToggle = {
-                            expandedDebugId = if (expandedDebugId == entry.id) null else entry.id
-                        }
-                    )
-                }
-                if (debugEntries.size > 50) {
-                    Text(
-                        "… يعرض 50 من ${debugEntries.size}. استخدم نسخ الكل للحصول على الجميع.",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
 
-        if (!sessionReady && needRefresh) {
-            SessionKeeper(viewModel = viewModel, onComplete = { needRefresh = false })
+        // السجل
+        if (logs.isNotEmpty()) {
+            Text("📝 السجل:", fontWeight = FontWeight.Bold)
+            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                SelectionContainer {
+                    Column(Modifier.padding(10.dp)) {
+                        logs.take(20).forEach {
+                            Text(it, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ═══════════════ قسم Debug ═══════════════
+        if (debugEntries.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🐞 Debug (${debugEntries.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { viewModel.clearDebugLog() }) {
+                        Text("مسح", fontSize = 11.sp)
+                    }
+                    TextButton(onClick = {
+                        val all = debugEntries.joinToString("\n\n══════════════════\n\n") { e ->
+                            val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                                .format(java.util.Date(e.timestamp))
+                            buildString {
+                                appendLine("[${e.source.label}] $time  ${e.method} ${e.url}")
+                                appendLine("STATUS: ${e.statusCode ?: "-"}")
+                                appendLine("TITLE : ${e.title}")
+                                if (e.headers.isNotBlank()) {
+                                    appendLine("HEADERS:")
+                                    appendLine(e.headers)
+                                }
+                                appendLine("BODY:")
+                                appendLine(e.body)
+                            }
+                        }
+                        clipboard.setText(AnnotatedString(all))
+                    }) {
+                        Text("📋 نسخ الكل", fontSize = 11.sp)
+                    }
+                }
+            }
+
+            debugEntries.take(50).forEach { entry ->
+                DebugCard(
+                    entry = entry,
+                    expanded = expandedDebugId == entry.id,
+                    onToggle = {
+                        expandedDebugId = if (expandedDebugId == entry.id) null else entry.id
+                    }
+                )
+            }
+            if (debugEntries.size > 50) {
+                Text(
+                    "… يعرض 50 من ${debugEntries.size}. استخدم نسخ الكل.",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
