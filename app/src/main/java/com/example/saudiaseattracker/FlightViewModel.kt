@@ -186,6 +186,55 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
+    //  🧪 اختبار httpcloak (المسار السابق)
+    // ═══════════════════════════════════════════════════════════
+    fun testHttpCloak() {
+        viewModelScope.launch {
+            try {
+                addLog("🧪 اختبار httpcloak...")
+                pushDebug(DebugEntry(
+                    source = DebugSource.APP,
+                    title = "═══ 🧪 اختبار httpcloak بدأ ═══",
+                    body = "الخطوات:\n1. تأكيد reese84\n2. resetSession\n3. GET /ar-SA × 3"
+                ))
+
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
+                val reeseCookie = hyperSession.getCookieHeader() ?: run {
+                    addLog("❌ لا reese84"); return@launch
+                }
+                addLog("✅ reese84: ${reeseCookie.take(40)}... (${reeseCookie.length}c)")
+
+                val httpCloak = HttpCloakClient()
+                httpCloak.resetSession()
+                delay(500)
+
+                repeat(3) { i ->
+                    val resp = httpCloak.get(
+                        url = "https://www.saudia.com/ar-SA",
+                        headers = buildDirectHeaders(
+                            cookie = reeseCookie,
+                            referer = "https://www.saudia.com/",
+                            secFetchDest = "document",
+                            secFetchMode = "navigate"
+                        )
+                    )
+                    val blocked = resp.text.contains("Pardon Our Interruption") ||
+                            resp.text.contains("_Incapsula_Resource")
+                    addLog("GET #${i + 1}: HTTP ${resp.statusCode}, len=${resp.text.length}, blocked=$blocked")
+                    if (!blocked && resp.statusCode == 200) {
+                        addLog("🎉 httpcloak يعمل!")
+                        return@launch
+                    }
+                    if (i < 2) delay(2000)
+                }
+                addLog("❌ 3 محاولات فاشلة")
+            } catch (e: Exception) {
+                addLog("❌ ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
     //  🎯 الاختبار الحاسم: reese84 مباشرة على dapi.saudia.com
     // ═══════════════════════════════════════════════════════════
     fun testDirectApi() {
@@ -212,7 +261,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 activeCookie = reeseCookie
 
                 // ═══════════ اختبار 1: /airsearch مباشرة ═══════════
-                addLog("═" * 40)
+                addLog("═".repeat(40))
                 addLog("▶️ اختبار 1: /airsearch مع reese84 فقط")
                 val searchResult1 = tryDirectSearch(reeseCookie, label = "1-reese-only")
 
@@ -231,7 +280,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 // ═══════════ اختبار 2: /token/init فارغ ═══════════
                 delay(2000)
-                addLog("═" * 40)
+                addLog("═".repeat(40))
                 addLog("▶️ اختبار 2: /token/init فارغ")
 
                 val initHeaders = buildDirectHeaders(
@@ -298,7 +347,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 // ═══════════ اختبار 3: حل تحدٍّ لـ dapi منفصلاً ═══════════
                 delay(2000)
-                addLog("═" * 40)
+                addLog("═".repeat(40))
                 addLog("▶️ اختبار 3: حل تحدٍّ لـ dapi.saudia.com منفصلاً عبر Hyper")
 
                 val dapiReese = withContext(Dispatchers.IO) {
@@ -364,7 +413,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("❌ فشل حل تحدٍّ dapi (لا HTML أو لا سكريبت)")
                 }
 
-                addLog("═" * 40)
+                addLog("═".repeat(40))
                 addLog("📊 جميع الاختبارات فشلت — راجع Debug للتفاصيل")
 
             } catch (e: Exception) {
@@ -421,7 +470,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // helper: headers للاختبار المباشر
     private fun buildDirectHeaders(
         cookie: String,
         referer: String,
@@ -447,7 +495,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  runFullBooking — يستخدم reese84 مباشرة (بدون httpcloak)
+    //  runFullBooking — يستخدم reese84 مباشرة
     // ═══════════════════════════════════════════════════════════
     fun runFullBooking(activity: android.app.Activity) {
         if (_isRunning.value) return
