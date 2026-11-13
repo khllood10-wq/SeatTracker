@@ -44,7 +44,6 @@ data class FlightData(
     }
 }
 
-// 🆕 أضفنا departureTime
 data class FoundFlightDetails(
     val flightNumber: String, val date: String, val origin: String,
     val destination: String, val departureTime: String, val price: Double,
@@ -63,9 +62,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var _sessionExpired = false
 
     private var autoLoopJob: Job? = null
-    private var timerJob: Job? = null
 
-    // 🆕 حفظ تفاصيل الرحلة التي تم حجزها بنجاح
     var lastBookedFlight by mutableStateOf<FoundFlightDetails?>(null)
 
     private val hyperSession: HyperSessionManager by lazy {
@@ -140,6 +137,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _debugEntries.value = curr.take(300)
             }
         }
+        
+        // ⏱️ عداد الجلسة يعمل تلقائياً طوال عمر التطبيق (بغض النظر عن البحث)
+        viewModelScope.launch {
+            while (isActive) {
+                val remaining = ((hyperSession.expiryAt() - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+                _sessionTimerSeconds.value = remaining
+                delay(1000)
+            }
+        }
+
         viewModelScope.launch {
             try {
                 addLog("🔄 تهيئة جلسة Hyper...")
@@ -226,18 +233,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _autoCaptureMode.value = false
     }
 
-    private fun startSessionTimer() {
-        timerJob?.cancel()
-        timerJob = viewModelScope.launch {
-            while (isActive && _autoLoopActive.value) {
-                val remaining = ((hyperSession.expiryAt() - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
-                _sessionTimerSeconds.value = remaining
-                delay(1000)
-            }
-            _sessionTimerSeconds.value = 0
-        }
-    }
-
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
         _autoLoopActive.value = true
@@ -255,8 +250,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("❌ فشل تجديد البداية: ${e.message}")
             }
 
-            startSessionTimer()
-
             while (isActive && _autoLoopActive.value) {
                 try {
                     val timerExpired = _sessionTimerSeconds.value <= 0L && hyperSession.expiryAt() > 0L
@@ -265,7 +258,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     if (needRenew) {
                         val reason = when {
                             _sessionExpired -> "🚨 401/403 قبل العداد"
-                            timerExpired -> "⏰ انتهى عداد 13 دقيقة"
+                            timerExpired -> "⏰ انتهى عداد الجلسة"
                             activeSaaSessionId.isBlank() -> "⚠️ sid مفقود"
                             activeJwt.isBlank() -> "⚠️ JWT مفقود"
                             else -> "⚠️ reese84 منتهي"
@@ -292,7 +285,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             continue
                         }
 
-                        addLog("✅ الجلسة جُددت — استئناف البحث (عداد جديد)")
+                        addLog("✅ الجلسة جُددت — استئناف البحث")
                         markSessionReady()
                         continue
                     }
@@ -327,18 +320,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             _autoLoopActive.value = false
-            _sessionTimerSeconds.value = 0
             addLog("⏹️ توقف البحث")
         }
     }
 
     fun stopAutoLoop() {
         autoLoopJob?.cancel(); autoLoopJob = null
-        timerJob?.cancel(); timerJob = null
         _autoLoopActive.value = false
         _needsWebViewRefresh.value = false
         _autoCaptureMode.value = false
-        _sessionTimerSeconds.value = 0
         addLog("⏹️ تم الإيقاف يدوياً")
     }
 
@@ -378,7 +368,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             
             _finalPnr.value = ord.first
             _finalSadad.value = ord.second
-            lastBookedFlight = flight // 🆕 حفظ الرحلة عشان تظهر في الواجهة
+            lastBookedFlight = flight
             
             setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}")
 
@@ -471,7 +461,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             date = flightData.date,
                             origin = flight.origin,
                             destination = flight.destination,
-                            departureTime = flight.departTime, // 🆕
+                            departureTime = flight.departTime,
                             price = fare.price,
                             fareFamily = fare.code,
                             airBoundId = fare.airBoundId
