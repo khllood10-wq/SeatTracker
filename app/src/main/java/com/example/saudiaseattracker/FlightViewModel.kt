@@ -1,7 +1,6 @@
 package com.example.saudiaseattracker
 
 import android.app.Application
-import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -59,7 +58,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
-    private var _sessionExpired = false  // يُفعّل عند 401/403
+    private var _sessionExpired = false
 
     private var autoLoopJob: Job? = null
     private var timerJob: Job? = null
@@ -117,13 +116,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _autoCaptureMode = MutableStateFlow(false)
     val autoCaptureMode: StateFlow<Boolean> = _autoCaptureMode
 
-    // 🆕 عداد 13 دقيقة (بالميللي ثانية، يُحسب من expiryAt)
     private val _sessionTimerSeconds = MutableStateFlow(0L)
     val sessionTimerSeconds: StateFlow<Long> = _sessionTimerSeconds
+
+    // 🆕 مؤشر JWT
+    private val _jwtReady = MutableStateFlow(false)
+    val jwtReady: StateFlow<Boolean> = _jwtReady
 
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
     fun isSidReady(): Boolean = activeSaaSessionId.isNotBlank()
+
+    fun hasToken(): Boolean = hyperSession.hasFreshToken() && activeSaaSessionId.isNotBlank() && activeJwt.isNotBlank()
 
     init {
         viewModelScope.launch {
@@ -149,6 +153,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun markSessionReady() {
         _sessionReady.value = hyperSession.hasFreshToken() && activeSaaSessionId.isNotBlank()
+        _jwtReady.value = activeJwt.isNotBlank()
         _sessionStatus.value = when {
             !hyperSession.hasFreshToken() -> "❌ جلسة الهايبر غير مفعلة"
             hyperSession.hasFreshToken() && activeSaaSessionId.isBlank() -> "🔄 جاري تجديد الجلسة..."
@@ -159,6 +164,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun markSessionPreparing() {
         _sessionReady.value = false
+        _jwtReady.value = false
         _sessionStatus.value = "🔄 جاري تحديث الجلسة..."
     }
 
@@ -200,6 +206,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onWebViewJwtCaptured(jwt: String, sid: String) {
         activeJwt = jwt
+        _jwtReady.value = jwt.isNotBlank()
         if (sid.isNotBlank()) activeSaaSessionId = sid
         activeCookie = hyperSession.getCookieHeader()
         addLog("🎉 JWT محفوظ — sid: ${if (sid.isNotBlank()) "✅" else "❌"}")
@@ -215,9 +222,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _autoCaptureMode.value = false
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  ⏱️ عداد الجلسة — يقرأ من expiryAt كل ثانية
-    // ═══════════════════════════════════════════════════════════
     private fun startSessionTimer() {
         timerJob?.cancel()
         timerJob = viewModelScope.launch {
@@ -230,9 +234,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🔁 حلقة البحث — مع نظام تجديد مزدوج (13 دقيقة OR 401)
-    // ═══════════════════════════════════════════════════════════
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
         _autoLoopActive.value = true
@@ -243,7 +244,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             addLog("🔁 بدء البحث المستمر...")
             _searchResponseText.value = "بدء البحث..."
 
-            // 🆕 جدّد Hyper بدايةً لضمان عداد صحيح
             try {
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                 activeCookie = hyperSession.getCookieHeader()
@@ -251,37 +251,29 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("❌ فشل تجديد البداية: ${e.message}")
             }
 
-            // 🆕 ابدأ العداد
             startSessionTimer()
 
-            var attempt = 0
             while (isActive && _autoLoopActive.value) {
-                attempt++
                 try {
-                    // ═══ فحص الحاجة للتجديد (13د OR 401 OR sid مفقود) ═══
                     val timerExpired = _sessionTimerSeconds.value <= 0L && hyperSession.expiryAt() > 0L
-                    val needRenew = _sessionExpired
-                        || timerExpired
-                        || activeSaaSessionId.isBlank()
-                        || !hyperSession.hasFreshToken()
+                    val needRenew = _sessionExpired || timerExpired || activeSaaSessionId.isBlank() || activeJwt.isBlank() || !hyperSession.hasFreshToken()
 
                     if (needRenew) {
                         val reason = when {
                             _sessionExpired -> "🚨 401/403 قبل العداد"
                             timerExpired -> "⏰ انتهى عداد 13 دقيقة"
                             activeSaaSessionId.isBlank() -> "⚠️ sid مفقود"
+                            activeJwt.isBlank() -> "⚠️ JWT مفقود"
                             else -> "⚠️ reese84 منتهي"
                         }
                         addLog("⏸️ إيقاف البحث — تجديد الجلسة ($reason)")
                         markSessionPreparing()
                         _sessionExpired = false
 
-                        // 1) جدّد Hyper
                         withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                         activeCookie = hyperSession.getCookieHeader()
                         addLog("✅ reese84 جديد — فتح WebView في الخلفية...")
 
-                        // 2) افتح WebView في الخلفية
                         _needsWebViewRefresh.value = true
                         _autoCaptureMode.value = true
                         var waited = 0
@@ -290,7 +282,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             waited++
                         }
 
-                        // 3) تحقق من نجاح التقاط sid
                         if (!hyperSession.hasFreshToken() || activeSaaSessionId.isBlank()) {
                             addLog("⚠️ فشل التجديد — إعادة المحاولة...")
                             delay(5000)
@@ -299,22 +290,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                         addLog("✅ الجلسة جُددت — استئناف البحث (عداد جديد)")
                         markSessionReady()
-                        // العداد سيعيد القراءة تلقائياً من expiryAt الجديد
                         continue
                     }
 
-                    // ═══ محاولة بحث ═══
                     val flight = searchUntilFound(max = 1)
 
                     if (!_autoLoopActive.value) break
 
-                    // إذا 401 حصل، الجولة القادمة ستجدد
                     if (_sessionExpired) {
                         addLog("🚨 401 أثناء البحث — إعادة الجولة للتجديد")
                         continue
                     }
 
-                    // ═══ معالجة النتيجة ═══
                     if (flight != null) {
                         addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
                         clearResults()
@@ -351,9 +338,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("⏹️ تم الإيقاف يدوياً")
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  💳 تنفيذ الحجز
-    // ═══════════════════════════════════════════════════════════
     private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
         try {
             setStep("search", StepStatus.SUCCESS, "${flight.price} SAR")
@@ -402,9 +386,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🔍 البحث — يرجع null فوراً عند 401/403
-    // ═══════════════════════════════════════════════════════════
     private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
         var attempt = 0
         val wantedTime = FlightData.normalizeTime(flightData.departureTime)
