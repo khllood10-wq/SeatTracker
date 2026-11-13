@@ -13,8 +13,7 @@ class HttpCloakClient {
     companion object {
         private const val TAG = "HttpCloakClient"
 
-        // ⚠️ UA واحد متسق مع preset — Android Chrome 131
-        // (Hyper سيستخدم نفس UA حتى reese84 يُوقّع لبصمة أندرويد)
+        // ⚠️ UA موحّد مع HyperSessionManager
         const val UA = "Mozilla/5.0 (Linux; Android 14; SM-S918B) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/131.0.0.0 Mobile Safari/537.36"
@@ -32,8 +31,8 @@ class HttpCloakClient {
             try { existing?.close() } catch (_: Exception) {}
             val newS = Session(
                 SessionConfig(
-                    preset = Presets.CHROME_LATEST_ANDROID,  // ⚠️ إن لم تُوجد، استبدلها بـ CHROME_LATEST
-                    timeout = 30,                             // ← 30s بدل 10s
+                    preset = Presets.CHROME_LATEST_ANDROID,
+                    timeout = 30,
                     httpVersion = "h2"
                 )
             )
@@ -75,7 +74,8 @@ class HttpCloakClient {
         doRequest("POST", url, headers, body)
     }
 
-    private fun doRequest(
+    // ✅ suspend — يستدعي sess.post (suspend)
+    private suspend fun doRequest(
         method: String,
         url: String,
         headersIn: Map<String, String>,
@@ -84,20 +84,15 @@ class HttpCloakClient {
         val sess = getSession()
         val t0 = System.currentTimeMillis()
 
-        // لقطة كاملة للطلب — قبل إرساله
         val reqSnapshot = buildString {
             appendLine("═══ $method $url ═══")
             appendLine("── headers (${headersIn.size}) ──")
             headersIn.forEach { (k, v) ->
                 appendLine("  $k: ${v.take(350)}")
             }
-            if (body != null) {
-                appendLine("── body ──")
-                appendLine("  type=${body::class.simpleName}")
-            } else {
-                appendLine("── body ──")
-                appendLine("  (null)")
-            }
+            appendLine("── body ──")
+            if (body != null) appendLine("  type=${body::class.simpleName}")
+            else appendLine("  (null)")
         }
 
         try {
@@ -109,37 +104,13 @@ class HttpCloakClient {
             val dt = System.currentTimeMillis() - t0
             val respBodyStr = resp.text
 
-            // محاولة استخراج headers من الرد (قد لا تكون مدعومة)
-            val respHeadersStr = try {
-                @Suppress("UNCHECKED_CAST")
-                val h = (resp as? Any)?.let { r ->
-                    val m = r.javaClass.methods.find { it.name == "getHeaders" || it.name == "headers" }
-                    m?.invoke(r)?.toString() ?: "(no headers accessor)"
-                }
-                h ?: "(no headers)"
-            } catch (e: Exception) { "(headers unavailable: ${e.message})" }
-
-            val setCookieSnippet = try {
-                val cookies = Regex("(?i)set-cookie:\\s*([^\\r\\n]+)").findAll(respHeadersStr)
-                    .map { it.groupValues[1].take(200) }.toList()
-                if (cookies.isEmpty()) "(none detected in headers dump)"
-                else cookies.joinToString("\n  ")
-            } catch (e: Exception) { "(parse fail)" }
-
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HTTPCLOAK,
                 method = method,
                 url = url,
                 statusCode = resp.statusCode,
                 title = "$method ${url.takeLast(55)} → ${resp.statusCode} (${dt}ms, ${respBodyStr.length}c)",
-                headers = buildString {
-                    appendLine("── REQUEST ──")
-                    appendLine(reqSnapshot)
-                    appendLine("── RESPONSE HEADERS ──")
-                    appendLine(respHeadersStr.take(3000))
-                    appendLine("── SET-COOKIE ──")
-                    appendLine(setCookieSnippet)
-                },
+                headers = reqSnapshot,
                 body = respBodyStr.take(15000)
             ))
 
@@ -148,7 +119,7 @@ class HttpCloakClient {
             return HttpCloakResponse(
                 statusCode = resp.statusCode,
                 text = respBodyStr,
-                headers = respHeadersStr
+                headers = ""
             )
         } catch (e: Exception) {
             val dt = System.currentTimeMillis() - t0
