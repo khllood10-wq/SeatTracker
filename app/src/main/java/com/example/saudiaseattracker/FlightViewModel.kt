@@ -328,26 +328,65 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _autoLoopActive.value = false; _needsWebViewRefresh.value = false; _autoCaptureMode.value = false
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  💳 تنفيذ الحجز الكامل مع التحقق من السلة
+    // ═══════════════════════════════════════════════════════════
     private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
         try {
             setStep("search", StepStatus.SUCCESS, "${flight.price} SAR")
 
+            // ═══ 1. إنشاء السلة + التحقق ═══
             setStep("cart", StepStatus.RUNNING)
             val cid = createCart(flight.airBoundId) ?: run { setStep("cart", StepStatus.FAILED); return false }
-            setStep("cart", StepStatus.SUCCESS, cid)
 
+            // 🆕 فحص محتوى السلة (السعر + الفئة)
+            val cartDetails = fetchCartDetails(cid)
+            if (cartDetails != null) {
+                val actualPrice = cartDetails.first
+                val actualFare = cartDetails.second
+                val priceMismatch = kotlin.math.abs(actualPrice - flight.price) > 1.0
+                val fareMismatch = actualFare.isNotBlank() && actualFare != flight.fareFamily
+
+                if (priceMismatch || fareMismatch) {
+                    addLog("⚠️ تحذير: السلة مختلفة!")
+                    addLog("   طلبنا: ${flight.fareFamily} @ ${flight.price} SAR")
+                    addLog("   السلة: $actualFare @ $actualPrice SAR")
+                    _searchResponseText.value = buildString {
+                        appendLine("⚠️ تحذير: بيانات السلة مختلفة عن المطلوبة")
+                        appendLine()
+                        appendLine("🎯 المطلوب:")
+                        appendLine("   الفئة: ${flight.fareFamily}")
+                        appendLine("   السعر: ${flight.price} SAR")
+                        appendLine()
+                        appendLine("📦 الفعلي في السلة:")
+                        appendLine("   الفئة: ${actualFare.ifBlank { "غير محدد" }}")
+                        appendLine("   السعر: $actualPrice SAR")
+                        appendLine()
+                        appendLine("Cart ID: $cid")
+                    }
+                } else {
+                    addLog("✅ السلة مطابقة: $actualFare @ $actualPrice SAR")
+                }
+            }
+
+            setStep("cart", StepStatus.SUCCESS, "$cid | ${flight.fareFamily} @ ${flight.price} SAR")
+
+            // ═══ 2. المسافر ═══
             setStep("passenger", StepStatus.RUNNING)
             if (!confirmPassenger(cid)) { setStep("passenger", StepStatus.FAILED); return false }
             setStep("passenger", StepStatus.SUCCESS)
 
+            // ═══ 3. التفعيل ═══
             setStep("extension", StepStatus.RUNNING)
             if (!addExtension(cid)) { setStep("extension", StepStatus.FAILED); return false }
             setStep("extension", StepStatus.SUCCESS)
 
+            // ═══ 4. الاتصال ═══
             setStep("contacts", StepStatus.RUNNING)
             if (!saveContacts(cid)) { setStep("contacts", StepStatus.FAILED); return false }
             setStep("contacts", StepStatus.SUCCESS)
 
+            // ═══ 5. الطلب ═══
             setStep("order", StepStatus.RUNNING)
             val ord = createOrder(cid) ?: run { setStep("order", StepStatus.FAILED); return false }
             _finalPnr.value = ord.first; _finalSadad.value = ord.second
@@ -358,6 +397,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return true
             }
 
+            // ═══ 6. السداد ═══
             setStep("payment", StepStatus.RUNNING)
             if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); return false }
             setStep("payment", StepStatus.SUCCESS, "✅ SADAD: ${ord.second}")
@@ -610,6 +650,55 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             JSONObject(bodyStr).optJSONObject("data")?.optString("id")?.takeIf { it.isNotEmpty() } ?: JSONObject(bodyStr).optString("id")
         }
     } catch (e: Exception) { null }
+
+    /**
+     * 🆕 يجلب تفاصيل السلة للتحقق من السعر والفئة الفعلية
+     */
+    private suspend fun fetchCartDetails(cid: String): Pair<Double, String>? = try {
+        val r = RetrofitClient.api.getCartDetails(
+            cartId = cid,
+            headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails")
+        )
+        saveCookiesFromResponse(r)
+        if (!r.isSuccessful) {
+            addLog("⚠️ فحص السلة فشل: HTTP ${r.code()}")
+            null
+        } else {
+            val bodyStr = r.body()?.string() ?: ""
+            val json = JSONObject(bodyStr)
+
+            var price = 0.0
+            var fareFamily = ""
+
+            // محاولة 1: data.airBoundGroups[0].airBounds[0]
+            val data = json.optJSONObject("data")
+            val groups = data?.optJSONArray("airBoundGroups")
+            if (groups != null && groups.length() > 0) {
+                val group = groups.optJSONObject(0)
+                val airBounds = group?.optJSONArray("airBounds")
+                if (airBounds != null && airBounds.length() > 0) {
+                    val ab = airBounds.optJSONObject(0)
+                    fareFamily = ab?.optString("fareFamilyCode", "") ?: ""
+                    price = (ab?.optJSONObject("airOffer")
+                        ?.optJSONObject("totalPrice")
+                        ?.optDouble("value", 0.0) ?: 0.0) / 100.0
+                }
+            }
+
+            // محاولة 2: data.airOffer.totalPrice مباشرة
+            if (price == 0.0) {
+                price = (data?.optJSONObject("airOffer")
+                    ?.optJSONObject("totalPrice")
+                    ?.optDouble("value", 0.0) ?: 0.0) / 100.0
+            }
+
+            addLog("📦 السلة: fare=$fareFamily | price=$price")
+            Pair(price, fareFamily)
+        }
+    } catch (e: Exception) {
+        addLog("❌ فحص السلة خطأ: ${e.message}")
+        null
+    }
 
     private suspend fun confirmPassenger(cid: String): Boolean = try {
         val p = passengerData
