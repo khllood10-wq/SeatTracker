@@ -2,7 +2,6 @@ package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
-import android.os.Build
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -35,10 +34,10 @@ fun WebViewTokenCapture(
     var currentUrl by remember { mutableStateOf("") }
     var hookInstalled by remember { mutableStateOf(false) }
     var eventsSeen by remember { mutableIntStateOf(0) }
-    val captured = remember { mutableStateOf(false) }
+    var jwtReady by remember { mutableStateOf(false) }
+    var sidReady by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // حقن reese84 في CookieManager
     LaunchedEffect(Unit) {
         try {
             val cm = CookieManager.getInstance()
@@ -49,41 +48,48 @@ fun WebViewTokenCapture(
             cm.setCookie("https://dapi.saudia.com", cookieValue)
             cm.flush()
             status = "✅ reese84 محقون — تحميل الرئيسية..."
-            DebugBus.emit(DebugEntry(
-                source = DebugSource.APP,
-                title = "🍪 reese84 injected",
-                body = "len=${cookieValue.length}"
-            ))
         } catch (e: Exception) {
             status = "❌ ${e.message}"
         }
     }
 
-    // مهلة 40 ثانية
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(40_000)
-        if (!captured.value) {
-            status = "⚠️ انتهت 40 ثانية — JWT لم يُلتقط. راجع السجل."
-        }
-    }
-
     val bridge = remember {
         object {
+            var lastToken: String? = null
+            var lastSid: String? = null
+
             @JavascriptInterface
             fun onJwt(token: String, sid: String) {
-                if (captured.value) return
                 if (!token.startsWith("Bearer ") && !token.startsWith("eyJ")) return
-                captured.value = true
+                if (token == lastToken && sid == lastSid) return
+                lastToken = token
+                lastSid = sid
                 val clean = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                status = "🎉 JWT تم التقاطه!"
-                Log.d("WebViewCapture", "🎯 JWT len=${clean.length}")
+
+                if (!jwtReady) {
+                    jwtReady = true
+                    Log.d("WebViewCapture", "🎯 JWT len=${clean.length}")
+                }
+                if (sid.isNotBlank() && !sidReady) {
+                    sidReady = true
+                    Log.d("WebViewCapture", "🆔 sid: ${sid.take(8)}...")
+                }
+
+                status = when {
+                    jwtReady && sidReady -> "🎉 JWT + sid جاهزان!"
+                    jwtReady -> "🎉 JWT! (sid ⏳)"
+                    else -> "🎉 JWT تم التقاطه!"
+                }
+
                 DebugBus.emit(DebugEntry(
                     source = DebugSource.APP,
-                    title = "🎉 JWT captured from homepage!",
-                    body = "jwt.prefix=${clean.take(60)}...\nsid=$sid"
+                    title = "🎉 onJwt",
+                    body = "jwt.len=${clean.length}\nsid=${sid.ifBlank { "(empty)" }}\njwtReady=$jwtReady sidReady=$sidReady"
                 ))
+
                 onSuccess(clean, sid)
             }
+
             @JavascriptInterface
             fun onLog(msg: String) {
                 eventsSeen++
@@ -102,7 +108,8 @@ fun WebViewTokenCapture(
             Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(
                 containerColor = when {
-                    captured.value -> Color(0xFF00C853)
+                    jwtReady && sidReady -> Color(0xFF00C853)
+                    jwtReady -> Color(0xFF9C27B0)
                     eventsSeen > 3 -> Color(0xFF2196F3)
                     hookInstalled -> Color(0xFFFFA726)
                     else -> Color(0xFF607D8B)
@@ -115,8 +122,7 @@ fun WebViewTokenCapture(
                     Text(
                         "URL: ${currentUrl.takeLast(55)}",
                         color = Color.White.copy(alpha = 0.75f),
-                        fontSize = 9.sp,
-                        maxLines = 1
+                        fontSize = 9.sp, maxLines = 1
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -125,11 +131,15 @@ fun WebViewTokenCapture(
                         color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "📊 JS Events: $eventsSeen",
+                        "📊 JS: $eventsSeen",
                         color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
                     )
                     Text(
-                        if (captured.value) "✅ JWT" else "⏳ JWT",
+                        if (jwtReady) "✅ JWT" else "⏳ JWT",
+                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (sidReady) "✅ sid" else "⏳ sid",
                         color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
                     )
                 }
@@ -151,28 +161,22 @@ fun WebViewTokenCapture(
                     addJavascriptInterface(bridge, "SaudiaBridge")
                     webChromeClient = object : WebChromeClient() {}
 
-                    // ✅ استخدام WebViewCompat بدلاً من الاستدعاء المباشر
                     if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                         try {
                             WebViewCompat.addDocumentStartJavaScript(
-                                this,
-                                HOOK_JS,
+                                this, HOOK_JS,
                                 setOf("https://www.saudia.com", "https://saudia.com")
                             )
                             hookInstalled = true
-                            Log.d("WebViewCapture", "✅ WebViewCompat.addDocumentStartJavaScript installed")
                         } catch (e: Exception) {
-                            Log.e("WebViewCapture", "❌ addDocumentStartJavaScript failed: ${e.message}")
+                            Log.e("WebViewCapture", "❌ addDocumentStartJavaScript: ${e.message}")
                         }
-                    } else {
-                        Log.w("WebViewCapture", "⚠️ DOCUMENT_START_SCRIPT not supported, using onPageStarted fallback")
                     }
 
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(v: WebView?, url: String?, fav: Bitmap?) {
                             super.onPageStarted(v, url, fav)
                             currentUrl = url ?: ""
-                            // fallback إضافي في حال لم تُدعم الميزة
                             if (!hookInstalled) {
                                 v?.evaluateJavascript(HOOK_JS, null)
                                 hookInstalled = true
@@ -181,9 +185,7 @@ fun WebViewTokenCapture(
                         override fun onPageFinished(v: WebView?, url: String?) {
                             super.onPageFinished(v, url)
                             currentUrl = url ?: ""
-                            // إعادة التثبيت احتياطاً
                             v?.evaluateJavascript(HOOK_JS, null)
-                            v?.evaluateJavascript(SCAN_STORAGE_JS, null)
                         }
                     }
                     loadUrl("https://www.saudia.com/ar-SA")
@@ -197,7 +199,7 @@ fun WebViewTokenCapture(
         ) {
             Column(Modifier.padding(10.dp)) {
                 Text(
-                    "🔍 الـ hook مثبّت عبر WebViewCompat (يجب أن يلتقط /token/init تلقائياً).",
+                    "🔍 الـ hook مثبّت. JWT + sid يُلتقطان تلقائياً.",
                     fontSize = 11.sp
                 )
                 Spacer(Modifier.height(6.dp))
@@ -222,23 +224,47 @@ private const val HOOK_JS = """
     (function() {
         if (window.__hookInstalled) return;
         window.__hookInstalled = true;
+
+        function getSid() {
+            try {
+                return sessionStorage.getItem('saudia-session-id') || 
+                       localStorage.getItem('saudia-session-id') || '';
+            } catch(e) { return ''; }
+        }
+
+        function captureToken(token) {
+            var sid = getSid();
+            SaudiaBridge.onJwt(token, sid);
+            if (!sid) {
+                var attempts = 0;
+                var checkSid = setInterval(function() {
+                    attempts++;
+                    var s = getSid();
+                    if (s) {
+                        clearInterval(checkSid);
+                        SaudiaBridge.onJwt(token, s);
+                    }
+                    if (attempts > 20) clearInterval(checkSid);
+                }, 300);
+            }
+        }
+
         try {
             var origFetch = window.fetch;
             window.fetch = function(input, init) {
                 try {
                     var url = typeof input === 'string' ? input : (input && input.url) || '';
-                    SaudiaBridge.onLog('FETCH: ' + url.substring(0, 150));
-                    var isTok = url.indexOf('/token') > -1 || url.indexOf('/auth') > -1;
+                    var isTok = url.indexOf('/token/init') > -1 || url.indexOf('/token/initialization') > -1;
+                    if (isTok) SaudiaBridge.onLog('FETCH: ' + url.substring(0, 150));
                     var p = origFetch.apply(this, arguments);
                     if (isTok) {
                         p.then(function(r) {
                             r.clone().text().then(function(t) {
                                 try {
-                                    SaudiaBridge.onLog('RESP: ' + t.substring(0, 300));
                                     var d = JSON.parse(t);
-                                    if (d.access_token) SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
-                                    if (d.token && typeof d.token === 'string' && d.token.length > 50) {
-                                        SaudiaBridge.onJwt('Bearer ' + d.token, d.session_id || '');
+                                    SaudiaBridge.onLog('RESP: ' + t.substring(0, 300));
+                                    if (d.access_token) {
+                                        captureToken('Bearer ' + d.access_token);
                                     }
                                 } catch(e) {}
                             });
@@ -246,7 +272,6 @@ private const val HOOK_JS = """
                     }
                     return p;
                 } catch(e) {
-                    SaudiaBridge.onLog('FETCH ERR: ' + e);
                     return origFetch.apply(this, arguments);
                 }
             };
@@ -263,16 +288,15 @@ private const val HOOK_JS = """
                 try {
                     var s = this;
                     var url = s.__u || '';
-                    SaudiaBridge.onLog('XHR: ' + url.substring(0, 150));
-                    var isTok = url.indexOf('/token') > -1 || url.indexOf('/auth') > -1;
+                    var isTok = url.indexOf('/token/init') > -1 || url.indexOf('/token/initialization') > -1;
+                    if (isTok) SaudiaBridge.onLog('XHR: ' + url.substring(0, 150));
                     if (isTok) {
                         s.addEventListener('load', function() {
                             try {
                                 SaudiaBridge.onLog('XHR RESP: ' + s.responseText.substring(0, 300));
                                 var d = JSON.parse(s.responseText);
-                                if (d.access_token) SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
-                                if (d.token && typeof d.token === 'string' && d.token.length > 50) {
-                                    SaudiaBridge.onJwt('Bearer ' + d.token, d.session_id || '');
+                                if (d.access_token) {
+                                    captureToken('Bearer ' + d.access_token);
                                 }
                             } catch(e) {}
                         });
@@ -284,12 +308,11 @@ private const val HOOK_JS = """
 
         setInterval(function() {
             try {
-                var keys = ['access_token', 'accessToken', 'saudia-access-token', 'authorization', 'jwt', 'token'];
+                var keys = ['saudia-access-token', 'access_token', 'accessToken', 'authorization', 'jwt', 'token'];
                 for (var i = 0; i < keys.length; i++) {
                     var v = sessionStorage.getItem(keys[i]) || localStorage.getItem(keys[i]);
                     if (v && typeof v === 'string' && v.indexOf('eyJ') > -1) {
-                        var t = v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v;
-                        SaudiaBridge.onJwt(t, '');
+                        captureToken(v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v);
                         return;
                     }
                 }
@@ -303,21 +326,24 @@ private const val HOOK_JS = """
 private const val SCAN_STORAGE_JS = """
     (function(){
         var found = [];
+        var sid = '';
         try {
+            sid = sessionStorage.getItem('saudia-session-id') || localStorage.getItem('saudia-session-id') || '';
+            found.push('SID: ' + sid);
             for (var i = 0; i < localStorage.length; i++) {
                 var k = localStorage.key(i);
                 var v = localStorage.getItem(k);
-                found.push('LS[' + k + ']=' + (v || '').substring(0, 100));
                 if (v && v.indexOf('eyJ') > -1) {
-                    SaudiaBridge.onJwt(v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v, '');
+                    found.push('LS[' + k + ']=' + v.substring(0, 100));
+                    SaudiaBridge.onJwt(v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v, sid);
                 }
             }
             for (var i = 0; i < sessionStorage.length; i++) {
                 var k = sessionStorage.key(i);
                 var v = sessionStorage.getItem(k);
-                found.push('SS[' + k + ']=' + (v || '').substring(0, 100));
                 if (v && v.indexOf('eyJ') > -1) {
-                    SaudiaBridge.onJwt(v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v, '');
+                    found.push('SS[' + k + ']=' + v.substring(0, 100));
+                    SaudiaBridge.onJwt(v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v, sid);
                 }
             }
         } catch(e) {}
