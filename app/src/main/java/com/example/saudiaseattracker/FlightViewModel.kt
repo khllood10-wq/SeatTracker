@@ -198,7 +198,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🧪 اختبار httpcloak الشامل
+    //  🧪 اختبار httpcloak الشامل — مع Warmup
     // ═══════════════════════════════════════════════════════════
     fun testHttpCloak() {
         viewModelScope.launch {
@@ -207,7 +207,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 pushDebug(DebugEntry(
                     source = DebugSource.APP,
                     title = "═══ 🧪 اختبار httpcloak بدأ ═══",
-                    body = "الخطوات:\n1. تأكيد reese84 من Hyper\n2. resetSession\n3. GET /ar-SA × 3 بنفس Session\n4. تقرير كل محاولة"
+                    body = "الخطوات:\n1. تأكيد reese84\n2. resetSession\n3. Warmup (تهيئة الاتصال)\n4. GET /ar-SA الفعلي"
                 ))
 
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
@@ -219,28 +219,43 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 httpCloakClient.resetSession()
                 delay(500)
 
-                repeat(3) { i ->
-                    val resp = httpCloakClient.get(
-                        url = "https://www.saudia.com/ar-SA",
-                        headers = buildFullChromeHeaders(
-                            cookie = reeseCookie,
-                            referer = "https://www.saudia.com/",
-                            secFetchSite = "none",
-                            secFetchMode = "navigate",
-                            secFetchDest = "document"
-                        )
+                // ✅ الخطوة الجديدة: Warmup
+                addLog("🔥 Warmup (تهيئة الاتصال)...")
+                val warmupHeaders = buildFullChromeHeaders(
+                    cookie = reeseCookie,
+                    referer = "https://www.saudia.com/",
+                    secFetchSite = "none",
+                    secFetchMode = "navigate",
+                    secFetchDest = "document"
+                )
+                try {
+                    httpCloakClient.warmup(
+                        url = "https://www.saudia.com/",
+                        headers = warmupHeaders
                     )
-                    val blocked = resp.text.contains("Pardon Our Interruption") ||
-                            resp.text.contains("_Incapsula_Resource")
-                    addLog("GET #${i + 1}: HTTP ${resp.statusCode}, len=${resp.text.length}, blocked=$blocked")
-                    if (!blocked && resp.statusCode == 200) {
-                        addLog("🎉 GET #${i + 1} = صفحة حقيقية — httpcloak يعمل!")
-                        return@launch
-                    }
-                    if (i < 2) delay(2000)
+                    addLog("✅ Warmup انتهى بنجاح")
+                } catch (e: Exception) {
+                    addLog("⚠️ Warmup فشل: ${e.javaClass.simpleName} - ${e.message}")
                 }
+                delay(1500)
 
-                addLog("❌ 3 محاولات فاشلة — راجع Debug للتفاصيل")
+                // الآن الطلب الفعلي
+                addLog("🌐 GET /ar-SA (الطلب الفعلي)...")
+                val resp = httpCloakClient.get(
+                    url = "https://www.saudia.com/ar-SA",
+                    headers = warmupHeaders
+                )
+
+                val blocked = resp.text.contains("Pardon Our Interruption") ||
+                        resp.text.contains("_Incapsula_Resource")
+
+                addLog("GET: HTTP ${resp.statusCode}, len=${resp.text.length}, blocked=$blocked")
+
+                if (!blocked && resp.statusCode == 200) {
+                    addLog("🎉 نجاح! httpcloak تجاوز Imperva!")
+                } else {
+                    addLog("⚠️ لا يزال Imperva يحظر — راجع Debug")
+                }
 
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.javaClass.simpleName}: ${e.message}")
@@ -250,7 +265,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     // ═══════════════════════════════════════════════════════════
     //  🌐 headers كاملة كما يفعل Chrome الحقيقي
-    //  ⚠️ حُذفت Sec-Ch-Ua* — نعتمد على withoutClientHints في httpcloak
     // ═══════════════════════════════════════════════════════════
     private fun buildFullChromeHeaders(
         cookie: String,
@@ -261,15 +275,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         extra: Map<String, String> = emptyMap()
     ): Map<String, String> = buildMap {
         put("Cookie", cookie)
-        put("User-Agent", HttpCloakClient.UA)  // Chrome/155 Windows
+        put("User-Agent", HttpCloakClient.UA)
         put(
             "Accept",
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
         )
         put("Accept-Language", "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7")
         put("Accept-Encoding", "gzip, deflate, br, zstd")
-        // ❌ لا Sec-Ch-Ua, Sec-Ch-Ua-Mobile, Sec-Ch-Ua-Platform
-        //    (httpcloak يولّدها تلقائياً وفق preset إذا لزم)
         put("Sec-Fetch-Site", secFetchSite)
         put("Sec-Fetch-Mode", secFetchMode)
         put("Sec-Fetch-Dest", secFetchDest)
@@ -288,12 +300,30 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("❌ لا يوجد reese84")
                 return@withContext false
             }
-            val reeseValue = reeseCookie.removePrefix("reese84=").trim()
 
             httpCloakClient.resetSession()
             delay(300)
 
-            // ─── 1) GET /ar-SA (تحدي Imperva الأول) ───
+            // ─── 0) Warmup قبل التحدي ───
+            addLog("🔥 Warmup...")
+            try {
+                httpCloakClient.warmup(
+                    url = "https://www.saudia.com/",
+                    headers = buildFullChromeHeaders(
+                        cookie = reeseCookie,
+                        referer = "https://www.saudia.com/",
+                        secFetchSite = "none",
+                        secFetchMode = "navigate",
+                        secFetchDest = "document"
+                    )
+                )
+                addLog("✅ Warmup OK")
+            } catch (e: Exception) {
+                addLog("⚠️ Warmup fail: ${e.message}")
+            }
+            delay(1500)
+
+            // ─── 1) GET /ar-SA ───
             addLog("🌐 GET #1 /ar-SA...")
             val pageResp1 = httpCloakClient.get(
                 url = "https://www.saudia.com/ar-SA",
@@ -308,7 +338,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             addLog("📄 GET #1 → HTTP ${pageResp1.statusCode}, len=${pageResp1.text.length}")
             delay(2500)
 
-            // ─── 2) GET /ar-SA (اختبار الكوكيز) ───
+            // ─── 2) GET /ar-SA ───
             addLog("🌐 GET #2 /ar-SA...")
             val pageResp2 = httpCloakClient.get(
                 url = "https://www.saudia.com/ar-SA",
@@ -337,7 +367,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             addLog("🎉 httpcloak تجاوز Imperva!")
             delay(1500)
 
-            // ─── 3) POST /token/init — محاولات متعددة ───
+            // ─── 3) POST /token/init ───
             val attempts = listOf(
                 "no-body" to null,
                 "empty-form" to Body.form(emptyMap())
@@ -389,7 +419,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 delay(1500)
             }
 
-            addLog("⚠️ token/init فشل بكل الطرق — نحتاج JS لاستخراج key/body")
+            addLog("⚠️ token/init فشل بكل الطرق")
             return@withContext false
 
         } catch (e: Exception) {
