@@ -35,6 +35,10 @@ fun WebViewTokenCapture(
         factory = { ctx ->
             WebView(ctx).apply {
                 layoutParams = ViewGroup.LayoutParams(1, 1)
+                
+                // 🔥 السر هنا: إخفاء الـ WebView بشكل صارم على مستوى النظام
+                alpha = 0f 
+                
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
