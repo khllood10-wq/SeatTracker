@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -41,7 +42,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val needsWebViewRefresh by viewModel.needsWebViewRefresh.collectAsStateWithLifecycle()
     val lastCycle by viewModel.autoLoopLastCycle.collectAsStateWithLifecycle()
     val sessionTimerSeconds by viewModel.sessionTimerSeconds.collectAsStateWithLifecycle()
-    // 🆕 مؤشر JWT
     val jwtReady by viewModel.jwtReady.collectAsStateWithLifecycle()
 
     var showWebView by remember { mutableStateOf(false) }
@@ -65,6 +65,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 reese84Token = reeseTokenForWebView!!,
                 modifier = Modifier
                     .size(1.dp)
+                    .alpha(0f) // 🔥 إخفاء تام على مستوى Compose
                     .offset(x = (-1000).dp, y = (-1000).dp)
                     .zIndex(-1f),
                 onSuccess = { jwt, sid ->
@@ -84,28 +85,25 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ═══ شريط الحالة العلوي — JWT + sid + عداد ═══
+            // ═══ شريط الحالة العلوي ═══
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(sessionStatus, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         Spacer(Modifier.height(4.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            // 🆕 JWT
                             Text(
                                 "JWT: ${if (jwtReady) "✅" else "⏳"}",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (jwtReady) Color(0xFF00C853) else Color(0xFFD32F2F)
                             )
-                            // sid
                             Text(
                                 "sid: ${if (viewModel.isSidReady()) "✅" else "⏳"}",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (viewModel.isSidReady()) Color(0xFF00C853) else Color(0xFFD32F2F)
                             )
-                            // ⏱️ عداد MM:SS
                             val minutes = sessionTimerSeconds / 60
                             val seconds = sessionTimerSeconds % 60
                             val timerText = if (sessionTimerSeconds > 0)
