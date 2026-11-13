@@ -90,10 +90,12 @@ object RetrofitClient {
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            // 🆕 زيادة المهلة لمنع Timeout
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            // 🆕 لا تتبع redirects — كشف حظر Imperva الصامت
+            .followRedirects(false)
+            .followSslRedirects(false)
             .addInterceptor { chain ->
                 val req = chain.request()
                 val t0 = System.currentTimeMillis()
