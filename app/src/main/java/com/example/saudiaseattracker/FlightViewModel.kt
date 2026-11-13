@@ -79,8 +79,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    private val _searchResponseText = MutableStateFlow("بانتظار بدء البحث...")
+    // رد البحث في المستطيل
+    private val _searchResponseText = MutableStateFlow("بدء البحث...")
     val searchResponseText: StateFlow<String> = _searchResponseText
+
+    // JS Logs من WebView
+    private val _jsLogText = MutableStateFlow("")
+    val jsLogText: StateFlow<String> = _jsLogText
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
@@ -112,6 +117,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
 
+    fun appendJsLog(msg: String) {
+        _jsLogText.value = (msg + "\n" + _jsLogText.value).take(3000)
+    }
+
+    fun isSidReady(): Boolean = activeSaaSessionId.isNotBlank()
+
     init {
         viewModelScope.launch {
             DebugBus.flow.collect { entry ->
@@ -125,7 +136,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("🔄 تهيئة جلسة Hyper...")
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 markSessionReady()
-                addLog("✅ جلسة Hyper جاهزة")
+                addLog("✅ جلسة Hyper جاهزة — فتح WebView تلقائياً...")
+                // فتح WebView تلقائياً بعد جهوزية Hyper لجلب JWT + sid
+                _autoCaptureMode.value = true
+                _needsWebViewRefresh.value = true
             } catch (e: Exception) {
                 _sessionStatus.value = "⚠️ تعذر التجهيز: ${e.message}"
             }
@@ -161,7 +175,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _sessionStatus.value = when {
             isJwtFresh(0) && activeSaaSessionId.isNotBlank() -> "✅ كل شيء جاهز (JWT: ${jwtRemainingMinutes()}د)"
             isJwtFresh(0) && activeSaaSessionId.isBlank() -> "⚠️ JWT موجود — sid مفقود"
-            hyperSession.hasFreshToken() -> "✅ Hyper جاهز — افتح WebView لالتقاط JWT"
+            hyperSession.hasFreshToken() -> "✅ Hyper جاهز — فتح WebView لالتقاط JWT"
             else -> "⏳ جاهزة عند أول طلب"
         }
     }
@@ -186,7 +200,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _finalPnr.value = ""
         _finalSadad.value = ""
         _searchLogs.value = emptyList()
-        _searchResponseText.value = "بانتظار بدء البحث..."
+        _searchResponseText.value = "بدء البحث..."
+        _jsLogText.value = ""
     }
 
     fun sessionExpiryMs(): Long = hyperSession.expiryAt()
@@ -207,9 +222,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun showWebViewCapture(): String? = hyperSession.getToken()
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 دالة مركزية: تجديد Hyper ثم فتح WebView
-    // ═══════════════════════════════════════════════════════════
     fun refreshHyperThenCapture(manual: Boolean = false) {
         if (_needsWebViewRefresh.value) return
         viewModelScope.launch {
@@ -247,9 +259,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _autoCaptureMode.value = false
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🔁 الحلقة التلقائية — مع التسلسل الصحيح
-    // ═══════════════════════════════════════════════════════════
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
         _autoLoopActive.value = true
@@ -257,6 +266,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         autoLoopJob = viewModelScope.launch {
             addLog("🔁 بدء الحلقة التلقائية...")
+            _searchResponseText.value = "بدء البحث..."
             var cycle = 0
 
             while (isActive && _autoLoopActive.value) {
@@ -266,23 +276,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("🔄 دورة #$cycle")
 
                 try {
-                    // تأكد من reese84 (بدون force) قبل كل دورة
                     withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                     if (activeCookie.isNullOrBlank()) activeCookie = hyperSession.getCookieHeader()
 
-                    // ─── فحص الجلسة قبل البحث ───
                     if (!isJwtFresh(minRemainingMs = 5 * 60_000L) || activeSaaSessionId.isBlank()) {
                         addLog("⏸️ توقف البحث — تجديد الجلسة الكاملة...")
-                        // 1) جدّد reese84 أولاً (إجباري)
                         withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                         activeCookie = hyperSession.getCookieHeader()
-                        addLog("✅ reese84 جديد — فتح WebView في الخلفية...")
-                        // 2) افتح WebView في الخلفية
+                        addLog("✅ reese84 جديد — فتح WebView...")
                         _needsWebViewRefresh.value = true
                         _autoCaptureMode.value = true
-                        // 3) انتظر حتى يكتمل التقاط JWT + sid
                         while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(2000) }
-                        // 4) تحقق من النجاح
                         if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
                             addLog("⏸️ فشل التجديد — إيقاف الحلقة")
                             break
@@ -290,33 +294,26 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         addLog("✅ الجلسة جُددت — استئناف البحث")
                     }
 
-                    // ─── البحث ───
                     addLog("🔍 البحث...")
                     _searchResponseText.value = "جاري البحث عن الرحلة..."
                     val flight = searchUntilFound(max = 1)
 
-                    // ─── انتهاء الجلسة أثناء البحث ───
                     if (flight == null && (!isJwtFresh(0) || activeSaaSessionId.isBlank())) {
                         addLog("⏸️ انتهت الجلسة أثناء البحث — تجديد كامل...")
-                        // 1) جدّد reese84
                         withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                         activeCookie = hyperSession.getCookieHeader()
                         addLog("✅ reese84 جديد — فتح WebView...")
-                        // 2) افتح WebView
                         _needsWebViewRefresh.value = true
                         _autoCaptureMode.value = true
-                        // 3) انتظر
                         while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(2000) }
-                        // 4) تحقق
                         if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
                             addLog("⏸️ فشل التجديد — إيقاف الحلقة")
                             break
                         }
                         addLog("✅ الجلسة جُددت — العودة للبحث فوراً")
-                        continue  // نعيد الدورة بدون انتظار 10 دقائق
+                        continue
                     }
 
-                    // ─── نتائج البحث ───
                     if (flight == null) {
                         addLog("⚠️ لم توجد الرحلة — انتظار 10 دقائق")
                     } else {
@@ -391,7 +388,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 if (activeCookie.isNullOrBlank()) activeCookie = hyperSession.getCookieHeader()
 
-                _searchResponseText.value = "جاري البحث..."
+                _searchResponseText.value = "بدء البحث..."
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound(max = 3)
                 if (flight == null) {
