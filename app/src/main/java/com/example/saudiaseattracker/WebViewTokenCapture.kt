@@ -8,10 +8,8 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -20,9 +18,8 @@ import androidx.webkit.WebViewFeature
 @Composable
 fun WebViewTokenCapture(
     reese84Token: String,
-    autoMode: Boolean = false,
-    onSuccess: (jwt: String, sid: String) -> Unit,
-    onCancel: () -> Unit
+    modifier: Modifier = Modifier,
+    onSuccess: (jwt: String, sid: String) -> Unit
 ) {
     val bridge = object {
         @JavascriptInterface
@@ -33,9 +30,8 @@ fun WebViewTokenCapture(
         }
     }
 
-    // إخفاء تام: حجم 1x1 بكسل بدون أي خلفية
     AndroidView(
-        modifier = Modifier.size(1.dp), 
+        modifier = modifier,
         factory = { ctx ->
             WebView(ctx).apply {
                 layoutParams = ViewGroup.LayoutParams(1, 1)
@@ -62,8 +58,7 @@ fun WebViewTokenCapture(
                         v?.evaluateJavascript(HOOK_JS, null)
                     }
                 }
-                
-                // حقن reese84
+
                 val cm = CookieManager.getInstance()
                 cm.setAcceptCookie(true)
                 val cookieValue = "reese84=$reese84Token; Domain=.saudia.com; Path=/; Secure"
