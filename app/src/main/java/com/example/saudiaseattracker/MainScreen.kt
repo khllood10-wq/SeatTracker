@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -21,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -44,6 +46,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionTimerSeconds by viewModel.sessionTimerSeconds.collectAsStateWithLifecycle()
     val jwtReady by viewModel.jwtReady.collectAsStateWithLifecycle()
 
+    // 🆕 استدعاء تفاصيل الرحلة
+    val bookedFlight = viewModel.lastBookedFlight
+
     var showWebView by remember { mutableStateOf(false) }
     var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
 
@@ -65,7 +70,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 reese84Token = reeseTokenForWebView!!,
                 modifier = Modifier
                     .size(1.dp)
-                    .alpha(0f) // 🔥 إخفاء تام على مستوى Compose
+                    .alpha(0f)
                     .offset(x = (-1000).dp, y = (-1000).dp)
                     .zIndex(-1f),
                 onSuccess = { jwt, sid ->
@@ -198,25 +203,56 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 }
             }
 
-            // ═══ PNR/SADAD ═══
+            // ═══ 🆕 بطاقة التذكرة الكاملة (PNR/SADAD + تفاصيل الرحلة) ═══
             if (pnr.isNotEmpty()) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
                     border = BorderStroke(3.dp, Color(0xFF00C853))
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        // تفاصيل الرحلة
+                        if (bookedFlight != null) {
+                            Text(
+                                "✈️ ${bookedFlight.origin} → ${bookedFlight.destination}",
+                                fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.Black
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("الرحلة", fontSize = 11.sp, color = Color.DarkGray)
+                                    Text(bookedFlight.flightNumber, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("الإقلاع", fontSize = 11.sp, color = Color.DarkGray)
+                                    Text(bookedFlight.departureTime, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("الفئة", fontSize = 11.sp, color = Color.DarkGray)
+                                    Text(bookedFlight.fareFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            HorizontalDivider(color = Color.Black.copy(alpha = 0.2f), thickness = 1.dp)
+                            Spacer(Modifier.height(12.dp))
+                        }
+
+                        // PNR و SADAD
                         Text("🆔 PNR: $pnr", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
                         Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
-                        Spacer(Modifier.height(8.dp))
+                        
+                        Spacer(Modifier.height(12.dp))
                         Button(
                             onClick = {
                                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                 clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SADAD", sadad))
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853))
                         ) {
-                            Text("📋 نسخ SADAD", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("📋 نسخ SADAD", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
                     }
                 }
