@@ -23,10 +23,10 @@ class HyperSessionManager(
     companion object {
         const val TAG = "HyperSessionError"
 
-        // ⚠️ Windows Chrome/131 — Hyper يفرض Windows أو macOS فقط
+        // ⚠️ Windows Chrome/155 — Hyper يفرض Windows أو macOS فقط
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/131.0.0.0 Safari/537.36"
+                "Chrome/155.0.0.0 Safari/537.36"
 
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
         const val IP_FETCH_URL = "https://ip.hypersolutions.co/ip"
