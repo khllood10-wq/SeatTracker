@@ -14,7 +14,7 @@ class HttpCloakClient {
     companion object {
         private const val TAG = "HttpCloakClient"
         
-        // ✅ توحيد UA لـ Chrome 155 (مطابق للـ preset)
+        // ✅ UA لـ Chrome 155 (مطابق للـ preset)
         const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/155.0.0.0 Safari/537.36"
@@ -33,9 +33,9 @@ class HttpCloakClient {
                 SessionConfig(
                     preset = Presets.CHROME_LATEST_WINDOWS,
                     timeout = 20,                  // مهلة داخلية 20 ثانية
-                    httpVersion = "h1",            // ✅ إجبار HTTP/1.1 لتجنب تعليق h2/h3
-                    retry = 0,                     // ✅ لا إعادة محاولة (لتجنب التأخير)
-                    withoutClientHints = true      // ✅ تعطيل Client Hints اليدوية لمنع التناقض
+                    httpVersion = "auto",          // ✅ بديل "h1" — يسمح بالتفاوض التلقائي
+                    retry = 0,                     // لا إعادة محاولة (لتجنب التأخير)
+                    withoutClientHints = true      // نعتمد على هيدرز الجلسة
                 )
             )
             session = newS
@@ -43,7 +43,7 @@ class HttpCloakClient {
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HTTPCLOAK,
                 title = "🆕 Session جديدة (Windows 155)",
-                body = "preset=CHROME_LATEST_WINDOWS\ntimeout=20s\nhttpVersion=h1\nretry=0\nwithoutClientHints=true\nUA=$UA"
+                body = "preset=CHROME_LATEST_WINDOWS\ntimeout=20s\nhttpVersion=auto\nretry=0\nwithoutClientHints=true\nUA=$UA"
             ))
             return newS
         }
