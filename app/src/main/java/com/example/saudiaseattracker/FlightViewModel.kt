@@ -18,7 +18,6 @@ import org.json.JSONObject
 import retrofit2.Response
 import java.util.UUID
 import kotlin.random.Random
-import io.github.sardanioss.httpcloak.Body
 
 data class PassengerData(
     val title: String = "Mr",
@@ -49,27 +48,18 @@ data class FlightData(
 }
 
 data class FoundFlightDetails(
-    val flightNumber: String,
-    val date: String,
-    val origin: String,
-    val destination: String,
-    val price: Double,
-    val fareFamily: String,
-    val airBoundId: String
+    val flightNumber: String, val date: String, val origin: String,
+    val destination: String, val price: Double, val fareFamily: String, val airBoundId: String
 )
 
 enum class StepStatus { PENDING, RUNNING, SUCCESS, FAILED, SKIPPED }
 
 data class BookingStep(
-    val id: String,
-    val title: String,
-    val status: StepStatus = StepStatus.PENDING,
-    val detail: String = ""
+    val id: String, val title: String,
+    val status: StepStatus = StepStatus.PENDING, val detail: String = ""
 )
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val httpCloakClient = HttpCloakClient()
 
     private var activeJwt = ""
     private var activeCookie: String? = null
@@ -80,7 +70,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         HyperSessionManager(
             context = getApplication<Application>(),
             rawApiKey = BuildConfig.HYPER_API_KEY,
-            userAgent = HttpCloakClient.UA,  // ← Chrome/155 Windows (موحّد)
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
             acceptLanguage = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
         )
     }
@@ -89,17 +79,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     var flightData by mutableStateOf(FlightData())
     var monitoringMode by mutableStateOf(false)
 
-    private val _steps = MutableStateFlow(
-        listOf(
-            BookingStep("search", "البحث عن الرحلة"),
-            BookingStep("cart", "إنشاء سلة الحجز"),
-            BookingStep("passenger", "تأكيد بيانات المسافر"),
-            BookingStep("extension", "حفظ التفعيل (YQENSTATUS)"),
-            BookingStep("contacts", "حفظ بيانات الاتصال"),
-            BookingStep("order", "إنشاء الطلب (PNR + SADAD)"),
-            BookingStep("payment", "إرسال طلب السداد")
-        )
-    )
+    private val _steps = MutableStateFlow(listOf(
+        BookingStep("search", "البحث عن الرحلة"),
+        BookingStep("cart", "إنشاء سلة الحجز"),
+        BookingStep("passenger", "تأكيد بيانات المسافر"),
+        BookingStep("extension", "حفظ التفعيل (YQENSTATUS)"),
+        BookingStep("contacts", "حفظ بيانات الاتصال"),
+        BookingStep("order", "إنشاء الطلب (PNR + SADAD)"),
+        BookingStep("payment", "إرسال طلب السداد")
+    ))
     val steps: StateFlow<List<BookingStep>> = _steps
 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
@@ -189,7 +177,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 markSessionPreparing()
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                 markSessionReady()
-                addLog("✅ تم تجديد reese84 يدوياً")
+                addLog("✅ تم تجديد reese84")
             } catch (e: Exception) {
                 addLog("❌ فشل التجديد: ${e.message}")
                 markSessionPreparing()
@@ -198,16 +186,20 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🧪 اختبار httpcloak الشامل — مع Warmup
+    //  🎯 الاختبار الحاسم: reese84 مباشرة على dapi.saudia.com
     // ═══════════════════════════════════════════════════════════
-    fun testHttpCloak() {
+    fun testDirectApi() {
         viewModelScope.launch {
             try {
-                addLog("🧪 بدء اختبار httpcloak الشامل...")
+                addLog("🎯 اختبار reese84 مباشرة على dapi...")
                 pushDebug(DebugEntry(
                     source = DebugSource.APP,
-                    title = "═══ 🧪 اختبار httpcloak بدأ ═══",
-                    body = "الخطوات:\n1. تأكيد reese84\n2. resetSession\n3. Warmup (تهيئة الاتصال)\n4. GET /ar-SA الفعلي"
+                    title = "═══ 🎯 اختبار reese84 → dapi.saudia.com ═══",
+                    body = "الفرضية: reese84 من saudia.com قد يُقبل على dapi.saudia.com مباشرة\n\n" +
+                            "الاختبارات:\n" +
+                            "1. /airsearch مع reese84 فقط (بدون JWT)\n" +
+                            "2. إذا رُفض → /token/init فارغ\n" +
+                            "3. إذا رُفض → حل تحدٍّ لـ dapi عبر Hyper منفصلاً"
                 ))
 
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
@@ -215,74 +207,237 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("❌ لا reese84"); return@launch
                 }
                 addLog("✅ reese84: ${reeseCookie.take(40)}... (${reeseCookie.length}c)")
+                addLog("🌐 cookieDomain: ${hyperSession.getCookieDomain()}")
 
-                httpCloakClient.resetSession()
-                delay(500)
+                activeCookie = reeseCookie
 
-                // ✅ الخطوة الجديدة: Warmup
-                addLog("🔥 Warmup (تهيئة الاتصال)...")
-                val warmupHeaders = buildFullChromeHeaders(
+                // ═══════════ اختبار 1: /airsearch مباشرة ═══════════
+                addLog("═" * 40)
+                addLog("▶️ اختبار 1: /airsearch مع reese84 فقط")
+                val searchResult1 = tryDirectSearch(reeseCookie, label = "1-reese-only")
+
+                if (searchResult1 != null && searchResult1.code() in 200..299) {
+                    addLog("🎉🎉 /airsearch نجح بـ reese84 فقط! HTTP ${searchResult1.code()}")
+                    pushDebug(DebugEntry(
+                        source = DebugSource.APP,
+                        title = "🎉 نجاح الاختبار 1!",
+                        body = "reese84 من saudia.com كافٍ لـ dapi.saudia.com!\nHTTP ${searchResult1.code()}\n\n" +
+                                "الخلاصة: لا نحتاج JWT ولا /token/init ولا httpcloak!"
+                    ))
+                    return@launch
+                }
+
+                addLog("⚠️ الاختبار 1 فشل (HTTP ${searchResult1?.code() ?: "?"})")
+
+                // ═══════════ اختبار 2: /token/init فارغ ═══════════
+                delay(2000)
+                addLog("═" * 40)
+                addLog("▶️ اختبار 2: /token/init فارغ")
+
+                val initHeaders = buildDirectHeaders(
                     cookie = reeseCookie,
-                    referer = "https://www.saudia.com/",
-                    secFetchSite = "none",
-                    secFetchMode = "navigate",
-                    secFetchDest = "document"
-                )
-                try {
-                    httpCloakClient.warmup(
-                        url = "https://www.saudia.com/",
-                        headers = warmupHeaders
+                    referer = "https://www.saudia.com/ar-SA",
+                    secFetchDest = "empty",
+                    secFetchMode = "cors",
+                    extra = mapOf(
+                        "Content-Type" to "application/x-www-form-urlencoded",
+                        "Accept" to "application/json, text/plain, */*",
+                        "Origin" to "https://www.saudia.com",
+                        "platform" to "Web",
+                        "version" to "27.2"
                     )
-                    addLog("✅ Warmup انتهى بنجاح")
-                } catch (e: Exception) {
-                    addLog("⚠️ Warmup فشل: ${e.javaClass.simpleName} - ${e.message}")
-                }
-                delay(1500)
-
-                // الآن الطلب الفعلي
-                addLog("🌐 GET /ar-SA (الطلب الفعلي)...")
-                val resp = httpCloakClient.get(
-                    url = "https://www.saudia.com/ar-SA",
-                    headers = warmupHeaders
                 )
 
-                val blocked = resp.text.contains("Pardon Our Interruption") ||
-                        resp.text.contains("_Incapsula_Resource")
-
-                addLog("GET: HTTP ${resp.statusCode}, len=${resp.text.length}, blocked=$blocked")
-
-                if (!blocked && resp.statusCode == 200) {
-                    addLog("🎉 نجاح! httpcloak تجاوز Imperva!")
-                } else {
-                    addLog("⚠️ لا يزال Imperva يحظر — راجع Debug")
+                val emptyBody = "".toRequestBody("application/x-www-form-urlencoded".toMediaType())
+                val initResp = try {
+                    RetrofitClient.api.tokenInitDirect(initHeaders, emptyBody)
+                } catch (e: Exception) {
+                    addLog("❌ /token/init exception: ${e.message}")
+                    null
                 }
+
+                if (initResp != null) {
+                    val body = initResp.body()?.string() ?: initResp.errorBody()?.string() ?: ""
+                    pushDebug(DebugEntry(
+                        source = DebugSource.RETROFIT,
+                        method = "POST",
+                        url = "token/init",
+                        statusCode = initResp.code(),
+                        title = "🔄 /token/init (reese84) → ${initResp.code()} (${body.length}c)",
+                        headers = initHeaders.entries.joinToString("\n") { "  ${it.key}: ${it.value.take(100)}" },
+                        body = body.take(8000)
+                    ))
+
+                    if (initResp.code() == 200) {
+                        try {
+                            val json = JSONObject(body)
+                            val token = json.optString("access_token", json.optString("token", ""))
+                            val sid = json.optString("session_id", "")
+                            if (token.isNotBlank()) {
+                                activeJwt = if (token.startsWith("Bearer ")) token else "Bearer $token"
+                                if (sid.isNotBlank()) activeSaaSessionId = sid
+                                addLog("🎉 JWT! ${activeJwt.take(30)}...")
+                                delay(1500)
+                                addLog("▶️ إعادة /airsearch مع JWT...")
+                                val r2 = tryDirectSearch(reeseCookie, label = "2-with-jwt")
+                                if (r2 != null && r2.code() in 200..299) {
+                                    addLog("🎉🎉 /airsearch + JWT نجح! HTTP ${r2.code()}")
+                                    return@launch
+                                }
+                                addLog("❌ /airsearch + JWT فشل")
+                            } else {
+                                addLog("⚠️ 200 لكن بدون JWT في الرد")
+                            }
+                        } catch (e: Exception) {
+                            addLog("⚠️ JSON parse: ${e.message}")
+                        }
+                    } else {
+                        addLog("❌ /token/init: HTTP ${initResp.code()}")
+                    }
+                }
+
+                // ═══════════ اختبار 3: حل تحدٍّ لـ dapi منفصلاً ═══════════
+                delay(2000)
+                addLog("═" * 40)
+                addLog("▶️ اختبار 3: حل تحدٍّ لـ dapi.saudia.com منفصلاً عبر Hyper")
+
+                val dapiReese = withContext(Dispatchers.IO) {
+                    hyperSession.solveForPage(
+                        pageUrl = "https://dapi.saudia.com/session/auth/web/token/initialization",
+                        forceRenew = true
+                    )
+                }
+
+                if (dapiReese != null && dapiReese.isNotBlank()) {
+                    addLog("🎉 حصلنا على reese84 لـ dapi! (${dapiReese.length}c)")
+                    val dapiCookie = "reese84=$dapiReese"
+                    activeCookie = dapiCookie
+
+                    delay(1500)
+                    addLog("▶️ /token/init مع reese84 لـ dapi...")
+                    val dapiInitHeaders = buildDirectHeaders(
+                        cookie = dapiCookie,
+                        referer = "https://www.saudia.com/ar-SA",
+                        secFetchDest = "empty",
+                        secFetchMode = "cors",
+                        extra = mapOf(
+                            "Content-Type" to "application/x-www-form-urlencoded",
+                            "Accept" to "application/json, text/plain, */*",
+                            "Origin" to "https://www.saudia.com",
+                            "platform" to "Web",
+                            "version" to "27.2"
+                        )
+                    )
+
+                    val dapiInitResp = try {
+                        RetrofitClient.api.tokenInitDirect(dapiInitHeaders, emptyBody)
+                    } catch (e: Exception) {
+                        addLog("❌ dapi /token/init: ${e.message}")
+                        null
+                    }
+
+                    if (dapiInitResp != null) {
+                        val b = dapiInitResp.body()?.string() ?: dapiInitResp.errorBody()?.string() ?: ""
+                        pushDebug(DebugEntry(
+                            source = DebugSource.RETROFIT,
+                            method = "POST",
+                            url = "token/init",
+                            statusCode = dapiInitResp.code(),
+                            title = "🔄 /token/init (dapi-reese) → ${dapiInitResp.code()}",
+                            body = b.take(8000)
+                        ))
+
+                        if (dapiInitResp.code() == 200) {
+                            try {
+                                val json = JSONObject(b)
+                                val t = json.optString("access_token", "")
+                                if (t.isNotBlank()) {
+                                    activeJwt = if (t.startsWith("Bearer ")) t else "Bearer $t"
+                                    addLog("🎉🎉🎉 JWT من reese84-dapi!")
+                                    return@launch
+                                }
+                            } catch (e: Exception) {}
+                        }
+                        addLog("❌ dapi /token/init: HTTP ${dapiInitResp.code()}")
+                    }
+                } else {
+                    addLog("❌ فشل حل تحدٍّ dapi (لا HTML أو لا سكريبت)")
+                }
+
+                addLog("═" * 40)
+                addLog("📊 جميع الاختبارات فشلت — راجع Debug للتفاصيل")
 
             } catch (e: Exception) {
                 addLog("❌ استثناء: ${e.javaClass.simpleName}: ${e.message}")
+                pushDebug(DebugEntry(
+                    source = DebugSource.APP,
+                    title = "❌ testDirectApi exception",
+                    body = "${e.javaClass.simpleName}: ${e.message}\n${e.stackTraceToString().take(2000)}"
+                ))
             }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🌐 headers كاملة كما يفعل Chrome الحقيقي
-    // ═══════════════════════════════════════════════════════════
-    private fun buildFullChromeHeaders(
+    private suspend fun tryDirectSearch(reeseCookie: String, label: String): Response<SaudiaResponse>? {
+        return try {
+            val resp = RetrofitClient.api.searchAirBounds(
+                headers = buildDirectHeaders(
+                    cookie = reeseCookie,
+                    referer = "https://www.saudia.com/ar-SA",
+                    secFetchDest = "empty",
+                    secFetchMode = "cors",
+                    extra = mapOf(
+                        "x-api-version" to "4",
+                        "platform" to "Web",
+                        "version" to "27.2",
+                        "Origin" to "https://www.saudia.com"
+                    )
+                ),
+                request = SaudiaSearchRequest(
+                    airBoundsSearchInputs = AirBoundsSearchInputs(
+                        itineraries = listOf(
+                            Itinerary(flightData.from, flightData.to, "${flightData.date}T00:00:00.000")
+                        ),
+                        travelers = listOf(Traveler()),
+                        searchPreferences = SearchPreferences()
+                    ),
+                    offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
+                )
+            )
+
+            val errBody = if (!resp.isSuccessful) try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" } else ""
+            pushDebug(DebugEntry(
+                source = DebugSource.SEARCH,
+                method = "POST",
+                url = "airsearch ($label)",
+                statusCode = resp.code(),
+                title = "🔍 بحث ($label) → ${resp.code()}",
+                body = "═══ RESPONSE ═══\n${(if (resp.isSuccessful) "OK ${resp.body()?.data?.airBoundGroups?.size ?: 0} groups" else errBody.take(4000))}"
+            ))
+            resp
+        } catch (e: Exception) {
+            addLog("❌ بحث exception ($label): ${e.message}")
+            null
+        }
+    }
+
+    // helper: headers للاختبار المباشر
+    private fun buildDirectHeaders(
         cookie: String,
         referer: String,
-        secFetchSite: String,
-        secFetchMode: String,
         secFetchDest: String,
+        secFetchMode: String,
         extra: Map<String, String> = emptyMap()
     ): Map<String, String> = buildMap {
         put("Cookie", cookie)
-        put("User-Agent", HttpCloakClient.UA)
-        put(
-            "Accept",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-        )
+        put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36")
+        put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
         put("Accept-Language", "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7")
-        put("Accept-Encoding", "gzip, deflate, br, zstd")
-        put("Sec-Fetch-Site", secFetchSite)
+        put("Accept-Encoding", "gzip, deflate, br")
+        put("Sec-Ch-Ua", "\"Chromium\";v=\"155\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"155\"")
+        put("Sec-Ch-Ua-Mobile", "?0")
+        put("Sec-Ch-Ua-Platform", "\"Windows\"")
+        put("Sec-Fetch-Site", if (referer.endsWith("/ar-SA")) "same-origin" else "none")
         put("Sec-Fetch-Mode", secFetchMode)
         put("Sec-Fetch-Dest", secFetchDest)
         put("Sec-Fetch-User", "?1")
@@ -292,185 +447,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  📡 captureSession — المحاولة الحقيقية
+    //  runFullBooking — يستخدم reese84 مباشرة (بدون httpcloak)
     // ═══════════════════════════════════════════════════════════
-    private suspend fun captureSessionViaHttpCloak(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val reeseCookie = hyperSession.getCookieHeader() ?: run {
-                addLog("❌ لا يوجد reese84")
-                return@withContext false
-            }
-
-            httpCloakClient.resetSession()
-            delay(300)
-
-            // ─── 0) Warmup قبل التحدي ───
-            addLog("🔥 Warmup...")
-            try {
-                httpCloakClient.warmup(
-                    url = "https://www.saudia.com/",
-                    headers = buildFullChromeHeaders(
-                        cookie = reeseCookie,
-                        referer = "https://www.saudia.com/",
-                        secFetchSite = "none",
-                        secFetchMode = "navigate",
-                        secFetchDest = "document"
-                    )
-                )
-                addLog("✅ Warmup OK")
-            } catch (e: Exception) {
-                addLog("⚠️ Warmup fail: ${e.message}")
-            }
-            delay(1500)
-
-            // ─── 1) GET /ar-SA ───
-            addLog("🌐 GET #1 /ar-SA...")
-            val pageResp1 = httpCloakClient.get(
-                url = "https://www.saudia.com/ar-SA",
-                headers = buildFullChromeHeaders(
-                    cookie = reeseCookie,
-                    referer = "https://www.saudia.com/",
-                    secFetchSite = "none",
-                    secFetchMode = "navigate",
-                    secFetchDest = "document"
-                )
-            )
-            addLog("📄 GET #1 → HTTP ${pageResp1.statusCode}, len=${pageResp1.text.length}")
-            delay(2500)
-
-            // ─── 2) GET /ar-SA ───
-            addLog("🌐 GET #2 /ar-SA...")
-            val pageResp2 = httpCloakClient.get(
-                url = "https://www.saudia.com/ar-SA",
-                headers = buildFullChromeHeaders(
-                    cookie = reeseCookie,
-                    referer = "https://www.saudia.com/",
-                    secFetchSite = "none",
-                    secFetchMode = "navigate",
-                    secFetchDest = "document"
-                )
-            )
-            val stillBlocked = pageResp2.text.contains("Pardon Our Interruption") ||
-                    pageResp2.text.contains("_Incapsula_Resource")
-            addLog("📄 GET #2 → HTTP ${pageResp2.statusCode}, len=${pageResp2.text.length}, blocked=$stillBlocked")
-
-            if (stillBlocked || pageResp2.statusCode != 200) {
-                addLog("❌ لا يزال Imperva يحظر بعد GET #2")
-                pushDebug(DebugEntry(
-                    source = DebugSource.HTTPCLOAK,
-                    title = "❌ httpcloak لم يتجاوز Imperva",
-                    body = "GET#2 status=${pageResp2.statusCode}\nblocked=$stillBlocked\n\n${pageResp2.text.take(3000)}"
-                ))
-                return@withContext false
-            }
-
-            addLog("🎉 httpcloak تجاوز Imperva!")
-            delay(1500)
-
-            // ─── 3) POST /token/init ───
-            val attempts = listOf(
-                "no-body" to null,
-                "empty-form" to Body.form(emptyMap())
-            )
-
-            for ((name, body) in attempts) {
-                addLog("🔄 token/init ($name)...")
-                val initResp = httpCloakClient.post(
-                    url = "https://dapi.saudia.com/session/auth/web/token/initialization",
-                    headers = buildFullChromeHeaders(
-                        cookie = reeseCookie,
-                        referer = "https://www.saudia.com/ar-SA",
-                        secFetchSite = "same-site",
-                        secFetchMode = "cors",
-                        secFetchDest = "empty",
-                        extra = mapOf(
-                            "Content-Type" to "application/x-www-form-urlencoded",
-                            "Accept" to "application/json, text/plain, */*",
-                            "Origin" to "https://www.saudia.com",
-                            "platform" to "Web",
-                            "version" to "27.2"
-                        )
-                    ),
-                    body = body
-                )
-                addLog("📄 token/init ($name) → HTTP ${initResp.statusCode}, len=${initResp.text.length}")
-
-                if (initResp.statusCode == 200) {
-                    try {
-                        val json = JSONObject(initResp.text)
-                        val token = json.optString("access_token", json.optString("token", ""))
-                        val sessionId = json.optString("session_id", "")
-                        if (token.isNotBlank()) {
-                            activeJwt = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                            if (sessionId.isNotBlank()) activeSaaSessionId = sessionId
-                            activeXdToken = ""
-                            activeCookie = reeseCookie
-                            addLog("🎉 JWT! ${activeJwt.take(30)}...")
-                            addLog("🆔 sid: ${if (sessionId.isNotBlank()) sessionId else "❌"}")
-                            pushDebug(DebugEntry(
-                                source = DebugSource.APP,
-                                title = "🎉 JWT captured ($name)",
-                                body = "jwt.prefix=${activeJwt.take(60)}...\nsid=$sessionId"
-                            ))
-                            return@withContext true
-                        }
-                    } catch (e: Exception) { addLog("⚠️ JSON parse: ${e.message}") }
-                }
-                delay(1500)
-            }
-
-            addLog("⚠️ token/init فشل بكل الطرق")
-            return@withContext false
-
-        } catch (e: Exception) {
-            addLog("❌ httpcloak exception: ${e.javaClass.simpleName} - ${e.message}")
-            pushDebug(DebugEntry(
-                source = DebugSource.HTTPCLOAK,
-                title = "❌ exception في captureSession",
-                body = "${e.javaClass.simpleName}: ${e.message}\n${e.stackTraceToString().take(2000)}"
-            ))
-            return@withContext false
-        }
-    }
-
-    private fun buildHeaders(
-        apiVersion: String,
-        isWebEndpoint: Boolean = false,
-        referer: String = "https://www.saudia.com/"
-    ): Map<String, String> {
-        val traceId = UUID.randomUUID().toString().replace("-", "")
-        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
-
-        val headers = mutableMapOf(
-            "Authorization" to activeJwt,
-            "x-d-token" to activeXdToken,
-            "saa-session-id" to activeSaaSessionId,
-            "x-api-version" to apiVersion,
-            "platform" to "Web",
-            "version" to "27.2",
-            "Accept" to "application/json",
-            "Content-Type" to "application/json",
-            "Origin" to "https://www.saudia.com",
-            "Referer" to referer,
-            "User-Agent" to HttpCloakClient.UA,
-            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-            "request-id" to "|$traceId.$spanId",
-            "traceparent" to "00-$traceId-$spanId-01",
-            "x-datadog-origin" to "rum",
-            "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
-            "x-datadog-sampling-priority" to "1",
-            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString()
-        )
-        if (isWebEndpoint) {
-            headers["x-v-token"] = "YTA2MmU3YTZhMDM5MjgyMDIxNzFkZWEyOWEyMjIxZDEwOGNmMWFkNTJkODk4YmE3ZThlMzI4MzU1MjExNzViOWY0MTBlMzRlOTNlNGU5YmY4YThlZTAwNzdhM2Q3NWU2YzM5ZTAzOWQxNDBhOTdiZDZjMmE2MjlkNzIxNDM4YzU="
-        } else {
-            headers["browserid"] = "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9"
-            headers["channel"] = "MOBILE_WEB"
-        }
-        if (!activeCookie.isNullOrBlank()) headers["Cookie"] = activeCookie!!
-        return headers
-    }
-
     fun runFullBooking(activity: android.app.Activity) {
         if (_isRunning.value) return
         if (!passengerData.isValid()) { addLog("❌ بيانات المسافر ناقصة"); return }
@@ -484,12 +462,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 markSessionReady()
 
-                val captured = captureSessionViaHttpCloak()
-                if (!captured) {
-                    addLog("⚠️ التقاط الجلسة لم يكتمل")
-                    _isRunning.value = false
-                    return@launch
+                activeCookie = hyperSession.getCookieHeader() ?: run {
+                    addLog("❌ لا reese84"); _isRunning.value = false; return@launch
                 }
+                addLog("✅ reese84: ${activeCookie!!.take(40)}...")
 
                 setStep("search", StepStatus.RUNNING)
                 val flight = searchUntilFound() ?: run {
@@ -537,7 +513,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun searchUntilFound(max: Int = 1000): FoundFlightDetails? {
+    private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
         var attempt = 0
         while (attempt < max) {
             attempt++
@@ -547,9 +523,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     headers = buildHeaders("4"),
                     request = SaudiaSearchRequest(
                         airBoundsSearchInputs = AirBoundsSearchInputs(
-                            itineraries = listOf(
-                                Itinerary(flightData.from, flightData.to, "${flightData.date}T00:00:00.000")
-                            ),
+                            itineraries = listOf(Itinerary(flightData.from, flightData.to, "${flightData.date}T00:00:00.000")),
                             travelers = listOf(Traveler()),
                             searchPreferences = SearchPreferences()
                         ),
@@ -559,8 +533,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(resp)
 
                 if (resp.code() == 401 || resp.code() == 403) {
-                    val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
-                    addLog("🚨 ${resp.code()}: ${errBody.take(200)}")
+                    val err = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
+                    addLog("🚨 ${resp.code()}: ${err.take(200)}")
                     return null
                 }
 
@@ -572,16 +546,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     val cheapest = g?.airBounds?.filter { it.status?.value != "soldOut" }
                         ?.minByOrNull { it.airOffer?.totalPrice?.value ?: Double.MAX_VALUE }
-                    if (cheapest != null) {
-                        return FoundFlightDetails(
-                            flightData.flightNumber, flightData.date,
-                            g.boundDetails?.origin ?: flightData.from,
-                            g.boundDetails?.destination ?: flightData.to,
-                            (cheapest.airOffer?.totalPrice?.value ?: 0.0) / 100.0,
-                            cheapest.fareFamilyCode ?: "N/A",
-                            cheapest.airBoundId ?: ""
-                        )
-                    }
+                    if (cheapest != null) return FoundFlightDetails(
+                        flightData.flightNumber, flightData.date,
+                        g.boundDetails?.origin ?: flightData.from,
+                        g.boundDetails?.destination ?: flightData.to,
+                        (cheapest.airOffer?.totalPrice?.value ?: 0.0) / 100.0,
+                        cheapest.fareFamilyCode ?: "N/A",
+                        cheapest.airBoundId ?: ""
+                    )
                 } else {
                     addLog("❌ بحث $attempt: HTTP ${resp.code()}")
                 }
@@ -589,6 +561,36 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             delay(15_000)
         }
         return null
+    }
+
+    private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
+        val traceId = UUID.randomUUID().toString().replace("-", "")
+        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
+
+        val headers = mutableMapOf(
+            "Authorization" to activeJwt,
+            "x-d-token" to activeXdToken,
+            "saa-session-id" to activeSaaSessionId,
+            "x-api-version" to apiVersion,
+            "platform" to "Web",
+            "version" to "27.2",
+            "Accept" to "application/json",
+            "Content-Type" to "application/json",
+            "Origin" to "https://www.saudia.com",
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "request-id" to "|$traceId.$spanId",
+            "traceparent" to "00-$traceId-$spanId-01",
+            "x-datadog-origin" to "rum",
+            "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
+            "x-datadog-sampling-priority" to "1",
+            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
+            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9",
+            "channel" to "MOBILE_WEB"
+        )
+        if (!activeCookie.isNullOrBlank()) headers["Cookie"] = activeCookie!!
+        return headers
     }
 
     private fun saveCookiesFromResponse(response: Response<*>) {
@@ -608,10 +610,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun createCart(airBoundId: String): String? = try {
-        val r = RetrofitClient.api.createCart(
-            headers = buildHeaders("2"),
-            request = CreateCartRequest(listOf(airBoundId))
-        )
+        val r = RetrofitClient.api.createCart(headers = buildHeaders("2"), request = CreateCartRequest(listOf(airBoundId)))
         saveCookiesFromResponse(r)
         if (!r.isSuccessful) null else {
             val bodyStr = r.body()?.string() ?: ""
