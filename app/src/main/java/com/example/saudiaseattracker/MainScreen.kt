@@ -60,16 +60,26 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // 🔄 تجديد جلسة Hyper (بدل WebView)
+        // 🔄 تجديد جلسة Hyper
         Button(
             onClick = { viewModel.refreshSession() },
-            modifier = Modifier.fillMaxWidth().height(60.dp),
+            modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFA726))
         ) {
             Text("🔄 تجديد جلسة Hyper (reese84)", fontWeight = FontWeight.Bold)
         }
 
-        // البدء
+        // 🧪 اختبار httpcloak (جديد!)
+        OutlinedButton(
+            onClick = { viewModel.testHttpCloak() },
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF2196F3)),
+            border = BorderStroke(2.dp, Color(0xFF2196F3))
+        ) {
+            Text("🧪 اختبار httpcloak (تشخيص شامل)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+
+        // 🚀 بدء الحجز
         Button(
             onClick = { activity?.let { viewModel.runFullBooking(it) } },
             enabled = !isRunning && sessionReady,
@@ -93,7 +103,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // اختبارات
+        // اختبارات أخرى
         OutlinedButton({ navController.navigate(Screen.GetTest.route) }, Modifier.fillMaxWidth()) {
             Text("🧪 اختبار GET", fontSize = 12.sp)
         }
