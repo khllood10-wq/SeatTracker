@@ -22,12 +22,9 @@ class HyperSessionManager(
 
     companion object {
         const val TAG = "HyperSessionError"
-
-        // ⚠️ Windows Chrome/155 — Hyper يفرض Windows أو macOS فقط
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/155.0.0.0 Safari/537.36"
-
         const val HYPER_BASE = "https://incapsula.hypersolutions.co"
         const val IP_FETCH_URL = "https://ip.hypersolutions.co/ip"
         const val SAUDIA_HOST = "www.saudia.com"
@@ -64,16 +61,15 @@ class HyperSessionManager(
     }
 
     fun getToken(): String? = currentToken
-
     fun getCookieHeader(): String? {
         val t = currentToken ?: return null
         return "reese84=$t"
     }
+    fun getCookieDomain(): String = cookieDomain
 
     @Synchronized
     fun ensureFreshToken(forceRenew: Boolean = false) {
         if (!forceRenew && hasFreshToken()) {
-            Log.d(TAG, "✅ التوكن الحالي صالح")
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HYPER,
                 title = "♻️ Hyper: التوكن الحالي صالح",
@@ -85,16 +81,10 @@ class HyperSessionManager(
 
         if (apiKey.isBlank()) {
             val msg = "❌ مفتاح HYPER_API_KEY فارغ!"
-            Log.e(TAG, msg)
-            DebugBus.emit(DebugEntry(
-                source = DebugSource.HYPER,
-                title = msg,
-                body = "تأكد من إعداد HYPER_API_KEY في build.gradle.kts أو GitHub Secrets"
-            ))
+            DebugBus.emit(DebugEntry(source = DebugSource.HYPER, title = msg, body = "تأكد من إعداد HYPER_API_KEY"))
             throw IOException(msg)
         }
 
-        Log.d(TAG, "🔄 جاري حل/تجديد reese84...")
         DebugBus.emit(DebugEntry(
             source = DebugSource.HYPER,
             title = "🔄 Hyper: بدء تجديد reese84",
@@ -104,7 +94,6 @@ class HyperSessionManager(
         try {
             runBlocking(Dispatchers.IO) { solveOrRenew() }
         } catch (e: Exception) {
-            Log.e(TAG, "❌ فشل Hyper: ${e.localizedMessage}", e)
             DebugBus.emit(DebugEntry(
                 source = DebugSource.HYPER,
                 title = "❌ فشل Hyper",
@@ -114,32 +103,156 @@ class HyperSessionManager(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 حل تحدٍّ لصفحة محددة (يستخدم pageUrl مختلف)
+    // ═══════════════════════════════════════════════════════════
+    fun solveForPage(pageUrl: String, forceRenew: Boolean = true): String? {
+        if (apiKey.isBlank()) throw IOException("HYPER_API_KEY فارغ")
+
+        DebugBus.emit(DebugEntry(
+            source = DebugSource.HYPER,
+            title = "🆕 Hyper: حل تحدٍّ مخصص",
+            body = "pageUrl=$pageUrl"
+        ))
+
+        return try {
+            runBlocking(Dispatchers.IO) {
+                // اكتشاف مسار التحدي من الصفحة المطلوبة
+                val pageHost = java.net.URI(pageUrl).host
+                val discoverUrl = "https://$pageHost/ar-SA"
+
+                val req = Request.Builder()
+                    .url(discoverUrl)
+                    .get()
+                    .header("User-Agent", userAgent)
+                    .header("Accept-Language", acceptLanguage)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .build()
+
+                val html = client.newCall(req).execute().use { resp ->
+                    resp.body?.string() ?: throw IOException("لا HTML من $discoverUrl")
+                }
+
+                val pathRegex = Regex("""src\s*=\s*"(/[^/]+/[^?]+)\?.*"""")
+                val fullRegex = Regex("""scriptElement\.src\s*=\s*"(.*?)"""")
+
+                val pathMatch = pathRegex.find(html)
+                val fullMatch = fullRegex.find(html)
+
+                if (pathMatch == null || fullMatch == null) {
+                    DebugBus.emit(DebugEntry(
+                        source = DebugSource.HYPER,
+                        title = "⚠️ Hyper: لا يوجد سكريبت تحدٍّ في $discoverUrl",
+                        body = "html.length=${html.length}c\nfirst500=${html.take(500)}"
+                    ))
+                    return@runBlocking null
+                }
+
+                val rawPath = pathMatch.groupValues[1]
+                val fullPath = fullMatch.groupValues[1]
+                val pageSensorPath = "$rawPath?d=$pageHost"
+                val pageScriptUrl = "https://$pageHost$fullPath"
+
+                DebugBus.emit(DebugEntry(
+                    source = DebugSource.HYPER,
+                    title = "✅ Hyper: مسار التحدي ($pageHost)",
+                    body = "sensorPath=$pageSensorPath\nscriptUrl=$pageScriptUrl"
+                ))
+
+                val script = client.newCall(
+                    Request.Builder()
+                        .url(pageScriptUrl)
+                        .get()
+                        .header("User-Agent", userAgent)
+                        .build()
+                ).execute().use { it.body?.string() ?: throw IOException("script فارغ") }
+
+                val egressIp = client.newCall(
+                    Request.Builder()
+                        .url(IP_FETCH_URL)
+                        .get()
+                        .header("x-api-key", apiKey)
+                        .build()
+                ).execute().use {
+                    JSONObject(it.body?.string() ?: "{}").getString("ip")
+                }
+
+                val body = JSONObject().apply {
+                    put("userAgent", userAgent)
+                    put("pageUrl", pageUrl)
+                    put("scriptUrl", pageScriptUrl)
+                    put("script", script)
+                    put("ip", egressIp)
+                    put("acceptLanguage", acceptLanguage)
+                }.toString()
+
+                val payloadResp = client.newCall(
+                    Request.Builder()
+                        .url("$HYPER_BASE/reese84")
+                        .post(body.toRequestBody("application/json".toMediaType()))
+                        .header("x-api-key", apiKey)
+                        .header("Content-Type", "application/json")
+                        .build()
+                ).execute().use { resp ->
+                    val b = resp.body?.string() ?: ""
+                    if (!resp.isSuccessful) throw IOException("Hyper ${resp.code}: ${b.take(500)}")
+                    JSONObject(b).getString("payload")
+                }
+
+                val tokenUrl = "https://$pageHost$pageSensorPath"
+                val tokenResp = client.newCall(
+                    Request.Builder()
+                        .url(tokenUrl)
+                        .post(payloadResp.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                        .header("Content-Type", "text/plain; charset=utf-8")
+                        .header("User-Agent", userAgent)
+                        .header("Accept", "*/*")
+                        .build()
+                ).execute().use { resp ->
+                    val b = resp.body?.string() ?: ""
+                    if (!resp.isSuccessful) throw IOException("Submit sensor ${resp.code}: ${b.take(500)}")
+                    JSONObject(b)
+                }
+
+                val token = tokenResp.getString("token")
+                val domain = tokenResp.optString("cookieDomain", pageHost)
+
+                DebugBus.emit(DebugEntry(
+                    source = DebugSource.HYPER,
+                    title = "✅ Hyper: reese84 لـ $pageHost",
+                    body = "token.length=${token.length}\ncookieDomain=$domain"
+                ))
+
+                token
+            }
+        } catch (e: Exception) {
+            DebugBus.emit(DebugEntry(
+                source = DebugSource.HYPER,
+                title = "❌ Hyper: فشل حل تحدٍّ $pageUrl",
+                body = "${e.javaClass.simpleName}: ${e.message}"
+            ))
+            null
+        }
+    }
+
     private fun solveOrRenew() {
         if (sensorPath == null || scriptUrl == null) discoverPaths()
 
         val script = fetchScript(scriptUrl!!)
-        Log.d(TAG, "📜 طول السكريبت: ${script.length}")
         DebugBus.emit(DebugEntry(
             source = DebugSource.HYPER,
-            title = "📜 Hyper: تم جلب script التحدي",
+            title = "📜 Hyper: script التحدي",
             body = "length=${script.length}c\nurl=$scriptUrl"
         ))
 
         val egressIp = fetchEgressIp()
-        Log.d(TAG, "🌐 IP المستخدم: $egressIp")
         DebugBus.emit(DebugEntry(
             source = DebugSource.HYPER,
             title = "🌐 Hyper: egress IP",
             body = "ip=$egressIp"
         ))
 
-        val sensorPayload = generateSensor(
-            script = script,
-            scriptUrl = scriptUrl!!,
-            pageUrl = SAUDIA_URL,
-            ip = egressIp
-        )
-
+        val sensorPayload = generateSensor(script, scriptUrl!!, SAUDIA_URL, egressIp)
         val result = submitSensor(sensorPath!!, sensorPayload)
 
         currentToken = result.token
@@ -152,25 +265,20 @@ class HyperSessionManager(
             .putString(KEY_COOKIE_DOMAIN, cookieDomain)
             .apply()
 
-        Log.d(TAG, "✅ reese84 token (صالح ${result.renewInSec}s)")
         DebugBus.emit(DebugEntry(
             source = DebugSource.HYPER,
             title = "✅ Hyper: reese84 جاهز",
-            body = "token.prefix=${result.token.take(40)}...\n" +
-                    "length=${result.token.length}\n" +
-                    "renewInSec=${result.renewInSec}\n" +
-                    "cookieDomain=${result.cookieDomain}"
+            body = "token.prefix=${result.token.take(40)}...\nlength=${result.token.length}\nrenewInSec=${result.renewInSec}\ncookieDomain=${result.cookieDomain}"
         ))
     }
 
     private fun discoverPaths() {
-        Log.d(TAG, "🔍 اكتشاف مسارات التحدي...")
         val req = Request.Builder()
             .url(SAUDIA_URL)
             .get()
             .header("User-Agent", userAgent)
             .header("Accept-Language", acceptLanguage)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .build()
 
         client.newCall(req).execute().use { resp ->
@@ -180,8 +288,8 @@ class HyperSessionManager(
                 method = "GET",
                 url = SAUDIA_URL,
                 statusCode = resp.code,
-                title = "🔍 Hyper: GET /ar-SA لاكتشاف المسار → ${resp.code}",
-                body = "html.length=${html.length}c\nfirst300=${html.take(300)}"
+                title = "🔍 Hyper: GET /ar-SA → ${resp.code}",
+                body = "html.length=${html.length}c"
             ))
 
             val pathRegex = Regex("""src\s*=\s*"(/[^/]+/[^?]+)\?.*"""")
@@ -191,13 +299,7 @@ class HyperSessionManager(
             val fullMatch = fullRegex.find(html)
 
             if (pathMatch == null || fullMatch == null) {
-                val msg = "❌ لم يتم العثور على مسار سكريبت التحدي"
-                DebugBus.emit(DebugEntry(
-                    source = DebugSource.HYPER,
-                    title = msg,
-                    body = "pathMatch=${pathMatch != null}, fullMatch=${fullMatch != null}"
-                ))
-                throw IOException(msg)
+                throw IOException("❌ لم يتم العثور على مسار سكريبت التحدي")
             }
 
             val rawPath = pathMatch.groupValues[1]
@@ -205,68 +307,27 @@ class HyperSessionManager(
 
             sensorPath = "$rawPath?d=$SAUDIA_HOST"
             scriptUrl = "https://$SAUDIA_HOST$fullPath"
-
-            Log.d(TAG, "✅ sensorPath=$sensorPath")
-            Log.d(TAG, "✅ scriptUrl=$scriptUrl")
-            DebugBus.emit(DebugEntry(
-                source = DebugSource.HYPER,
-                title = "✅ Hyper: تم اكتشاف المسارات",
-                body = "sensorPath=$sensorPath\nscriptUrl=$scriptUrl"
-            ))
         }
     }
 
     private fun fetchScript(url: String): String {
-        val req = Request.Builder()
-            .url(url)
-            .get()
-            .header("User-Agent", userAgent)
-            .build()
+        val req = Request.Builder().url(url).get().header("User-Agent", userAgent).build()
         client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                DebugBus.emit(DebugEntry(
-                    source = DebugSource.HYPER,
-                    method = "GET",
-                    url = url,
-                    statusCode = resp.code,
-                    title = "❌ Hyper: فشل جلب script → ${resp.code}",
-                    body = resp.body?.string()?.take(2000) ?: ""
-                ))
-                throw IOException("فشل جلب السكريبت: ${resp.code}")
-            }
-            return resp.body?.string() ?: throw IOException("السكريبت فارغ")
+            if (!resp.isSuccessful) throw IOException("فشل جلب script: ${resp.code}")
+            return resp.body?.string() ?: throw IOException("script فارغ")
         }
     }
 
     private fun fetchEgressIp(): String {
-        val req = Request.Builder()
-            .url(IP_FETCH_URL)
-            .get()
-            .header("x-api-key", apiKey)
-            .build()
+        val req = Request.Builder().url(IP_FETCH_URL).get().header("x-api-key", apiKey).build()
         client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string() ?: throw IOException("رد فارغ عند جلب IP")
-            if (!resp.isSuccessful) {
-                DebugBus.emit(DebugEntry(
-                    source = DebugSource.HYPER,
-                    method = "GET",
-                    url = IP_FETCH_URL,
-                    statusCode = resp.code,
-                    title = "❌ Hyper: فشل جلب IP → ${resp.code}",
-                    body = body.take(2000)
-                ))
-                throw IOException("فشل جلب IP: ${resp.code} - $body")
-            }
+            val body = resp.body?.string() ?: throw IOException("رد فارغ")
+            if (!resp.isSuccessful) throw IOException("IP fetch ${resp.code}: $body")
             return JSONObject(body).getString("ip")
         }
     }
 
-    private fun generateSensor(
-        script: String,
-        scriptUrl: String,
-        pageUrl: String,
-        ip: String
-    ): String {
+    private fun generateSensor(script: String, scriptUrl: String, pageUrl: String, ip: String): String {
         val body = JSONObject().apply {
             put("userAgent", userAgent)
             put("pageUrl", pageUrl)
@@ -276,16 +337,6 @@ class HyperSessionManager(
             put("acceptLanguage", acceptLanguage)
         }.toString()
 
-        Log.d(TAG, "📤 Hyper Request Body size: ${body.length}")
-        DebugBus.emit(DebugEntry(
-            source = DebugSource.HYPER,
-            method = "POST",
-            url = "$HYPER_BASE/reese84",
-            title = "📤 Hyper: POST /reese84 (generate sensor)",
-            headers = "x-api-key: <redacted>\nContent-Type: application/json",
-            body = "request.size=${body.length}c\nscript.size=${script.length}c\nip=$ip\nuserAgent=$userAgent"
-        ))
-
         val req = Request.Builder()
             .url("$HYPER_BASE/reese84")
             .post(body.toRequestBody("application/json".toMediaType()))
@@ -294,28 +345,9 @@ class HyperSessionManager(
             .build()
 
         client.newCall(req).execute().use { resp ->
-            val respBody = resp.body?.string() ?: throw IOException("Hyper API: رد فارغ")
-            if (!resp.isSuccessful) {
-                DebugBus.emit(DebugEntry(
-                    source = DebugSource.HYPER,
-                    method = "POST",
-                    url = "$HYPER_BASE/reese84",
-                    statusCode = resp.code,
-                    title = "❌ Hyper: رفض طلب sensor → ${resp.code}",
-                    body = respBody.take(4000)
-                ))
-                throw IOException("Hyper API ${resp.code}: $respBody")
-            }
-            val payload = JSONObject(respBody).getString("payload")
-            DebugBus.emit(DebugEntry(
-                source = DebugSource.HYPER,
-                method = "POST",
-                url = "$HYPER_BASE/reese84",
-                statusCode = resp.code,
-                title = "✅ Hyper: تم توليد sensor payload",
-                body = "payload.length=${payload.length}c\nprefix=${payload.take(80)}..."
-            ))
-            return payload
+            val respBody = resp.body?.string() ?: throw IOException("Hyper فارغ")
+            if (!resp.isSuccessful) throw IOException("Hyper ${resp.code}: ${respBody.take(500)}")
+            return JSONObject(respBody).getString("payload")
         }
     }
 
@@ -332,36 +364,14 @@ class HyperSessionManager(
             .build()
 
         client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string() ?: throw IOException("رد فارغ من إرسال sensor")
-            if (!resp.isSuccessful) {
-                DebugBus.emit(DebugEntry(
-                    source = DebugSource.HYPER,
-                    method = "POST",
-                    url = url,
-                    statusCode = resp.code,
-                    title = "❌ Hyper: فشل submit sensor → ${resp.code}",
-                    body = body.take(4000)
-                ))
-                throw IOException("فشل إرسال sensor (${resp.code})")
-            }
+            val body = resp.body?.string() ?: throw IOException("رد فارغ")
+            if (!resp.isSuccessful) throw IOException("submit ${resp.code}")
             val json = JSONObject(body)
-            val token = json.getString("token")
-            val renewInSec = json.optLong("renewInSec", 900L)
-            val cookieDomain = json.optString("cookieDomain", SAUDIA_HOST)
-
-            DebugBus.emit(DebugEntry(
-                source = DebugSource.HYPER,
-                method = "POST",
-                url = url,
-                statusCode = resp.code,
-                title = "✅ Hyper: تم الحصول على reese84 → ${resp.code}",
-                body = "token.prefix=${token.take(40)}...\n" +
-                        "length=${token.length}\n" +
-                        "renewInSec=$renewInSec\n" +
-                        "cookieDomain=$cookieDomain"
-            ))
-
-            return TokenResult(token, renewInSec, cookieDomain)
+            return TokenResult(
+                token = json.getString("token"),
+                renewInSec = json.optLong("renewInSec", 900L),
+                cookieDomain = json.optString("cookieDomain", SAUDIA_HOST)
+            )
         }
     }
 
