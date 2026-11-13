@@ -20,6 +20,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
@@ -57,7 +59,7 @@ fun WebViewTokenCapture(
         }
     }
 
-    // ⏰ مهلة 40 ثانية — إذا لم يُلتقط JWT، أعط المستخدم خيار fallback
+    // مهلة 40 ثانية
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(40_000)
         if (!captured.value) {
@@ -95,9 +97,7 @@ fun WebViewTokenCapture(
         }
     }
 
-    // ═══ عرض ═══
     Column(Modifier.fillMaxSize().background(Color.Black)) {
-        // شريط الحالة
         Card(
             Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(
@@ -151,19 +151,29 @@ fun WebViewTokenCapture(
                     addJavascriptInterface(bridge, "SaudiaBridge")
                     webChromeClient = object : WebChromeClient() {}
 
-                    // ⭐ الأهم: تثبيت الـ hook قبل أي JS
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        addDocumentStartJavaScript(HOOK_JS, setOf("*"))
-                        hookInstalled = true
-                        Log.d("WebViewCapture", "✅ addDocumentStartJavaScript (Android 11+)")
+                    // ✅ استخدام WebViewCompat بدلاً من الاستدعاء المباشر
+                    if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                        try {
+                            WebViewCompat.addDocumentStartJavaScript(
+                                this,
+                                HOOK_JS,
+                                setOf("https://www.saudia.com", "https://saudia.com")
+                            )
+                            hookInstalled = true
+                            Log.d("WebViewCapture", "✅ WebViewCompat.addDocumentStartJavaScript installed")
+                        } catch (e: Exception) {
+                            Log.e("WebViewCapture", "❌ addDocumentStartJavaScript failed: ${e.message}")
+                        }
+                    } else {
+                        Log.w("WebViewCapture", "⚠️ DOCUMENT_START_SCRIPT not supported, using onPageStarted fallback")
                     }
 
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(v: WebView?, url: String?, fav: Bitmap?) {
                             super.onPageStarted(v, url, fav)
                             currentUrl = url ?: ""
-                            // fallback للأجهزة الأقدم
-                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                            // fallback إضافي في حال لم تُدعم الميزة
+                            if (!hookInstalled) {
                                 v?.evaluateJavascript(HOOK_JS, null)
                                 hookInstalled = true
                             }
@@ -171,9 +181,8 @@ fun WebViewTokenCapture(
                         override fun onPageFinished(v: WebView?, url: String?) {
                             super.onPageFinished(v, url)
                             currentUrl = url ?: ""
-                            // إعادة التثبيت احتياطاً (SPA قد يعيد تعريف fetch)
+                            // إعادة التثبيت احتياطاً
                             v?.evaluateJavascript(HOOK_JS, null)
-                            // مسح Storage للبحث عن JWT مخزّن
                             v?.evaluateJavascript(SCAN_STORAGE_JS, null)
                         }
                     }
@@ -182,19 +191,14 @@ fun WebViewTokenCapture(
             }
         )
 
-        // تعليمات + مسح Storage يدوي
         Card(
             Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(10.dp)) {
                 Text(
-                    "🔍 الـ hook مثبّت الآن قبل أي JS. يجب أن يلتقط /token/init تلقائياً.",
+                    "🔍 الـ hook مثبّت عبر WebViewCompat (يجب أن يلتقط /token/init تلقائياً).",
                     fontSize = 11.sp
-                )
-                Text(
-                    "إذا لم يُلتقط خلال 30 ثانية → اضغط الزر أدناه",
-                    fontSize = 11.sp, fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -214,16 +218,11 @@ fun WebViewTokenCapture(
     }
 }
 
-// ═══════════════════════════════════════════════════════════
-//  Hook يُثبّت قبل تحميل أي JS (addDocumentStartJavaScript)
-// ═══════════════════════════════════════════════════════════
 private const val HOOK_JS = """
     (function() {
         if (window.__hookInstalled) return;
         window.__hookInstalled = true;
-
         try {
-            // ═══ 1) اعتراض fetch ═══
             var origFetch = window.fetch;
             window.fetch = function(input, init) {
                 try {
@@ -254,7 +253,6 @@ private const val HOOK_JS = """
         } catch(e) { SaudiaBridge.onLog('fetch hook err: ' + e); }
 
         try {
-            // ═══ 2) اعتراض XHR ═══
             var origOpen = XMLHttpRequest.prototype.open;
             var origSend = XMLHttpRequest.prototype.send;
             XMLHttpRequest.prototype.open = function(m, u) {
@@ -284,7 +282,6 @@ private const val HOOK_JS = """
             };
         } catch(e) { SaudiaBridge.onLog('XHR hook err: ' + e); }
 
-        // ═══ 3) فحص Storage كل 3 ثوانٍ ═══
         setInterval(function() {
             try {
                 var keys = ['access_token', 'accessToken', 'saudia-access-token', 'authorization', 'jwt', 'token'];
@@ -303,7 +300,6 @@ private const val HOOK_JS = """
     })();
 """
 
-// فحص يدوي للـ Storage
 private const val SCAN_STORAGE_JS = """
     (function(){
         var found = [];
