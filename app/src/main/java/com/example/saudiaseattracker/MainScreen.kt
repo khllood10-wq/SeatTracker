@@ -36,24 +36,55 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val pnr by viewModel.finalPnr.collectAsStateWithLifecycle()
     val sadad by viewModel.finalSadad.collectAsStateWithLifecycle()
     val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
+    val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val debugEntries by viewModel.debugEntries.collectAsStateWithLifecycle()
+
+    // ═══ الحلقة التلقائية ═══
+    val autoLoopActive by viewModel.autoLoopActive.collectAsStateWithLifecycle()
+    val needsWebViewRefresh by viewModel.needsWebViewRefresh.collectAsStateWithLifecycle()
+    val autoCaptureMode by viewModel.autoCaptureMode.collectAsStateWithLifecycle()
+    val lastCycle by viewModel.autoLoopLastCycle.collectAsStateWithLifecycle()
 
     val clipboard = LocalClipboardManager.current
     var expandedDebugId by remember { mutableStateOf<Long?>(null) }
     var showWebView by remember { mutableStateOf(false) }
     var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
 
+    // متجدد تلقائياً لعرض الوقت المتبقي من JWT
+    var jwtMinutesLeft by remember { mutableLongStateOf(0L) }
+    var hyperSecondsLeft by remember { mutableLongStateOf(0L) }
+
     LaunchedEffect(Unit) {
         if (viewModel.hasToken()) viewModel.markSessionReady()
         else viewModel.markSessionPreparing()
     }
 
-    val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
+    // ═══ فتح WebView تلقائياً عند الحاجة (من الحلقة) ═══
+    LaunchedEffect(needsWebViewRefresh) {
+        if (needsWebViewRefresh && reeseTokenForWebView == null && !showWebView) {
+            val t = viewModel.showWebViewCapture()
+            if (t != null) {
+                reeseTokenForWebView = t
+                showWebView = true
+            }
+        }
+    }
 
-    // عرض WebView فوق الشاشة
+    // ═══ عدادات ═══
+    LaunchedEffect(Unit) {
+        while (true) {
+            jwtMinutesLeft = viewModel.jwtRemainingMinutes()
+            val hyperExpiry = viewModel.sessionExpiryMs()
+            hyperSecondsLeft = ((hyperExpiry - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    // ═══ عرض WebView (يدوي أو تلقائي) ═══
     if (showWebView && reeseTokenForWebView != null) {
         WebViewTokenCapture(
             reese84Token = reeseTokenForWebView!!,
+            autoMode = autoCaptureMode,
             onSuccess = { jwt, sid ->
                 viewModel.onWebViewJwtCaptured(jwt, sid)
                 showWebView = false
@@ -62,10 +93,13 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             onCancel = {
                 showWebView = false
                 reeseTokenForWebView = null
+                viewModel.dismissWebView()
             }
         )
         return
     }
+
+    val paymentStatus = steps.find { it.id == "payment" }?.status ?: StepStatus.PENDING
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -73,19 +107,45 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     ) {
         Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
-        if (!sessionReady) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                Text("⚠️ لا جلسة Hyper — اضغط '🔄 تجديد الجلسة'", Modifier.padding(10.dp), fontSize = 12.sp)
+        // ═══ شريط الحالة ═══
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = when {
+                    autoLoopActive -> Color(0xFF1B5E20)
+                    viewModel.isJwtFresh(0) -> Color(0xFF1B5E20).copy(alpha = 0.4f)
+                    sessionReady -> MaterialTheme.colorScheme.secondaryContainer
+                    else -> MaterialTheme.colorScheme.errorContainer
+                }
+            )
+        ) {
+            Column(Modifier.padding(10.dp)) {
+                Text(sessionStatus, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "JWT: ${if (jwtMinutesLeft > 0) "${jwtMinutesLeft}د" else "❌"}",
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        "reese84: ${hyperSecondsLeft}s",
+                        fontSize = 11.sp
+                    )
+                    if (autoLoopActive) {
+                        Text("🔁 $lastCycle", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
 
+        // ═══ 1) تجديد Hyper ═══
         Button(
             onClick = { viewModel.refreshSession() },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFA726))
-        ) { Text("🔄 تجديد جلسة Hyper (reese84)", fontWeight = FontWeight.Bold) }
+        ) {
+            Text("🔄 تجديد reese84 (Hyper)", fontWeight = FontWeight.Bold)
+        }
 
-        // 🌐 زر WebView لالتقاط JWT (الأهم الآن)
+        // ═══ 2) التقاط JWT يدوياً ═══
         Button(
             onClick = {
                 val token = viewModel.showWebViewCapture()
@@ -96,31 +156,50 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     viewModel.addLog("❌ لا reese84 — جدد أولاً")
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(64.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853))
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
         ) {
-            Text("🌐 التقاط JWT (WebView + reese84)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("🌐 التقاط JWT (WebView)", fontWeight = FontWeight.Bold)
         }
 
-        OutlinedButton(
-            onClick = { viewModel.testDirectApi() },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0)),
-            border = BorderStroke(2.dp, Color(0xFF9C27B0))
-        ) { Text("🎯 اختبار reese84 مباشرة على dapi", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
-
+        // ═══ 3) بدء/إيقاف الحلقة التلقائية ═══
         Button(
-            onClick = { activity?.let { viewModel.runFullBooking(it) } },
-            enabled = !isRunning && viewModel.hasToken(),
-            modifier = Modifier.fillMaxWidth().height(64.dp)
+            onClick = {
+                if (autoLoopActive) viewModel.stopAutoLoop()
+                else {
+                    if (!viewModel.isJwtFresh(0)) {
+                        viewModel.addLog("⚠️ لا JWT — افتح WebView أولاً")
+                    } else {
+                        viewModel.startAutoLoop()
+                    }
+                }
+            },
+            enabled = viewModel.isJwtFresh(0) || autoLoopActive,
+            modifier = Modifier.fillMaxWidth().height(64.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (autoLoopActive) Color(0xFFD32F2F) else Color(0xFF9C27B0)
+            )
         ) {
-            if (isRunning) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text(
-                if (viewModel.monitoringMode) "👁️ بدء المراقبة" else "🚀 بدء الحجز",
-                fontWeight = FontWeight.Bold
+            Text(
+                if (autoLoopActive) "⏹️ إيقاف الحلقة التلقائية"
+                else "🔁 بدء الحلقة التلقائية",
+                fontWeight = FontWeight.Bold, fontSize = 15.sp
             )
         }
 
+        // ═══ 4) حجز واحد (اختبار) ═══
+        OutlinedButton(
+            onClick = { activity?.let { viewModel.runOnceBooking(it) } },
+            enabled = !isRunning && viewModel.isJwtFresh(0),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            border = BorderStroke(2.dp, Color(0xFF00C853)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00C853))
+        ) {
+            if (isRunning) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            else Text("🚀 حجز واحد (اختبار)", fontWeight = FontWeight.Bold)
+        }
+
+        // ═══ وضع المراقبة ═══
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -131,12 +210,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        OutlinedButton({ navController.navigate(Screen.GetTest.route) }, Modifier.fillMaxWidth()) {
-            Text("🧪 اختبار GET", fontSize = 12.sp)
-        }
-        OutlinedButton({ navController.navigate(Screen.TokenInitTester.route) }, Modifier.fillMaxWidth()) {
-            Text("🔬 اختبار token/init", fontSize = 12.sp)
-        }
+        // ═══ بيانات ═══
         OutlinedButton({ navController.navigate(Screen.Passenger.route) }, Modifier.fillMaxWidth()) {
             Text("👤 ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}", fontSize = 12.sp)
         }
@@ -144,11 +218,13 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("✈️ ${viewModel.flightData.from} → ${viewModel.flightData.to}", fontSize = 12.sp)
         }
 
+        // ═══ المراحل ═══
         if (steps.any { it.status != StepStatus.PENDING }) {
             Text("المراحل:", fontWeight = FontWeight.Bold)
             steps.forEach { s -> StepRow(s) }
         }
 
+        // ═══ PNR/SADAD ═══
         if (pnr.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(
@@ -169,6 +245,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
+        // ═══ السجل ═══
         if (logs.isNotEmpty()) {
             Text("📝 السجل:", fontWeight = FontWeight.Bold)
             Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -182,6 +259,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
+        // ═══ Debug ═══
         if (debugEntries.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Row(
