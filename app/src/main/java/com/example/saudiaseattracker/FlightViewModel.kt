@@ -80,7 +80,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    // رد البحث (JSON) في المستطيل
     private val _searchResponseText = MutableStateFlow("بدء البحث...")
     val searchResponseText: StateFlow<String> = _searchResponseText
 
@@ -113,7 +112,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
-
     fun isSidReady(): Boolean = activeSaaSessionId.isNotBlank()
 
     init {
@@ -130,7 +128,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 markSessionReady()
                 addLog("✅ جلسة Hyper جاهزة — فتح WebView تلقائياً...")
-                // فتح WebView تلقائياً لجلب JWT + sid بدون إظهاره للمستخدم
                 _autoCaptureMode.value = true
                 _needsWebViewRefresh.value = true
             } catch (e: Exception) {
@@ -214,22 +211,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun showWebViewCapture(): String? = hyperSession.getToken()
 
-    fun refreshHyperThenCapture(manual: Boolean = false) {
-        if (_needsWebViewRefresh.value) return
-        viewModelScope.launch {
-            try {
-                addLog("🔄 تجديد reese84 قبل فتح WebView...")
-                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
-                activeCookie = hyperSession.getCookieHeader()
-                addLog("✅ reese84 جديد جاهز — فتح WebView...")
-                _autoCaptureMode.value = !manual
-                _needsWebViewRefresh.value = true
-            } catch (e: Exception) {
-                addLog("❌ فشل تجديد reese84: ${e.message}")
-            }
-        }
-    }
-
     fun onWebViewJwtCaptured(jwt: String, sid: String) {
         activeJwt = jwt
         if (sid.isNotBlank()) activeSaaSessionId = sid
@@ -257,7 +238,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _needsWebViewRefresh.value = false
 
         autoLoopJob = viewModelScope.launch {
-            addLog("🔁 بدء الحلقة التلقائية...")
+            addLog("🔁 بدء البحث...")
             _searchResponseText.value = "بدء البحث..."
             var cycle = 0
 
@@ -280,7 +261,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         _autoCaptureMode.value = true
                         while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(2000) }
                         if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
-                            addLog("⏸️ فشل التجديد — إيقاف الحلقة")
+                            addLog("⏸️ فشل التجديد — إيقاف")
                             break
                         }
                         addLog("✅ الجلسة جُددت — استئناف البحث")
@@ -299,7 +280,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         _autoCaptureMode.value = true
                         while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(2000) }
                         if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
-                            addLog("⏸️ فشل التجديد — إيقاف الحلقة")
+                            addLog("⏸️ فشل التجديد — إيقاف")
                             break
                         }
                         addLog("✅ الجلسة جُددت — العودة للبحث فوراً")
@@ -335,37 +316,42 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
         try {
             setStep("search", StepStatus.SUCCESS, "${flight.price} SAR")
-            delay(1000)
-
+            
             setStep("cart", StepStatus.RUNNING)
             val cid = createCart(flight.airBoundId) ?: run { setStep("cart", StepStatus.FAILED); return false }
-            setStep("cart", StepStatus.SUCCESS, cid); delay(1000)
+            setStep("cart", StepStatus.SUCCESS, cid)
 
             setStep("passenger", StepStatus.RUNNING)
             if (!confirmPassenger(cid)) { setStep("passenger", StepStatus.FAILED); return false }
-            setStep("passenger", StepStatus.SUCCESS); delay(1000)
+            setStep("passenger", StepStatus.SUCCESS)
 
             setStep("extension", StepStatus.RUNNING)
             if (!addExtension(cid)) { setStep("extension", StepStatus.FAILED); return false }
-            setStep("extension", StepStatus.SUCCESS); delay(1000)
+            setStep("extension", StepStatus.SUCCESS)
 
             setStep("contacts", StepStatus.RUNNING)
             if (!saveContacts(cid)) { setStep("contacts", StepStatus.FAILED); return false }
-            setStep("contacts", StepStatus.SUCCESS); delay(1000)
+            setStep("contacts", StepStatus.SUCCESS)
 
             setStep("order", StepStatus.RUNNING)
             val ord = createOrder(cid) ?: run { setStep("order", StepStatus.FAILED); return false }
             _finalPnr.value = ord.first; _finalSadad.value = ord.second
             setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}")
-            delay(1000)
 
-            if (monitoringMode) { setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط"); return true }
+            if (monitoringMode) { 
+                setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط")
+                return true 
+            }
 
             setStep("payment", StepStatus.RUNNING)
             if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); return false }
             setStep("payment", StepStatus.SUCCESS, "✅ SADAD: ${ord.second}")
+            
             return true
-        } catch (e: Exception) { return false }
+        } catch (e: Exception) { 
+            addLog("❌ خطأ في الحجز: ${e.message}")
+            return false 
+        }
     }
 
     fun runOnceBooking(activity: android.app.Activity) {
@@ -400,8 +386,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         while (attempt < max) {
             attempt++
             setStep("search", StepStatus.RUNNING, "محاولة $attempt/$max")
-            
-            // هنا نقوم بمسح الرد القديم وتجهيز الرد الجديد
             _searchResponseText.value = "جاري إرسال الطلب... (محاولة $attempt)"
             
             try {
@@ -418,20 +402,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 saveCookiesFromResponse(resp)
 
-                // نلتقط رد الـ API الفعلي سواء كان نجاح أو خطأ
                 val rawJsonResponse = try {
                     if (resp.isSuccessful) gson.toJson(resp.body())
                     else resp.errorBody()?.string() ?: "لا يوجد رد"
                 } catch (e: Exception) { "فشل قراءة الرد" }
 
-                // نضع الرد الفعلي في المستطيل (هذا يقوم بمسح القديم وعرض الجديد)
                 _searchResponseText.value = "HTTP ${resp.code()} | محاولة $attempt\n\n$rawJsonResponse"
 
-                if (resp.code() == 401) {
-                    jwtExpiryMs = 0L
-                    return null
-                }
-                if (resp.code() == 403) return null
+                if (resp.code() == 401) { jwtExpiryMs = 0L; return null }
+                if (resp.code() == 403) { return null }
 
                 if (resp.isSuccessful) {
                     val g = resp.body()?.data?.airBoundGroups?.firstOrNull { gg ->
@@ -451,7 +430,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) { 
                 _searchResponseText.value = "❌ خطأ في الاتصال:\n${e.message}" 
             }
-            if (attempt < max) delay(15_000)
+            // ⚡ تأخير عشوائي بين 5 و 8 ثوانٍ لتسريع البحث
+            if (attempt < max) delay(Random.nextLong(5_000L, 8_000L)) 
         }
         return null
     }
