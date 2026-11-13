@@ -232,6 +232,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _autoCaptureMode.value = false
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🔁 حلقة البحث الكبرى (إصلاح العداد والوقت)
+    // ═══════════════════════════════════════════════════════════
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
         _autoLoopActive.value = true
@@ -249,8 +252,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("❌ فشل تجديد البداية: ${e.message}")
             }
 
+            var attempt = 0 // 🆕 عداد المحاولات العام
+
             while (isActive && _autoLoopActive.value) {
                 try {
+                    // 1. فحص الحاجة للتجديد
                     val timerExpired = _sessionTimerSeconds.value <= 0L && hyperSession.expiryAt() > 0L
                     val needRenew = _sessionExpired || timerExpired || activeSaaSessionId.isBlank() || activeJwt.isBlank() || !hyperSession.hasFreshToken()
 
@@ -289,7 +295,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         continue
                     }
 
-                    val flight = searchUntilFound(max = 1)
+                    // 2. محاولة بحث واحدة فقط في كل دورة (بعداد مستمر)
+                    attempt++
+                    val flight = searchAttempt(attempt)
 
                     if (!_autoLoopActive.value) break
 
@@ -298,6 +306,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         continue
                     }
 
+                    // 3. معالجة النتيجة
                     if (flight != null) {
                         addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
                         clearResults()
@@ -311,7 +320,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             delay(10000)
                         }
                     } else {
-                        delay(Random.nextLong(5_000L, 8_000L))
+                        delay(Random.nextLong(5_000L, 8_000L)) // انتظار بين المحاولات
                     }
                 } catch (e: Exception) {
                     addLog("❌ خطأ في الجولة: ${e.message}")
@@ -384,105 +393,96 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔍 البحث — 100% مطابق للسكريبت
+    //  🔍 محاولة بحث واحدة فقط (تستقبل رقم المحاولة من الخارج)
     // ═══════════════════════════════════════════════════════════
-    private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
-        var attempt = 0
+    private suspend fun searchAttempt(attempt: Int): FoundFlightDetails? {
         val wantedTime = FlightData.normalizeTime(flightData.departureTime)
         val wantedCodes = FareFamilies.FARE_CODE_MAP[flightData.cabinClass] ?: emptyList()
 
-        while (attempt < max) {
-            if (!_autoLoopActive.value) return null
-            attempt++
-            setStep("search", StepStatus.RUNNING, "محاولة $attempt")
-            _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
+        setStep("search", StepStatus.RUNNING, "محاولة $attempt")
+        _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
 
-            try {
-                val resp = RetrofitClient.api.searchAirBounds(
-                    headers = buildHeaders("4"),
-                    request = SaudiaSearchRequest(
-                        airBoundsSearchInputs = AirBoundsSearchInputs(
-                            itineraries = listOf(Itinerary(
-                                originLocationCode = flightData.from,
-                                destinationLocationCode = flightData.to,
-                                departureDateTime = "${flightData.date}T00:00:00.000",
-                                directFlights = flightData.directOnly
-                            )),
-                            travelers = listOf(Traveler()),
-                            searchPreferences = SearchPreferences()
-                        ),
-                        offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
-                    )
+        try {
+            val resp = RetrofitClient.api.searchAirBounds(
+                headers = buildHeaders("4"),
+                request = SaudiaSearchRequest(
+                    airBoundsSearchInputs = AirBoundsSearchInputs(
+                        itineraries = listOf(Itinerary(
+                            originLocationCode = flightData.from,
+                            destinationLocationCode = flightData.to,
+                            departureDateTime = "${flightData.date}T00:00:00.000",
+                            directFlights = flightData.directOnly
+                        )),
+                        travelers = listOf(Traveler()),
+                        searchPreferences = SearchPreferences()
+                    ),
+                    offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
                 )
-                saveCookiesFromResponse(resp)
+            )
+            saveCookiesFromResponse(resp)
 
-                if (resp.code() == 401) {
-                    _searchResponseText.value = "🚨 انتهت الجلسة (401)"
-                    _sessionExpired = true
-                    return null
-                }
-                if (resp.code() == 403) {
-                    _searchResponseText.value = "🚨 Imperva رفض (403)"
-                    _sessionExpired = true
-                    return null
-                }
+            if (resp.code() == 401) {
+                _searchResponseText.value = "🚨 انتهت الجلسة (401)"
+                _sessionExpired = true
+                return null
+            }
+            if (resp.code() == 403) {
+                _searchResponseText.value = "🚨 Imperva رفض (403)"
+                _sessionExpired = true
+                return null
+            }
 
-                if (resp.isSuccessful) {
-                    val body = resp.body() ?: continue
-                    val flights = parseAirBounds(body)
-                    val match = findMatchingFlight(flights, wantedTime, wantedCodes)
-                    val matchedFlightNumber = match?.first?.flightNumber
-                    val matchedFareCode = match?.second?.code
+            if (resp.isSuccessful) {
+                val body = resp.body() ?: return null
+                val flights = parseAirBounds(body)
+                val match = findMatchingFlight(flights, wantedTime, wantedCodes)
+                val matchedFlightNumber = match?.first?.flightNumber
+                val matchedFareCode = match?.second?.code
 
-                    _searchResponseText.value = buildString {
-                        appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
-                        appendLine()
-                        if (flights.isEmpty()) {
-                            appendLine("⚠️ لم تُستخرج أي رحلة")
-                        } else {
-                            flights.forEachIndexed { idx, f ->
-                                val isMatched = f.flightNumber == matchedFlightNumber
-                                val prefix = if (isMatched) "🎯" else "  "
-                                val directStr = if (f.isDirect) "مباشر" else "${f.stops}st"
-                                appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime}→${f.arrivalTime} | $directStr")
-                                f.fares.forEach { fare ->
-                                    val status = if (fare.isAvailable) "✅" else "❌"
-                                    val star = if (isMatched && fare.code == matchedFareCode) " ⬅ المختارة" else ""
-                                    appendLine("     $status ${fare.code} | ${fare.price} SAR | quota=${fare.quota}$star")
-                                }
-                                appendLine()
+                _searchResponseText.value = buildString {
+                    appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
+                    appendLine()
+                    if (flights.isEmpty()) {
+                        appendLine("⚠️ لم تُستخرج أي رحلة")
+                    } else {
+                        flights.forEachIndexed { idx, f ->
+                            val isMatched = f.flightNumber == matchedFlightNumber
+                            val prefix = if (isMatched) "🎯" else "  "
+                            val directStr = if (f.isDirect) "مباشر" else "${f.stops}st"
+                            appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime}→${f.arrivalTime} | $directStr")
+                            f.fares.forEach { fare ->
+                                val status = if (fare.isAvailable) "✅" else "❌"
+                                val star = if (isMatched && fare.code == matchedFareCode) " ⬅ المختارة" else ""
+                                appendLine("     $status ${fare.code} | ${fare.price} SAR | quota=${fare.quota}$star")
                             }
+                            appendLine()
                         }
                     }
-
-                    if (match != null) {
-                        val (flight, fare) = match
-                        addLog("🎯 مطابقة: ${flight.flightNumber} @ ${flight.departTime} | ${fare.code}")
-                        return FoundFlightDetails(
-                            flightNumber = flight.flightNumber,
-                            date = flightData.date,
-                            origin = flight.origin,
-                            destination = flight.destination,
-                            departureTime = flight.departTime,
-                            price = fare.price,
-                            fareFamily = fare.code,
-                            airBoundId = fare.airBoundId
-                        )
-                    }
-                } else {
-                    _searchResponseText.value = "⚠️ HTTP ${resp.code()}"
                 }
-            } catch (e: Exception) {
-                _searchResponseText.value = "❌ خطأ:\n${e.message}"
+
+                if (match != null) {
+                    val (flight, fare) = match
+                    addLog("🎯 مطابقة: ${flight.flightNumber} @ ${flight.departTime} | ${fare.code}")
+                    return FoundFlightDetails(
+                        flightNumber = flight.flightNumber,
+                        date = flightData.date,
+                        origin = flight.origin,
+                        destination = flight.destination,
+                        departureTime = flight.departTime,
+                        price = fare.price,
+                        fareFamily = fare.code,
+                        airBoundId = fare.airBoundId
+                    )
+                }
+            } else {
+                _searchResponseText.value = "⚠️ HTTP ${resp.code()}"
             }
-            if (attempt < max) delay(Random.nextLong(5_000L, 8_000L))
+        } catch (e: Exception) {
+            _searchResponseText.value = "❌ خطأ:\n${e.message}"
         }
         return null
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  parseAirBounds — 100% مطابق لـ parseAirBounds في السكريبت
-    // ═══════════════════════════════════════════════════════════
     private fun parseAirBounds(response: SaudiaResponse): List<ParsedFlight> {
         val groups = response.data?.airBoundGroups ?: return emptyList()
         val flightDict = response.data?.dictionaries?.flight ?: emptyMap()
@@ -495,16 +495,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
             val flightId = segments[0].flightId ?: continue
 
-            // استخراج رقم الرحلة
             val fnMatch = Regex("SEG-([A-Z]{2}\\d+)-").find(flightId)
             val flightNumber = fnMatch?.groupValues?.get(1) ?: "?"
 
-            // استخراج وقت الإقلاع (نفس regex السكريبت: -YYYY-MM-DD-HHMM$)
             val dtMatch = Regex("-(\\d{4}-\\d{2}-\\d{2})-(\\d{4})$").find(flightId)
             val timeRaw = dtMatch?.groupValues?.get(2) ?: "0000"
             val departTime = timeRaw.substring(0, 2) + ":" + timeRaw.substring(2, 4)
 
-            // استخراج وقت الوصول من dictionaries (نفس السكريبت)
             val flightInfo = flightDict[flightId]
             val arrivalDateTime = flightInfo?.arrival?.dateTime ?: ""
             val arrMatch = Regex("T(\\d{2}:\\d{2})").find(arrivalDateTime)
@@ -518,10 +515,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val quota = avail?.quota ?: 0
                 val statusCode = avail?.statusCode ?: ""
 
-                // شرط الإتاحة (نفس السكريبت حرفياً)
                 val isAvailable = !isSoldOut && quota > 0 && statusCode == "HK"
 
-                // السعر — نفس السكريبت: prices.totalPrices[0].total || airOffer.totalPrice.value || 0
                 val priceValue = ab.prices?.totalPrices?.firstOrNull()?.total
                     ?: ab.airOffer?.totalPrice?.value
                     ?: 0.0
@@ -544,19 +539,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return flights
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  findMatchingFlight — 100% مطابق للسكريبت
-    // ═══════════════════════════════════════════════════════════
     private fun findMatchingFlight(
         flights: List<ParsedFlight>,
         wantedTime: String,
         wantedCodes: List<String>
     ): Pair<ParsedFlight, ParsedFare>? {
         for (flight in flights) {
-            // 1. فلتر المباشر (السكريبت: directOnly !== false && !isDirect → skip)
             if (flightData.directOnly && !flight.isDirect) continue
 
-            // 2. مطابقة الوقت/رقم الرحلة (نفس منطق السكريبت)
             if (wantedTime.isNotBlank()) {
                 val t = wantedTime.trim()
                 val tu = t.uppercase()
@@ -569,18 +559,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         if (flight.flightNumber == tu) matchedTime = true
                     }
                     isTimeFormat -> {
-                        // مطابقة وقت الإقلاع أو وقت الوصول (نفس السكريبت)
                         if (flight.departTime == t || flight.arrivalTime == t) matchedTime = true
                     }
                     else -> {
-                        // Fallback: بحث جزئي (نفس السكريبت)
                         if (flight.flightNumber.contains(t) || flight.departTime.contains(t)) matchedTime = true
                     }
                 }
                 if (!matchedTime) continue
             }
 
-            // 3. إيجاد فئة سعر متاحة ومطابقة (نفس السكريبت)
             val matchedFare = flight.fares.firstOrNull {
                 it.isAvailable && wantedCodes.contains(it.code)
             } ?: continue
