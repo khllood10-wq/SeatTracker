@@ -350,8 +350,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             delay(10000)
                         }
                     } else {
-                        // 🆕 الفاصل الزمني: 3-8 ثوانٍ (بدلاً من 5-8)
-                        delay(Random.nextLong(3_000L, 8_000L))
+                        // 🆕 الفاصل الزمني: 4-8 ثوانٍ
+                        delay(Random.nextLong(4_000L, 8_000L))
                     }
                 } catch (e: Exception) {
                     addLog("❌ خطأ في الجولة: ${e.message}")
@@ -595,7 +595,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
             // ═══ 401 ═══
             if (resp.code() == 401) {
-                val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
                 _lastErrorCode = 401
                 _lastErrorMessage = "انتهت الجلسة"
                 _searchResponseText.value = buildString {
