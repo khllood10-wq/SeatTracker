@@ -39,7 +39,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val debugEntries by viewModel.debugEntries.collectAsStateWithLifecycle()
 
-    // ═══ الحلقة التلقائية ═══
     val autoLoopActive by viewModel.autoLoopActive.collectAsStateWithLifecycle()
     val needsWebViewRefresh by viewModel.needsWebViewRefresh.collectAsStateWithLifecycle()
     val autoCaptureMode by viewModel.autoCaptureMode.collectAsStateWithLifecycle()
@@ -50,7 +49,6 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     var showWebView by remember { mutableStateOf(false) }
     var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
 
-    // متجدد تلقائياً لعرض الوقت المتبقي من JWT
     var jwtMinutesLeft by remember { mutableLongStateOf(0L) }
     var hyperSecondsLeft by remember { mutableLongStateOf(0L) }
 
@@ -59,7 +57,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         else viewModel.markSessionPreparing()
     }
 
-    // ═══ فتح WebView تلقائياً عند الحاجة (من الحلقة) ═══
+    // فتح WebView تلقائياً عند الحاجة
     LaunchedEffect(needsWebViewRefresh) {
         if (needsWebViewRefresh && reeseTokenForWebView == null && !showWebView) {
             val t = viewModel.showWebViewCapture()
@@ -70,7 +68,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         }
     }
 
-    // ═══ عدادات ═══
+    // عدادات
     LaunchedEffect(Unit) {
         while (true) {
             jwtMinutesLeft = viewModel.jwtRemainingMinutes()
@@ -80,15 +78,27 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         }
     }
 
-    // ═══ عرض WebView (يدوي أو تلقائي) ═══
+    // ═══ WebView (يدوي أو تلقائي) ═══
     if (showWebView && reeseTokenForWebView != null) {
+        // Force-close بعد 20 ثانية كحد أقصى
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(20_000)
+            if (showWebView) {
+                showWebView = false
+                reeseTokenForWebView = null
+                viewModel.dismissWebView()
+            }
+        }
         WebViewTokenCapture(
             reese84Token = reeseTokenForWebView!!,
             autoMode = autoCaptureMode,
             onSuccess = { jwt, sid ->
                 viewModel.onWebViewJwtCaptured(jwt, sid)
-                showWebView = false
-                reeseTokenForWebView = null
+                // لا نغلق WebView إلا إذا وصل sid
+                if (sid.isNotBlank()) {
+                    showWebView = false
+                    reeseTokenForWebView = null
+                }
             },
             onCancel = {
                 showWebView = false
