@@ -60,7 +60,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // 🔄 تجديد جلسة Hyper
+        // ═══════ الأزرار الأساسية ═══════
+
+        // 1. تجديد جلسة Hyper
         Button(
             onClick = { viewModel.refreshSession() },
             modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -69,7 +71,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("🔄 تجديد جلسة Hyper (reese84)", fontWeight = FontWeight.Bold)
         }
 
-        // 🧪 اختبار httpcloak (جديد!)
+        // 2. اختبار httpcloak (تشخيص شامل)
         OutlinedButton(
             onClick = { viewModel.testHttpCloak() },
             modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -79,7 +81,17 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("🧪 اختبار httpcloak (تشخيص شامل)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
 
-        // 🚀 بدء الحجز
+        // 3. اختبار reese84 مباشرة على dapi (جديد)
+        OutlinedButton(
+            onClick = { viewModel.testDirectApi() },
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00C853)),
+            border = BorderStroke(2.dp, Color(0xFF00C853))
+        ) {
+            Text("🎯 اختبار reese84 مباشرة على dapi", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+
+        // 4. بدء الحجز
         Button(
             onClick = { activity?.let { viewModel.runFullBooking(it) } },
             enabled = !isRunning && sessionReady,
@@ -92,7 +104,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             )
         }
 
-        // وضع المراقبة
+        // ═══════ وضع المراقبة ═══════
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -103,7 +115,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // اختبارات أخرى
+        // ═══════ الاختبارات ═══════
         OutlinedButton({ navController.navigate(Screen.GetTest.route) }, Modifier.fillMaxWidth()) {
             Text("🧪 اختبار GET", fontSize = 12.sp)
         }
@@ -111,7 +123,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("🔬 اختبار token/init", fontSize = 12.sp)
         }
 
-        // بيانات
+        // ═══════ بيانات المسافر والرحلة ═══════
         OutlinedButton({ navController.navigate(Screen.Passenger.route) }, Modifier.fillMaxWidth()) {
             Text("👤 ${viewModel.passengerData.firstName} ${viewModel.passengerData.lastName}", fontSize = 12.sp)
         }
@@ -119,13 +131,13 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             Text("✈️ ${viewModel.flightData.from} → ${viewModel.flightData.to}", fontSize = 12.sp)
         }
 
-        // المراحل
+        // ═══════ المراحل ═══════
         if (steps.any { it.status != StepStatus.PENDING }) {
             Text("المراحل:", fontWeight = FontWeight.Bold)
             steps.forEach { s -> StepRow(s) }
         }
 
-        // PNR/SADAD
+        // ═══════ PNR/SADAD ═══════
         if (pnr.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(
@@ -146,7 +158,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // السجل
+        // ═══════ السجل ═══════
         if (logs.isNotEmpty()) {
             Text("📝 السجل:", fontWeight = FontWeight.Bold)
             Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -160,7 +172,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // ═══════════════ قسم Debug ═══════════════
+        // ═══════ قسم Debug ═══════
         if (debugEntries.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
 
