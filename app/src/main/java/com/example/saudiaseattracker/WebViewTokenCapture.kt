@@ -10,6 +10,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -30,8 +32,8 @@ fun WebViewTokenCapture(
     val context = LocalContext.current
     var status by remember { mutableStateOf("🔄 جاري حقن reese84...") }
     var currentUrl by remember { mutableStateOf("") }
-    var isChallengePage by remember { mutableStateOf<Boolean?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
+    var hookInstalled by remember { mutableStateOf(false) }
     val captured = remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -45,11 +47,10 @@ fun WebViewTokenCapture(
             cm.flush()
 
             val check = cm.getCookie("https://www.saudia.com")
-            Log.d("WebViewCapture", "🍪 Cookies after inject: ${check?.take(200)}")
             DebugBus.emit(DebugEntry(
                 source = DebugSource.APP,
-                title = "🍪 reese84 محقون",
-                body = "cookieValue.len=${cookieValue.length}\ncheck=${check?.take(300)}"
+                title = "🍪 reese84 محقون في WebView",
+                body = "cookieValue.len=${cookieValue.length}\ncheck.has_reese=${check?.contains("reese84") == true}"
             ))
             status = "✅ reese84 محقون — جاري التحميل..."
         } catch (e: Exception) {
@@ -64,6 +65,7 @@ fun WebViewTokenCapture(
                 if (captured.value) return
                 captured.value = true
                 status = "🎉 JWT تم التقاطه!"
+                Log.d("WebViewCapture", "🎯 JWT: ${token.take(40)}...")
                 DebugBus.emit(DebugEntry(
                     source = DebugSource.APP,
                     title = "🎉 JWT من WebView!",
@@ -74,48 +76,64 @@ fun WebViewTokenCapture(
             @JavascriptInterface
             fun onLog(msg: String) {
                 Log.e("WebViewCapture", "📝 JS: $msg")
-                DebugBus.emit(DebugEntry(
-                    source = DebugSource.APP,
-                    title = "📝 WebView JS",
-                    body = msg.take(1000)
-                ))
+                // نسجّل فقط الأحداث المهمة لتجنب الفوضى
+                if (msg.contains("token", ignoreCase = true) ||
+                    msg.contains("JWT", ignoreCase = true) ||
+                    msg.contains("hook", ignoreCase = true) ||
+                    msg.contains("XHR", ignoreCase = true) ||
+                    msg.contains("FETCH", ignoreCase = true)
+                ) {
+                    DebugBus.emit(DebugEntry(
+                        source = DebugSource.APP,
+                        title = "📝 WebView JS",
+                        body = msg.take(500)
+                    ))
+                }
             }
         }
     }
 
     Column(Modifier.fillMaxSize().background(Color.Black)) {
+        // ═══ شريط الحالة ═══
         Card(
             Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(
                 containerColor = when {
                     captured.value -> Color(0xFF00C853)
-                    isChallengePage == true -> Color(0xFFD32F2F)
-                    isLoaded -> Color(0xFF2196F3)
-                    else -> Color(0xFFFFA726)
+                    hookInstalled -> Color(0xFF2196F3)
+                    isLoaded -> Color(0xFFFFA726)
+                    else -> Color(0xFF607D8B)
                 }
             )
         ) {
-            Column(Modifier.padding(12.dp)) {
+            Column(Modifier.padding(10.dp)) {
                 Text(status, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 if (currentUrl.isNotBlank()) {
                     Text(
                         "URL: ${currentUrl.takeLast(60)}",
-                        color = Color.White.copy(alpha = 0.8f),
-                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.75f),
+                        fontSize = 9.sp,
                         maxLines = 1
                     )
                 }
-                if (isChallengePage != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        if (isChallengePage == true) "❌ صفحة تحدي" else "✅ صفحة حقيقية",
+                        if (hookInstalled) "✅ Hook مثبّت" else "⏳ Hook...",
                         color = Color.White,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (captured.value) "✅ JWT" else "⏳ JWT",
+                        color = Color.White,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
         }
 
+        // ═══ WebView ═══
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             factory = { ctx ->
@@ -135,30 +153,25 @@ fun WebViewTokenCapture(
                         override fun onPageStarted(v: WebView?, url: String?, fav: Bitmap?) {
                             super.onPageStarted(v, url, fav)
                             currentUrl = url ?: ""
-                            status = "📄 تحميل..."
+                            // ✅ تثبيت الـ hook مبكراً — بدون فحص
+                            v?.evaluateJavascript(HOOK_JS, null)
                         }
                         override fun onPageFinished(v: WebView?, url: String?) {
                             super.onPageFinished(v, url)
                             currentUrl = url ?: ""
                             isLoaded = true
-                            v?.evaluateJavascript(
-                                "(function(){" +
-                                "var b = document.body ? document.body.innerText : '';" +
-                                "var c = b.indexOf('Pardon Our Interruption') > -1 || " +
-                                "        document.querySelector('script[src*=\"_Incapsula_Resource\"]') !== null;" +
-                                "SaudiaBridge.onLog('isChallenge=' + c + ' bodyLen=' + b.length);" +
-                                "return c;" +
-                                "})()"
-                            ) { result ->
-                                val isCh = result?.trim()?.removeSurrounding("\"") == "true"
-                                isChallengePage = isCh
-                                if (isCh) {
-                                    status = "❌ لا تزال صفحة التحدي"
-                                } else {
-                                    status = "✅ صفحة حقيقية — حقن JS لاعتراض /token/init"
-                                    v?.evaluateJavascript(HOOK_JS, null)
+
+                            // تثبيت الـ hook بعد اكتمال التحميل أيضاً (احتياطي)
+                            v?.evaluateJavascript(HOOK_JS, null)
+
+                            // إعادة التثبيت بعد 2 ثانية (SPA قد يعيد تعريف fetch)
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                v?.evaluateJavascript(HOOK_JS, null)
+                                hookInstalled = true
+                                if (!captured.value) {
+                                    status = "✅ الصفحة جاهزة — ابحث عن رحلة"
                                 }
-                            }
+                            }, 2000)
                         }
                     }
                     loadUrl("https://www.saudia.com/ar-SA")
@@ -166,6 +179,7 @@ fun WebViewTokenCapture(
             }
         )
 
+        // ═══ التعليمات ═══
         Card(
             Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -173,58 +187,86 @@ fun WebViewTokenCapture(
             Column(Modifier.padding(10.dp)) {
                 Text("📋 التعليمات:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Text(
-                    "1. لو 'صفحة حقيقية' ✅ → ابحث عن رحلة، اخترها، ادخل بيانات المسافر\n" +
-                    "2. JWT يُلتقط تلقائياً\n" +
-                    "3. لو 'صفحة تحدي' ❌ → أرسل السجل، سنغيّر التكتيك",
+                    "1. ابحث عن رحلة (مثلاً JED → AHB)\n" +
+                    "2. اختر الرحلة من النتائج\n" +
+                    "3. عند فتح صفحة المسافرين → JWT يُلتقط تلقائياً\n" +
+                    "4. ستعود للشاشة الرئيسية تلقائياً",
                     fontSize = 11.sp
                 )
                 Spacer(Modifier.height(8.dp))
-                Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-                    Text("إلغاء")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("✖️ إلغاء", fontSize = 12.sp) }
                 }
             }
         }
     }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  JavaScript Hook — يلتقط /token/init من fetch و XHR
+// ═══════════════════════════════════════════════════════════
 private const val HOOK_JS = """
     (function() {
-        if (window.__hook) return;
-        window.__hook = true;
-        var origFetch = window.fetch;
-        window.fetch = function(input, init) {
-            var url = typeof input === 'string' ? input : (input && input.url) || '';
-            var isTok = url.indexOf('/token/init') > -1 || url.indexOf('/token/initialization') > -1;
-            SaudiaBridge.onLog('FETCH: ' + url.substring(0, 100) + ' isTok=' + isTok);
-            var p = origFetch.apply(this, arguments);
-            if (isTok) {
-                p.then(function(r) {
-                    r.clone().text().then(function(t) {
-                        try {
-                            var d = JSON.parse(t);
-                            SaudiaBridge.onLog('TOK RESP: ' + t.substring(0, 200));
-                            if (d.access_token) SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
-                        } catch(e) { SaudiaBridge.onLog('parse err: ' + e); }
+        if (window.__hookInstalled && window.__hookInstalledAt > Date.now() - 60000) return;
+        window.__hookInstalled = true;
+        window.__hookInstalledAt = Date.now();
+
+        // ─── اعتراض fetch ───
+        if (!window.__origFetch) {
+            window.__origFetch = window.fetch;
+            window.fetch = function(input, init) {
+                var url = typeof input === 'string' ? input : (input && input.url) || '';
+                var isTok = url.indexOf('/token/init') > -1 || url.indexOf('/token/initialization') > -1;
+                if (isTok) SaudiaBridge.onLog('FETCH: ' + url.substring(0, 150));
+                var p = window.__origFetch.apply(this, arguments);
+                if (isTok) {
+                    p.then(function(r) {
+                        r.clone().text().then(function(t) {
+                            try {
+                                var d = JSON.parse(t);
+                                SaudiaBridge.onLog('FETCH RESP: ' + t.substring(0, 300));
+                                if (d.access_token) {
+                                    SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
+                                }
+                            } catch(e) { SaudiaBridge.onLog('FETCH parse err: ' + e); }
+                        });
                     });
-                });
-            }
-            return p;
-        };
-        var oO = XMLHttpRequest.prototype.open, oS = XMLHttpRequest.prototype.send;
-        XMLHttpRequest.prototype.open = function(m, u) { this.__u = u; return oO.apply(this, arguments); };
-        XMLHttpRequest.prototype.send = function() {
-            var s = this;
-            var isTok = s.__u && (s.__u.indexOf('/token/init') > -1 || s.__u.indexOf('/token/initialization') > -1);
-            SaudiaBridge.onLog('XHR: ' + (s.__u||'').substring(0, 100) + ' isTok=' + isTok);
-            if (isTok) s.addEventListener('load', function() {
-                try {
-                    var d = JSON.parse(s.responseText);
-                    SaudiaBridge.onLog('XHR RESP: ' + s.responseText.substring(0, 200));
-                    if (d.access_token) SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
-                } catch(e) {}
-            });
-            return oS.apply(this, arguments);
-        };
-        SaudiaBridge.onLog('hook installed @ ' + location.href);
+                }
+                return p;
+            };
+        }
+
+        // ─── اعتراض XHR ───
+        if (!window.__origXHR) {
+            window.__origXHR = true;
+            var oO = XMLHttpRequest.prototype.open;
+            var oS = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function(m, u) {
+                this.__u = u;
+                return oO.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function() {
+                var s = this;
+                var isTok = s.__u && (s.__u.indexOf('/token/init') > -1 || s.__u.indexOf('/token/initialization') > -1);
+                if (isTok) SaudiaBridge.onLog('XHR: ' + s.__u.substring(0, 150));
+                if (isTok) {
+                    s.addEventListener('load', function() {
+                        try {
+                            var d = JSON.parse(s.responseText);
+                            SaudiaBridge.onLog('XHR RESP: ' + s.responseText.substring(0, 300));
+                            if (d.access_token) {
+                                SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
+                            }
+                        } catch(e) {}
+                    });
+                }
+                return oS.apply(this, arguments);
+            };
+        }
+
+        SaudiaBridge.onLog('hook @ ' + location.href);
     })();
 """
