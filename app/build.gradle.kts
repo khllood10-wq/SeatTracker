@@ -86,6 +86,9 @@ dependencies {
     // 👇 مكتبة httpcloak المحلية (لانتحال بصمة Chrome في طلبات السعودية)
     implementation(files("libs/httpcloak-release.aar"))
 
+    // 👇 مكتبة AndroidX WebKit (ضرورية لدالة addDocumentStartJavaScript)
+    implementation("androidx.webkit:webkit:1.11.0")
+
     // اختبارات
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
