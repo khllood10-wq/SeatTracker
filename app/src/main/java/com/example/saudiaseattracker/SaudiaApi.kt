@@ -7,6 +7,7 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
+import java.util.concurrent.TimeUnit
 
 interface SaudiaApi {
     @POST("airsearch/search/air-bounds")
@@ -80,13 +81,6 @@ interface SaudiaApi {
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
     ): Response<ResponseBody>
-
-    // ═══════ تشخيص: طلبات مباشرة عبر OkHttp ═══════
-    @POST("https://dapi.saudia.com/session/auth/web/token/initialization")
-    suspend fun tokenInitDirect(
-        @HeaderMap headers: Map<String, String>,
-        @Body body: RequestBody
-    ): Response<ResponseBody>
 }
 
 data class CreateCartRequest(val airBoundIds: List<String>)
@@ -96,6 +90,10 @@ object RetrofitClient {
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            // 🆕 زيادة المهلة لمنع Timeout
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val req = chain.request()
                 val t0 = System.currentTimeMillis()
