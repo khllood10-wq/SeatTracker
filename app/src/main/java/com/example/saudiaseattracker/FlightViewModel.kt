@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -79,13 +80,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchLogs = MutableStateFlow<List<String>>(emptyList())
     val searchLogs: StateFlow<List<String>> = _searchLogs
 
-    // رد البحث في المستطيل
+    // رد البحث (JSON) في المستطيل
     private val _searchResponseText = MutableStateFlow("بدء البحث...")
     val searchResponseText: StateFlow<String> = _searchResponseText
-
-    // JS Logs من WebView
-    private val _jsLogText = MutableStateFlow("")
-    val jsLogText: StateFlow<String> = _jsLogText
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
@@ -117,10 +114,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
 
-    fun appendJsLog(msg: String) {
-        _jsLogText.value = (msg + "\n" + _jsLogText.value).take(3000)
-    }
-
     fun isSidReady(): Boolean = activeSaaSessionId.isNotBlank()
 
     init {
@@ -137,7 +130,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
                 markSessionReady()
                 addLog("✅ جلسة Hyper جاهزة — فتح WebView تلقائياً...")
-                // فتح WebView تلقائياً بعد جهوزية Hyper لجلب JWT + sid
+                // فتح WebView تلقائياً لجلب JWT + sid بدون إظهاره للمستخدم
                 _autoCaptureMode.value = true
                 _needsWebViewRefresh.value = true
             } catch (e: Exception) {
@@ -201,7 +194,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _finalSadad.value = ""
         _searchLogs.value = emptyList()
         _searchResponseText.value = "بدء البحث..."
-        _jsLogText.value = ""
     }
 
     fun sessionExpiryMs(): Long = hyperSession.expiryAt()
@@ -403,9 +395,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
         var attempt = 0
+        val gson = GsonBuilder().setPrettyPrinting().create()
+        
         while (attempt < max) {
             attempt++
             setStep("search", StepStatus.RUNNING, "محاولة $attempt/$max")
+            
+            // هنا نقوم بمسح الرد القديم وتجهيز الرد الجديد
+            _searchResponseText.value = "جاري إرسال الطلب... (محاولة $attempt)"
+            
             try {
                 val resp = RetrofitClient.api.searchAirBounds(
                     headers = buildHeaders("4"),
@@ -420,15 +418,20 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 saveCookiesFromResponse(resp)
 
+                // نلتقط رد الـ API الفعلي سواء كان نجاح أو خطأ
+                val rawJsonResponse = try {
+                    if (resp.isSuccessful) gson.toJson(resp.body())
+                    else resp.errorBody()?.string() ?: "لا يوجد رد"
+                } catch (e: Exception) { "فشل قراءة الرد" }
+
+                // نضع الرد الفعلي في المستطيل (هذا يقوم بمسح القديم وعرض الجديد)
+                _searchResponseText.value = "HTTP ${resp.code()} | محاولة $attempt\n\n$rawJsonResponse"
+
                 if (resp.code() == 401) {
-                    _searchResponseText.value = "🚨 انتهت الجلسة (401) — جاري التجديد..."
                     jwtExpiryMs = 0L
                     return null
                 }
-                if (resp.code() == 403) {
-                    _searchResponseText.value = "🚨 Imperva رفض (403)"
-                    return null
-                }
+                if (resp.code() == 403) return null
 
                 if (resp.isSuccessful) {
                     val g = resp.body()?.data?.airBoundGroups?.firstOrNull { gg ->
@@ -438,19 +441,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         ?.minByOrNull { it.airOffer?.totalPrice?.value ?: Double.MAX_VALUE }
 
                     if (cheapest != null) {
-                        _searchResponseText.value = "✅ وجدت الرحلة: ${flightData.flightNumber}\nالسعر: ${(cheapest.airOffer?.totalPrice?.value ?: 0.0) / 100.0} SAR"
                         return FoundFlightDetails(
                             flightData.flightNumber, flightData.date, g.boundDetails?.origin ?: flightData.from,
                             g.boundDetails?.destination ?: flightData.to, (cheapest.airOffer?.totalPrice?.value ?: 0.0) / 100.0,
                             cheapest.fareFamilyCode ?: "N/A", cheapest.airBoundId ?: ""
                         )
-                    } else {
-                        _searchResponseText.value = "⚠️ لم يتم العثور على الرحلة $flightData.flightNumber في الرد.\nجاري تحديث الصفحة والمحاولة..."
                     }
-                } else {
-                    _searchResponseText.value = "⚠️ استجابة غير متوقعة: HTTP ${resp.code()}"
                 }
-            } catch (e: Exception) { _searchResponseText.value = "❌ خطأ: ${e.message}" }
+            } catch (e: Exception) { 
+                _searchResponseText.value = "❌ خطأ في الاتصال:\n${e.message}" 
+            }
             if (attempt < max) delay(15_000)
         }
         return null
