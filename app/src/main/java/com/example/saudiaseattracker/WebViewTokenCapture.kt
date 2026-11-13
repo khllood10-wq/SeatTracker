@@ -2,6 +2,7 @@ package com.example.saudiaseattracker
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.os.Build
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -24,20 +25,18 @@ import androidx.compose.ui.viewinterop.AndroidView
 @Composable
 fun WebViewTokenCapture(
     reese84Token: String,
-    autoMode: Boolean = false,     // ← وضع تلقائي: لا تفاعل مطلوب
+    autoMode: Boolean = false,
     onSuccess: (jwt: String, sid: String) -> Unit,
     onCancel: () -> Unit
 ) {
-    val context = LocalContext.current
-    var status by remember { mutableStateOf("🔄 حقن reese84...") }
+    var status by remember { mutableStateOf("🔄 جاري الحقن...") }
     var currentUrl by remember { mutableStateOf("") }
     var hookInstalled by remember { mutableStateOf(false) }
-    var autoAttempts by remember { mutableIntStateOf(0) }
+    var eventsSeen by remember { mutableIntStateOf(0) }
     val captured = remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    var showManualFallback by remember { mutableStateOf(false) }
 
-    // ═══ حقن reese84 في CookieManager ═══
+    // حقن reese84 في CookieManager
     LaunchedEffect(Unit) {
         try {
             val cm = CookieManager.getInstance()
@@ -47,144 +46,92 @@ fun WebViewTokenCapture(
             cm.setCookie("https://saudia.com", cookieValue)
             cm.setCookie("https://dapi.saudia.com", cookieValue)
             cm.flush()
-
+            status = "✅ reese84 محقون — تحميل الرئيسية..."
             DebugBus.emit(DebugEntry(
                 source = DebugSource.APP,
-                title = "🍪 reese84 محقون (auto=${autoMode})",
-                body = "autoMode=$autoMode"
+                title = "🍪 reese84 injected",
+                body = "len=${cookieValue.length}"
             ))
-            status = "✅ reese84 محقون"
         } catch (e: Exception) {
-            status = "❌ فشل الحقن: ${e.message}"
+            status = "❌ ${e.message}"
         }
     }
 
-    // ═══ وضع تلقائي: محاولة فتح صفحات تُطلق /token/init ═══
-    LaunchedEffect(autoMode) {
-        if (!autoMode) return@LaunchedEffect
-        // ننتظر حتى يُحمّل WebView
-        kotlinx.coroutines.delay(5000)
-        val wv = webViewRef ?: return@LaunchedEffect
-
-        // محاولة 1: صفحة البحث
-        val autoUrls = listOf(
-            "https://www.saudia.com/ar-SA/booking/search",
-            "https://www.saudia.com/ar-SA/booking",
-            "https://www.saudia.com/ar-SA/booking/passengerDetails"
-        )
-
-        for (url in autoUrls) {
-            if (captured.value) break
-            if (!autoMode) break
-            autoAttempts++
-            status = "🔄 محاولة تلقائية #$autoAttempts: ${url.takeLast(30)}"
-            DebugBus.emit(DebugEntry(
-                source = DebugSource.APP,
-                title = "🔄 auto-nav #$autoAttempts",
-                body = "url=$url"
-            ))
-            wv.post { wv.loadUrl(url) }
-            kotlinx.coroutines.delay(12000)
-        }
-
+    // ⏰ مهلة 40 ثانية — إذا لم يُلتقط JWT، أعط المستخدم خيار fallback
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(40_000)
         if (!captured.value) {
-            // فشل الوضع التلقائي → أظهر للمستخدم
-            showManualFallback = true
-            status = "⚠️ لم يُلتقط JWT تلقائياً — تفاعل مع الصفحة"
+            status = "⚠️ انتهت 40 ثانية — JWT لم يُلتقط. راجع السجل."
         }
     }
 
-    // ═══ JS Bridge ═══
     val bridge = remember {
         object {
             @JavascriptInterface
             fun onJwt(token: String, sid: String) {
                 if (captured.value) return
+                if (!token.startsWith("Bearer ") && !token.startsWith("eyJ")) return
                 captured.value = true
+                val clean = if (token.startsWith("Bearer ")) token else "Bearer $token"
                 status = "🎉 JWT تم التقاطه!"
-                Log.d("WebViewCapture", "🎯 JWT: ${token.take(40)}...")
+                Log.d("WebViewCapture", "🎯 JWT len=${clean.length}")
                 DebugBus.emit(DebugEntry(
                     source = DebugSource.APP,
-                    title = "🎉 JWT من WebView!",
-                    body = "jwt.prefix=${token.take(60)}...\nsid=$sid\nautoAttempts=$autoAttempts"
+                    title = "🎉 JWT captured from homepage!",
+                    body = "jwt.prefix=${clean.take(60)}...\nsid=$sid"
                 ))
-                onSuccess(token, sid)
+                onSuccess(clean, sid)
             }
             @JavascriptInterface
             fun onLog(msg: String) {
-                if (msg.contains("token", true) || msg.contains("hook", true) ||
-                    msg.contains("XHR", true) || msg.contains("FETCH", true)) {
-                    Log.e("WebViewCapture", "📝 $msg")
-                }
+                eventsSeen++
+                Log.e("WebViewCapture", "📝 $msg")
+                DebugBus.emit(DebugEntry(
+                    source = DebugSource.APP,
+                    title = "📝 WebView JS",
+                    body = msg.take(800)
+                ))
             }
         }
     }
 
-    // ═══ وضع تلقائي: عرض صغير فقط ═══
-    if (autoMode && !showManualFallback) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(
-                modifier = Modifier.size(1.dp),  // ← 1x1 بكسل - مخفي
-                factory = { ctx ->
-                    createWebView(ctx, bridge, { url -> currentUrl = url }, {
-                        hookInstalled = true
-                    }).also { webViewRef = it }
-                }
-            )
-            // Overlay صغير لإعلام المستخدم
-            Surface(
-                modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
-                    .padding(top = 40.dp)
-                    .padding(horizontal = 16.dp),
-                color = Color(0xFF2196F3),
-                shape = MaterialTheme.shapes.medium,
-                shadowElevation = 8.dp
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(status, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    if (autoAttempts > 0) {
-                        Text(
-                            "محاولات: $autoAttempts/3",
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 10.sp
-                        )
-                    }
-                    TextButton(onClick = onCancel) {
-                        Text("✖️ إلغاء", color = Color.White, fontSize = 11.sp)
-                    }
-                }
-            }
-        }
-        return
-    }
-
-    // ═══ وضع يدوي (أو fallback) ═══
+    // ═══ عرض ═══
     Column(Modifier.fillMaxSize().background(Color.Black)) {
+        // شريط الحالة
         Card(
             Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(
                 containerColor = when {
                     captured.value -> Color(0xFF00C853)
-                    showManualFallback -> Color(0xFFD32F2F)
-                    hookInstalled -> Color(0xFF2196F3)
+                    eventsSeen > 3 -> Color(0xFF2196F3)
+                    hookInstalled -> Color(0xFFFFA726)
                     else -> Color(0xFF607D8B)
                 }
             )
         ) {
             Column(Modifier.padding(10.dp)) {
-                Text(status, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text(status, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 if (currentUrl.isNotBlank()) {
                     Text(
-                        "URL: ${currentUrl.takeLast(50)}",
+                        "URL: ${currentUrl.takeLast(55)}",
                         color = Color.White.copy(alpha = 0.75f),
-                        fontSize = 9.sp, maxLines = 1
+                        fontSize = 9.sp,
+                        maxLines = 1
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(if (hookInstalled) "✅ Hook" else "⏳ Hook",
-                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Text(if (captured.value) "✅ JWT" else "⏳ JWT",
-                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        if (hookInstalled) "✅ Hook" else "⏳ Hook",
+                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "📊 JS Events: $eventsSeen",
+                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (captured.value) "✅ JWT" else "⏳ JWT",
+                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -192,118 +139,192 @@ fun WebViewTokenCapture(
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             factory = { ctx ->
-                createWebView(ctx, bridge, { url -> currentUrl = url }, {
-                    hookInstalled = true
-                }).also { webViewRef = it }
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+
+                    addJavascriptInterface(bridge, "SaudiaBridge")
+                    webChromeClient = object : WebChromeClient() {}
+
+                    // ⭐ الأهم: تثبيت الـ hook قبل أي JS
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        addDocumentStartJavaScript(HOOK_JS, setOf("*"))
+                        hookInstalled = true
+                        Log.d("WebViewCapture", "✅ addDocumentStartJavaScript (Android 11+)")
+                    }
+
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageStarted(v: WebView?, url: String?, fav: Bitmap?) {
+                            super.onPageStarted(v, url, fav)
+                            currentUrl = url ?: ""
+                            // fallback للأجهزة الأقدم
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                                v?.evaluateJavascript(HOOK_JS, null)
+                                hookInstalled = true
+                            }
+                        }
+                        override fun onPageFinished(v: WebView?, url: String?) {
+                            super.onPageFinished(v, url)
+                            currentUrl = url ?: ""
+                            // إعادة التثبيت احتياطاً (SPA قد يعيد تعريف fetch)
+                            v?.evaluateJavascript(HOOK_JS, null)
+                            // مسح Storage للبحث عن JWT مخزّن
+                            v?.evaluateJavascript(SCAN_STORAGE_JS, null)
+                        }
+                    }
+                    loadUrl("https://www.saudia.com/ar-SA")
+                }.also { webViewRef = it }
             }
         )
 
+        // تعليمات + مسح Storage يدوي
         Card(
             Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(10.dp)) {
-                Text("📋 التعليمات:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Text(
-                    "1. ابحث عن رحلة (JED → AHB)\n" +
-                    "2. اختر الرحلة\n" +
-                    "3. JWT يُلتقط عند صفحة المسافرين",
+                    "🔍 الـ hook مثبّت الآن قبل أي JS. يجب أن يلتقط /token/init تلقائياً.",
                     fontSize = 11.sp
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-                    Text("✖️ إلغاء", fontSize = 12.sp)
+                Text(
+                    "إذا لم يُلتقط خلال 30 ثانية → اضغط الزر أدناه",
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            webViewRef?.evaluateJavascript(SCAN_STORAGE_JS, null)
+                            status = "🔍 فحص Storage..."
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("🔍 فحص Storage", fontSize = 11.sp) }
+                    OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                        Text("✖️ إلغاء", fontSize = 11.sp)
+                    }
                 }
             }
         }
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
-private fun createWebView(
-    ctx: android.content.Context,
-    bridge: Any,
-    onUrlChange: (String) -> Unit,
-    onHookInstalled: () -> Unit
-): WebView {
-    return WebView(ctx).apply {
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.databaseEnabled = true
-        settings.useWideViewPort = true
-        settings.loadWithOverviewMode = true
-        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
-        settings.mediaPlaybackRequiresUserGesture = false
-
-        addJavascriptInterface(bridge, "SaudiaBridge")
-        webChromeClient = object : WebChromeClient() {}
-
-        webViewClient = object : WebViewClient() {
-            override fun onPageStarted(v: WebView?, url: String?, fav: Bitmap?) {
-                super.onPageStarted(v, url, fav)
-                onUrlChange(url ?: "")
-                v?.evaluateJavascript(HOOK_JS, null)
-            }
-            override fun onPageFinished(v: WebView?, url: String?) {
-                super.onPageFinished(v, url)
-                onUrlChange(url ?: "")
-                v?.evaluateJavascript(HOOK_JS, null)
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    v?.evaluateJavascript(HOOK_JS, null)
-                    onHookInstalled()
-                }, 2000)
-            }
-        }
-        loadUrl("https://www.saudia.com/ar-SA")
-    }
-}
-
+// ═══════════════════════════════════════════════════════════
+//  Hook يُثبّت قبل تحميل أي JS (addDocumentStartJavaScript)
+// ═══════════════════════════════════════════════════════════
 private const val HOOK_JS = """
     (function() {
-        if (window.__hookInstalled && window.__hookInstalledAt > Date.now() - 60000) return;
+        if (window.__hookInstalled) return;
         window.__hookInstalled = true;
-        window.__hookInstalledAt = Date.now();
-        if (!window.__origFetch) {
-            window.__origFetch = window.fetch;
+
+        try {
+            // ═══ 1) اعتراض fetch ═══
+            var origFetch = window.fetch;
             window.fetch = function(input, init) {
-                var url = typeof input === 'string' ? input : (input && input.url) || '';
-                var isTok = url.indexOf('/token/init') > -1 || url.indexOf('/token/initialization') > -1;
-                if (isTok) SaudiaBridge.onLog('FETCH: ' + url.substring(0, 150));
-                var p = window.__origFetch.apply(this, arguments);
-                if (isTok) {
-                    p.then(function(r) {
-                        r.clone().text().then(function(t) {
+                try {
+                    var url = typeof input === 'string' ? input : (input && input.url) || '';
+                    SaudiaBridge.onLog('FETCH: ' + url.substring(0, 150));
+                    var isTok = url.indexOf('/token') > -1 || url.indexOf('/auth') > -1;
+                    var p = origFetch.apply(this, arguments);
+                    if (isTok) {
+                        p.then(function(r) {
+                            r.clone().text().then(function(t) {
+                                try {
+                                    SaudiaBridge.onLog('RESP: ' + t.substring(0, 300));
+                                    var d = JSON.parse(t);
+                                    if (d.access_token) SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
+                                    if (d.token && typeof d.token === 'string' && d.token.length > 50) {
+                                        SaudiaBridge.onJwt('Bearer ' + d.token, d.session_id || '');
+                                    }
+                                } catch(e) {}
+                            });
+                        }).catch(function(e){});
+                    }
+                    return p;
+                } catch(e) {
+                    SaudiaBridge.onLog('FETCH ERR: ' + e);
+                    return origFetch.apply(this, arguments);
+                }
+            };
+        } catch(e) { SaudiaBridge.onLog('fetch hook err: ' + e); }
+
+        try {
+            // ═══ 2) اعتراض XHR ═══
+            var origOpen = XMLHttpRequest.prototype.open;
+            var origSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function(m, u) {
+                this.__u = u;
+                return origOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function() {
+                try {
+                    var s = this;
+                    var url = s.__u || '';
+                    SaudiaBridge.onLog('XHR: ' + url.substring(0, 150));
+                    var isTok = url.indexOf('/token') > -1 || url.indexOf('/auth') > -1;
+                    if (isTok) {
+                        s.addEventListener('load', function() {
                             try {
-                                var d = JSON.parse(t);
-                                SaudiaBridge.onLog('TOK RESP: ' + t.substring(0, 200));
+                                SaudiaBridge.onLog('XHR RESP: ' + s.responseText.substring(0, 300));
+                                var d = JSON.parse(s.responseText);
                                 if (d.access_token) SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
+                                if (d.token && typeof d.token === 'string' && d.token.length > 50) {
+                                    SaudiaBridge.onJwt('Bearer ' + d.token, d.session_id || '');
+                                }
                             } catch(e) {}
                         });
-                    });
+                    }
+                } catch(e) {}
+                return origSend.apply(this, arguments);
+            };
+        } catch(e) { SaudiaBridge.onLog('XHR hook err: ' + e); }
+
+        // ═══ 3) فحص Storage كل 3 ثوانٍ ═══
+        setInterval(function() {
+            try {
+                var keys = ['access_token', 'accessToken', 'saudia-access-token', 'authorization', 'jwt', 'token'];
+                for (var i = 0; i < keys.length; i++) {
+                    var v = sessionStorage.getItem(keys[i]) || localStorage.getItem(keys[i]);
+                    if (v && typeof v === 'string' && v.indexOf('eyJ') > -1) {
+                        var t = v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v;
+                        SaudiaBridge.onJwt(t, '');
+                        return;
+                    }
                 }
-                return p;
-            };
-        }
-        if (!window.__origXHR) {
-            window.__origXHR = true;
-            var oO = XMLHttpRequest.prototype.open;
-            var oS = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.open = function(m, u) { this.__u = u; return oO.apply(this, arguments); };
-            XMLHttpRequest.prototype.send = function() {
-                var s = this;
-                var isTok = s.__u && (s.__u.indexOf('/token/init') > -1 || s.__u.indexOf('/token/initialization') > -1);
-                if (isTok) SaudiaBridge.onLog('XHR: ' + s.__u.substring(0, 150));
-                if (isTok) s.addEventListener('load', function() {
-                    try {
-                        var d = JSON.parse(s.responseText);
-                        SaudiaBridge.onLog('XHR RESP: ' + s.responseText.substring(0, 200));
-                        if (d.access_token) SaudiaBridge.onJwt('Bearer ' + d.access_token, d.session_id || '');
-                    } catch(e) {}
-                });
-                return oS.apply(this, arguments);
-            };
-        }
-        SaudiaBridge.onLog('hook @ ' + location.href);
+            } catch(e) {}
+        }, 3000);
+
+        SaudiaBridge.onLog('HOOK INSTALLED @ ' + location.href);
+    })();
+"""
+
+// فحص يدوي للـ Storage
+private const val SCAN_STORAGE_JS = """
+    (function(){
+        var found = [];
+        try {
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                var v = localStorage.getItem(k);
+                found.push('LS[' + k + ']=' + (v || '').substring(0, 100));
+                if (v && v.indexOf('eyJ') > -1) {
+                    SaudiaBridge.onJwt(v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v, '');
+                }
+            }
+            for (var i = 0; i < sessionStorage.length; i++) {
+                var k = sessionStorage.key(i);
+                var v = sessionStorage.getItem(k);
+                found.push('SS[' + k + ']=' + (v || '').substring(0, 100));
+                if (v && v.indexOf('eyJ') > -1) {
+                    SaudiaBridge.onJwt(v.indexOf('Bearer ') === 0 ? v : 'Bearer ' + v, '');
+                }
+            }
+        } catch(e) {}
+        SaudiaBridge.onLog('STORAGE SCAN:\n' + found.join('\n'));
     })();
 """
