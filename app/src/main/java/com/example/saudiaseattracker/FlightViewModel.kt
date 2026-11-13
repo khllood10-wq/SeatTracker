@@ -80,7 +80,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         HyperSessionManager(
             context = getApplication<Application>(),
             rawApiKey = BuildConfig.HYPER_API_KEY,
-            userAgent = HttpCloakClient.UA,  // ← نفس UA في كل الطبقات
+            userAgent = HttpCloakClient.UA,  // ← Chrome/155 Windows (موحّد)
             acceptLanguage = "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7"
         )
     }
@@ -198,7 +198,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🧪 اختبار httpcloak الشامل — زر مستقل
+    //  🧪 اختبار httpcloak الشامل
     // ═══════════════════════════════════════════════════════════
     fun testHttpCloak() {
         viewModelScope.launch {
@@ -250,6 +250,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     // ═══════════════════════════════════════════════════════════
     //  🌐 headers كاملة كما يفعل Chrome الحقيقي
+    //  ⚠️ حُذفت Sec-Ch-Ua* — نعتمد على withoutClientHints في httpcloak
     // ═══════════════════════════════════════════════════════════
     private fun buildFullChromeHeaders(
         cookie: String,
@@ -260,16 +261,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         extra: Map<String, String> = emptyMap()
     ): Map<String, String> = buildMap {
         put("Cookie", cookie)
-        put("User-Agent", HttpCloakClient.UA)
+        put("User-Agent", HttpCloakClient.UA)  // Chrome/155 Windows
         put(
             "Accept",
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
         )
         put("Accept-Language", "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7")
         put("Accept-Encoding", "gzip, deflate, br, zstd")
-        put("Sec-Ch-Ua", "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"131\"")
-        put("Sec-Ch-Ua-Mobile", "?1")                       // ← Android
-        put("Sec-Ch-Ua-Platform", "\"Android\"")
+        // ❌ لا Sec-Ch-Ua, Sec-Ch-Ua-Mobile, Sec-Ch-Ua-Platform
+        //    (httpcloak يولّدها تلقائياً وفق preset إذا لزم)
         put("Sec-Fetch-Site", secFetchSite)
         put("Sec-Fetch-Mode", secFetchMode)
         put("Sec-Fetch-Dest", secFetchDest)
@@ -422,7 +422,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com",
             "Referer" to referer,
-            "User-Agent" to HttpCloakClient.UA,   // ← UA موحّد
+            "User-Agent" to HttpCloakClient.UA,
             "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "request-id" to "|$traceId.$spanId",
             "traceparent" to "00-$traceId-$spanId-01",
