@@ -80,6 +80,13 @@ interface SaudiaApi {
         @HeaderMap headers: Map<String, String>,
         @Body request: RequestBody
     ): Response<ResponseBody>
+
+    // ═══════ تشخيص: طلبات مباشرة عبر OkHttp ═══════
+    @POST("https://dapi.saudia.com/session/auth/web/token/initialization")
+    suspend fun tokenInitDirect(
+        @HeaderMap headers: Map<String, String>,
+        @Body body: RequestBody
+    ): Response<ResponseBody>
 }
 
 data class CreateCartRequest(val airBoundIds: List<String>)
@@ -95,17 +102,15 @@ object RetrofitClient {
                 val resp = chain.proceed(req)
                 val dt = System.currentTimeMillis() - t0
 
-                // التقاط الطلب
                 val reqBody = try {
                     val buf = okio.Buffer()
                     req.body?.writeTo(buf)
                     buf.readString(Charsets.UTF_8)
-                } catch (e: Exception) { "(unreadable: ${e.message})" }
+                } catch (e: Exception) { "(unreadable)" }
 
-                // التقاط الرد بدون استهلاكه
                 val respBody = try {
                     resp.peekBody(200_000).string()
-                } catch (e: Exception) { "(unreadable: ${e.message})" }
+                } catch (e: Exception) { "(unreadable)" }
 
                 DebugBus.emit(
                     DebugEntry(
