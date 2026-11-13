@@ -18,6 +18,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import retrofit2.Response
+import java.io.IOException
 import java.util.UUID
 import kotlin.random.Random
 
@@ -60,6 +61,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
     private var _sessionExpired = false
+    private var _lastErrorCode: Int = 0
+    private var _lastErrorMessage: String = ""
+
+    // 🆕 عدادات الحظر الصامت
+    private var _consecutiveSilentBlocks = 0
+    private var _totalSilentBlocksInSession = 0
 
     private var autoLoopJob: Job? = null
 
@@ -219,6 +226,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _jwtReady.value = jwt.isNotBlank()
         if (sid.isNotBlank()) activeSaaSessionId = sid
         activeCookie = hyperSession.getCookieHeader()
+
+        // 🔑 x-d-token = reese84 token
+        activeXdToken = hyperSession.getToken() ?: ""
+
         addLog("🎉 JWT محفوظ — sid: ${if (sid.isNotBlank()) "✅" else "❌"}")
         markSessionReady()
         if (activeJwt.isNotBlank() && activeSaaSessionId.isNotBlank()) {
@@ -232,14 +243,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _autoCaptureMode.value = false
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🔁 حلقة البحث الكبرى (إصلاح العداد والوقت)
-    // ═══════════════════════════════════════════════════════════
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
         _autoLoopActive.value = true
         _needsWebViewRefresh.value = false
         _sessionExpired = false
+        _consecutiveSilentBlocks = 0
+        _totalSilentBlocksInSession = 0
 
         autoLoopJob = viewModelScope.launch {
             addLog("🔁 بدء البحث المستمر...")
@@ -252,29 +262,51 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 addLog("❌ فشل تجديد البداية: ${e.message}")
             }
 
-            var attempt = 0 // 🆕 عداد المحاولات العام
+            var attempt = 0
 
             while (isActive && _autoLoopActive.value) {
                 try {
-                    // 1. فحص الحاجة للتجديد
                     val timerExpired = _sessionTimerSeconds.value <= 0L && hyperSession.expiryAt() > 0L
                     val needRenew = _sessionExpired || timerExpired || activeSaaSessionId.isBlank() || activeJwt.isBlank() || !hyperSession.hasFreshToken()
 
                     if (needRenew) {
                         val reason = when {
-                            _sessionExpired -> "🚨 401/403 قبل العداد"
+                            _sessionExpired && _lastErrorCode == 401 -> "🚨 401 — انتهت الجلسة"
+                            _sessionExpired && _lastErrorCode == 403 -> "🚨 403 — محظور (Imperva)"
+                            _sessionExpired && _lastErrorCode == 200 -> "🛡️ حظر صامت (200-HTML)"
                             timerExpired -> "⏰ انتهى عداد الجلسة"
                             activeSaaSessionId.isBlank() -> "⚠️ sid مفقود"
                             activeJwt.isBlank() -> "⚠️ JWT مفقود"
                             else -> "⚠️ reese84 منتهي"
                         }
-                        addLog("⏸️ إيقاف البحث — تجديد الجلسة ($reason)")
+
+                        _searchResponseText.value = buildString {
+                            appendLine("⚙️ تجديد الجلسة تلقائياً...")
+                            appendLine()
+                            appendLine("📌 السبب: $reason")
+                            appendLine()
+                            appendLine("🔧 الخطوات:")
+                            appendLine("  1️⃣ تجديد reese84 عبر Hyper")
+                            appendLine("  2️⃣ فتح WebView لالتقاط JWT")
+                            appendLine("  3️⃣ استئناف البحث")
+                            appendLine()
+                            appendLine("⏳ يرجى الانتظار...")
+                        }
+
+                        addLog("⏸️ إيقاف — $reason")
                         markSessionPreparing()
                         _sessionExpired = false
+                        _lastErrorCode = 0
+                        _lastErrorMessage = ""
 
-                        withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
-                        activeCookie = hyperSession.getCookieHeader()
-                        addLog("✅ reese84 جديد — فتح WebView في الخلفية...")
+                        try {
+                            withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
+                            activeCookie = hyperSession.getCookieHeader()
+                        } catch (e: Exception) {
+                            addLog("❌ فشل تجديد reese84: ${e.message}")
+                            delay(10000)
+                            continue
+                        }
 
                         _needsWebViewRefresh.value = true
                         _autoCaptureMode.value = true
@@ -286,7 +318,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                         if (!hyperSession.hasFreshToken() || activeSaaSessionId.isBlank()) {
                             addLog("⚠️ فشل التجديد — إعادة المحاولة...")
-                            delay(5000)
+                            delay(10000)
                             continue
                         }
 
@@ -295,18 +327,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         continue
                     }
 
-                    // 2. محاولة بحث واحدة فقط في كل دورة (بعداد مستمر)
                     attempt++
                     val flight = searchAttempt(attempt)
 
                     if (!_autoLoopActive.value) break
 
                     if (_sessionExpired) {
-                        addLog("🚨 401 أثناء البحث — إعادة الجولة للتجديد")
+                        addLog("🚨 خطأ $_lastErrorCode — إعادة للتجديد")
                         continue
                     }
 
-                    // 3. معالجة النتيجة
                     if (flight != null) {
                         addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
                         clearResults()
@@ -316,14 +346,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _autoLoopActive.value = false
                             break
                         } else {
-                            addLog("❌ فشل الحجز — إعادة في الجولة القادمة")
+                            addLog("❌ فشل الحجز — إعادة")
                             delay(10000)
                         }
                     } else {
-                        delay(Random.nextLong(5_000L, 8_000L)) // انتظار بين المحاولات
+                        // 🆕 الفاصل الزمني: 3-8 ثوانٍ (بدلاً من 5-8)
+                        delay(Random.nextLong(3_000L, 8_000L))
                     }
                 } catch (e: Exception) {
                     addLog("❌ خطأ في الجولة: ${e.message}")
+                    _searchResponseText.value = "❌ خطأ غير متوقع:\n${e.message}"
                     delay(5000)
                 }
             }
@@ -340,6 +372,327 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("⏹️ تم الإيقاف يدوياً")
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🛡️ كشف الحظر الصامت
+    // ═══════════════════════════════════════════════════════════
+    private fun isSilentBlock(rawBody: String, contentType: String): Boolean {
+        if (rawBody.isBlank()) return false
+
+        if (contentType.contains("text/html", ignoreCase = true)) return true
+
+        if (rawBody.contains("Pardon Our Interruption", ignoreCase = true)) return true
+        if (rawBody.contains("_Incapsula_Resource", ignoreCase = true)) return true
+        if (rawBody.contains("Incapsula incident ID", ignoreCase = true)) return true
+        if (rawBody.contains("Request unsuccessful", ignoreCase = true)) return true
+
+        if (rawBody.length < 1500 && rawBody.contains("<html", ignoreCase = true)) return true
+
+        return false
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🛡️ الاستراتيجية المتدرجة (فقط للحظر الصامت)
+    // ═══════════════════════════════════════════════════════════
+    private suspend fun handleSilentBlock(attempt: Int): Boolean {
+        _consecutiveSilentBlocks++
+        _totalSilentBlocksInSession++
+
+        val level = _consecutiveSilentBlocks
+
+        when {
+            // ═══ المستوى 1: تجديد فوري ═══
+            level == 1 -> {
+                _searchResponseText.value = buildString {
+                    appendLine("🛡️ حظر صامت #1 — محاولة $attempt")
+                    appendLine()
+                    appendLine("📌 ما حدث:")
+                    appendLine("   Imperva أعاد صفحة HTML بدلاً من JSON")
+                    appendLine()
+                    appendLine("🔧 الإجراء الفوري:")
+                    appendLine("  1️⃣ تجديد reese84 (Hyper)")
+                    appendLine("  2️⃣ تجديد JWT (WebView)")
+                    appendLine("  3️⃣ استئناف البحث")
+                    appendLine()
+                    appendLine("📊 الإحصائيات:")
+                    appendLine("   • الحظر المتتالي: $level")
+                    appendLine("   • الإجمالي في الجلسة: $_totalSilentBlocksInSession")
+                    appendLine()
+                    appendLine("⏳ يرجى الانتظار...")
+                }
+                addLog("🛡️ حظر صامت #1 — تجديد فوري")
+                return true
+            }
+
+            // ═══ المستوى 2-3: انتظار 30 ثانية ═══
+            level in 2..3 -> {
+                _searchResponseText.value = buildString {
+                    appendLine("🛡️ حظر صامت #$level — محاولة $attempt")
+                    appendLine()
+                    appendLine("📌 ما حدث:")
+                    appendLine("   Imperva يرفض الطلبات بشكل متتالٍ")
+                    appendLine("   التجديد الفوري لم ينجح")
+                    appendLine()
+                    appendLine("🔧 الإجراء المتدرج:")
+                    appendLine("  ⏳ انتظار 30 ثانية")
+                    appendLine("  🔄 ثم تجديد الجلسة")
+                    appendLine("  ▶️ ثم استئناف البحث")
+                    appendLine()
+                    appendLine("📊 الإحصائيات:")
+                    appendLine("   • الحظر المتتالي: $level")
+                    appendLine("   • الإجمالي: $_totalSilentBlocksInSession")
+                    appendLine()
+                    appendLine("⏳ يرجى الانتظار 30 ثانية...")
+                }
+                addLog("🛡️ حظر #$level — انتظار 30ث")
+                delay(30_000)
+                return true
+            }
+
+            // ═══ المستوى 4: انتظار دقيقتين ═══
+            level == 4 -> {
+                _searchResponseText.value = buildString {
+                    appendLine("🛡️ حظر شديد #$level — محاولة $attempt")
+                    appendLine()
+                    appendLine("📌 ما حدث:")
+                    appendLine("   Imperva رفع درجة الشك تجاه IP")
+                    appendLine()
+                    appendLine("🔧 الإجراء المتدرج:")
+                    appendLine("  ⏳ انتظار دقيقتين كاملتين")
+                    appendLine("  🔄 ثم تجديد الجلسة")
+                    appendLine("  ▶️ ثم استئناف البحث")
+                    appendLine()
+                    appendLine("💡 ننصح:")
+                    appendLine("   • إبطاء البحث بعدها")
+                    appendLine("   • مراقبة المؤشرات")
+                    appendLine()
+                    appendLine("📊 الإحصائيات:")
+                    appendLine("   • الحظر المتتالي: $level")
+                    appendLine("   • الإجمالي: $_totalSilentBlocksInSession")
+                    appendLine()
+                    appendLine("⏳ يرجى الانتظار دقيقتين...")
+                }
+                addLog("🛡️ حظر #$level — انتظار دقيقتين")
+                delay(120_000)
+                return true
+            }
+
+            // ═══ المستوى 5+: إيقاف ═══
+            else -> {
+                _searchResponseText.value = buildString {
+                    appendLine("🚨 حظر مستمر (#$level)")
+                    appendLine()
+                    appendLine("📌 ما حدث:")
+                    appendLine("   Imperva يرفض جميع الطلبات من IP الحالي")
+                    appendLine()
+                    appendLine("📊 الإحصائيات:")
+                    appendLine("   • الحظر المتتالي: $level")
+                    appendLine("   • الإجمالي: $_totalSilentBlocksInSession")
+                    appendLine()
+                    appendLine("🔧 الخيارات:")
+                    appendLine("  1️⃣ تغيير IP (VPN)")
+                    appendLine("  2️⃣ انتظار 5 دقائق")
+                    appendLine("  3️⃣ إبطاء البحث (10-15ث بين المحاولات)")
+                    appendLine()
+                    appendLine("⏹️ تم إيقاف البحث تلقائياً")
+                }
+                addLog("🚨 حظر مستمر — إيقاف البحث")
+                return false
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🔍 محاولة بحث — مع كشف الحظر الصامت
+    // ═══════════════════════════════════════════════════════════
+    private suspend fun searchAttempt(attempt: Int): FoundFlightDetails? {
+        val wantedTime = FlightData.normalizeTime(flightData.departureTime)
+        val wantedCodes = FareFamilies.FARE_CODE_MAP[flightData.cabinClass] ?: emptyList()
+
+        setStep("search", StepStatus.RUNNING, "محاولة $attempt")
+        _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
+
+        try {
+            val resp = RetrofitClient.api.searchAirBounds(
+                headers = buildHeaders("4"),
+                request = SaudiaSearchRequest(
+                    airBoundsSearchInputs = AirBoundsSearchInputs(
+                        itineraries = listOf(Itinerary(
+                            originLocationCode = flightData.from,
+                            destinationLocationCode = flightData.to,
+                            departureDateTime = "${flightData.date}T00:00:00.000",
+                            directFlights = flightData.directOnly
+                        )),
+                        travelers = listOf(Traveler()),
+                        searchPreferences = SearchPreferences()
+                    ),
+                    offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
+                )
+            )
+            saveCookiesFromResponse(resp)
+
+            val contentType = resp.headers()["Content-Type"] ?: ""
+
+            // ═══ فحص الحظر الصامت ═══
+            if (resp.isSuccessful) {
+                val rawBody = try {
+                    com.google.gson.Gson().toJson(resp.body())
+                } catch (e: Exception) { "" }
+
+                if (isSilentBlock(rawBody, contentType)) {
+                    _lastErrorCode = 200
+                    _lastErrorMessage = "حظر صامت (HTML بدل JSON)"
+                    val shouldContinue = handleSilentBlock(attempt)
+                    if (shouldContinue) {
+                        _sessionExpired = true
+                    } else {
+                        _autoLoopActive.value = false
+                    }
+                    return null
+                }
+
+                // ✅ نجاح حقيقي — أعد تصفير العدادات
+                _consecutiveSilentBlocks = 0
+
+                val body = resp.body() ?: return null
+                val flights = parseAirBounds(body)
+                val match = findMatchingFlight(flights, wantedTime, wantedCodes)
+                val matchedFlightNumber = match?.first?.flightNumber
+                val matchedFareCode = match?.second?.code
+
+                _searchResponseText.value = buildString {
+                    appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
+                    appendLine()
+                    if (flights.isEmpty()) {
+                        appendLine("⚠️ لم تُستخرج أي رحلة")
+                    } else {
+                        flights.forEachIndexed { idx, f ->
+                            val isMatched = f.flightNumber == matchedFlightNumber
+                            val prefix = if (isMatched) "🎯" else "  "
+                            val directStr = if (f.isDirect) "مباشر" else "${f.stops}st"
+                            appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime}→${f.arrivalTime} | $directStr")
+                            f.fares.forEach { fare ->
+                                val status = if (fare.isAvailable) "✅" else "❌"
+                                val star = if (isMatched && fare.code == matchedFareCode) " ⬅ المختارة" else ""
+                                appendLine("     $status ${fare.code} | ${fare.price} SAR | quota=${fare.quota}$star")
+                            }
+                            appendLine()
+                        }
+                    }
+                }
+
+                if (match != null) {
+                    val (flight, fare) = match
+                    addLog("🎯 مطابقة: ${flight.flightNumber} @ ${flight.departTime} | ${fare.code}")
+                    return FoundFlightDetails(
+                        flightNumber = flight.flightNumber, date = flightData.date,
+                        origin = flight.origin, destination = flight.destination,
+                        departureTime = flight.departTime, price = fare.price,
+                        fareFamily = fare.code, airBoundId = fare.airBoundId
+                    )
+                }
+                return null
+            }
+
+            // ═══ 401 ═══
+            if (resp.code() == 401) {
+                val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
+                _lastErrorCode = 401
+                _lastErrorMessage = "انتهت الجلسة"
+                _searchResponseText.value = buildString {
+                    appendLine("🚨 HTTP 401 — Unauthorized")
+                    appendLine()
+                    appendLine("📌 السبب: JWT منتهي أو غير صالح")
+                    appendLine()
+                    appendLine("🔧 الإجراء التلقائي:")
+                    appendLine("  ✅ سيتم تجديد الجلسة")
+                    appendLine("  ✅ ثم استئناف البحث")
+                    appendLine()
+                    appendLine("⏳ يرجى الانتظار...")
+                }
+                addLog("🚨 401 — تجديد الجلسة")
+                _sessionExpired = true
+                return null
+            }
+
+            // ═══ 403 ═══
+            if (resp.code() == 403) {
+                _lastErrorCode = 403
+                _lastErrorMessage = "محظور (Imperva)"
+                _searchResponseText.value = buildString {
+                    appendLine("🚨 HTTP 403 — Forbidden")
+                    appendLine()
+                    appendLine("📌 السبب: Imperva رفض الطلب")
+                    appendLine()
+                    appendLine("🔧 الإجراء التلقائي:")
+                    appendLine("  ✅ تجديد reese84 + JWT")
+                    appendLine("  ✅ استئناف البحث")
+                    appendLine()
+                    appendLine("⏳ يرجى الانتظار...")
+                }
+                addLog("🚨 403 — تجديد الجلسة")
+                _sessionExpired = true
+                return null
+            }
+
+            // ═══ 429 ═══
+            if (resp.code() == 429) {
+                val retryAfter = resp.headers()["Retry-After"]?.toLongOrNull() ?: 60L
+                _lastErrorCode = 429
+                _lastErrorMessage = "عدد الطلبات كبير"
+                _searchResponseText.value = buildString {
+                    appendLine("🚨 HTTP 429 — Too Many Requests")
+                    appendLine()
+                    appendLine("⏱️ Retry-After: $retryAfter ثانية")
+                    appendLine()
+                    appendLine("🔧 الإجراء: انتظار $retryAfter ثانية...")
+                }
+                addLog("🚨 429 — انتظار ${retryAfter}ث")
+                delay(retryAfter * 1000)
+                return null
+            }
+
+            // ═══ 5xx ═══
+            if (resp.code() >= 500) {
+                _lastErrorCode = resp.code()
+                _lastErrorMessage = "خطأ في الخادم"
+                _searchResponseText.value = buildString {
+                    appendLine("🚨 HTTP ${resp.code()} — Server Error")
+                    appendLine()
+                    appendLine("🔧 الإجراء: انتظار 15 ثانية...")
+                }
+                addLog("🚨 ${resp.code()} — انتظار 15ث")
+                delay(15000)
+                return null
+            }
+
+            // ═══ كود آخر ═══
+            val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
+            _searchResponseText.value = buildString {
+                appendLine("⚠️ HTTP ${resp.code()}")
+                appendLine()
+                appendLine(errBody.take(400))
+            }
+        } catch (e: IOException) {
+            _searchResponseText.value = buildString {
+                appendLine("🚨 خطأ شبكة")
+                appendLine()
+                appendLine("${e.message}")
+            }
+            addLog("🚨 شبكة: ${e.message}")
+        } catch (e: Exception) {
+            _searchResponseText.value = buildString {
+                appendLine("🚨 خطأ غير متوقع")
+                appendLine()
+                appendLine("${e.javaClass.simpleName}: ${e.message}")
+            }
+            addLog("🚨 ${e.javaClass.simpleName}: ${e.message}")
+        }
+        return null
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  💳 تنفيذ الحجز
+    // ═══════════════════════════════════════════════════════════
     private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
         try {
             setStep("search", StepStatus.SUCCESS, "${flight.price} SAR")
@@ -392,97 +745,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🔍 محاولة بحث واحدة فقط (تستقبل رقم المحاولة من الخارج)
-    // ═══════════════════════════════════════════════════════════
-    private suspend fun searchAttempt(attempt: Int): FoundFlightDetails? {
-        val wantedTime = FlightData.normalizeTime(flightData.departureTime)
-        val wantedCodes = FareFamilies.FARE_CODE_MAP[flightData.cabinClass] ?: emptyList()
-
-        setStep("search", StepStatus.RUNNING, "محاولة $attempt")
-        _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
-
-        try {
-            val resp = RetrofitClient.api.searchAirBounds(
-                headers = buildHeaders("4"),
-                request = SaudiaSearchRequest(
-                    airBoundsSearchInputs = AirBoundsSearchInputs(
-                        itineraries = listOf(Itinerary(
-                            originLocationCode = flightData.from,
-                            destinationLocationCode = flightData.to,
-                            departureDateTime = "${flightData.date}T00:00:00.000",
-                            directFlights = flightData.directOnly
-                        )),
-                        travelers = listOf(Traveler()),
-                        searchPreferences = SearchPreferences()
-                    ),
-                    offerCodeAvailabilityInput = OfferCodeAvailabilityInput()
-                )
-            )
-            saveCookiesFromResponse(resp)
-
-            if (resp.code() == 401) {
-                _searchResponseText.value = "🚨 انتهت الجلسة (401)"
-                _sessionExpired = true
-                return null
-            }
-            if (resp.code() == 403) {
-                _searchResponseText.value = "🚨 Imperva رفض (403)"
-                _sessionExpired = true
-                return null
-            }
-
-            if (resp.isSuccessful) {
-                val body = resp.body() ?: return null
-                val flights = parseAirBounds(body)
-                val match = findMatchingFlight(flights, wantedTime, wantedCodes)
-                val matchedFlightNumber = match?.first?.flightNumber
-                val matchedFareCode = match?.second?.code
-
-                _searchResponseText.value = buildString {
-                    appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
-                    appendLine()
-                    if (flights.isEmpty()) {
-                        appendLine("⚠️ لم تُستخرج أي رحلة")
-                    } else {
-                        flights.forEachIndexed { idx, f ->
-                            val isMatched = f.flightNumber == matchedFlightNumber
-                            val prefix = if (isMatched) "🎯" else "  "
-                            val directStr = if (f.isDirect) "مباشر" else "${f.stops}st"
-                            appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime}→${f.arrivalTime} | $directStr")
-                            f.fares.forEach { fare ->
-                                val status = if (fare.isAvailable) "✅" else "❌"
-                                val star = if (isMatched && fare.code == matchedFareCode) " ⬅ المختارة" else ""
-                                appendLine("     $status ${fare.code} | ${fare.price} SAR | quota=${fare.quota}$star")
-                            }
-                            appendLine()
-                        }
-                    }
-                }
-
-                if (match != null) {
-                    val (flight, fare) = match
-                    addLog("🎯 مطابقة: ${flight.flightNumber} @ ${flight.departTime} | ${fare.code}")
-                    return FoundFlightDetails(
-                        flightNumber = flight.flightNumber,
-                        date = flightData.date,
-                        origin = flight.origin,
-                        destination = flight.destination,
-                        departureTime = flight.departTime,
-                        price = fare.price,
-                        fareFamily = fare.code,
-                        airBoundId = fare.airBoundId
-                    )
-                }
-            } else {
-                _searchResponseText.value = "⚠️ HTTP ${resp.code()}"
-            }
-        } catch (e: Exception) {
-            _searchResponseText.value = "❌ خطأ:\n${e.message}"
-        }
-        return null
-    }
-
     private fun parseAirBounds(response: SaudiaResponse): List<ParsedFlight> {
         val groups = response.data?.airBoundGroups ?: return emptyList()
         val flightDict = response.data?.dictionaries?.flight ?: emptyMap()
@@ -494,10 +756,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             if (segments.isEmpty()) continue
 
             val flightId = segments[0].flightId ?: continue
-
             val fnMatch = Regex("SEG-([A-Z]{2}\\d+)-").find(flightId)
             val flightNumber = fnMatch?.groupValues?.get(1) ?: "?"
-
             val dtMatch = Regex("-(\\d{4}-\\d{2}-\\d{2})-(\\d{4})$").find(flightId)
             val timeRaw = dtMatch?.groupValues?.get(2) ?: "0000"
             val departTime = timeRaw.substring(0, 2) + ":" + timeRaw.substring(2, 4)
@@ -514,64 +774,40 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val avail = ab.availabilityDetails?.firstOrNull()
                 val quota = avail?.quota ?: 0
                 val statusCode = avail?.statusCode ?: ""
-
                 val isAvailable = !isSoldOut && quota > 0 && statusCode == "HK"
-
                 val priceValue = ab.prices?.totalPrices?.firstOrNull()?.total
                     ?: ab.airOffer?.totalPrice?.value
                     ?: 0.0
                 val price = priceValue / 100.0
-
                 fares.add(ParsedFare(code, quota, statusCode, price, isAvailable, ab.airBoundId ?: ""))
             }
 
             flights.add(ParsedFlight(
-                flightNumber = flightNumber,
-                departTime = departTime,
-                arrivalTime = arrivalTime,
-                origin = bd.origin ?: "",
-                destination = bd.destination ?: "",
-                isDirect = segments.size == 1,
-                stops = segments.size - 1,
-                fares = fares
+                flightNumber = flightNumber, departTime = departTime, arrivalTime = arrivalTime,
+                origin = bd.origin ?: "", destination = bd.destination ?: "",
+                isDirect = segments.size == 1, stops = segments.size - 1, fares = fares
             ))
         }
         return flights
     }
 
-    private fun findMatchingFlight(
-        flights: List<ParsedFlight>,
-        wantedTime: String,
-        wantedCodes: List<String>
-    ): Pair<ParsedFlight, ParsedFare>? {
+    private fun findMatchingFlight(flights: List<ParsedFlight>, wantedTime: String, wantedCodes: List<String>): Pair<ParsedFlight, ParsedFare>? {
         for (flight in flights) {
             if (flightData.directOnly && !flight.isDirect) continue
-
             if (wantedTime.isNotBlank()) {
                 val t = wantedTime.trim()
                 val tu = t.uppercase()
                 val isFlightNumber = Regex("^SV\\d{3,4}$").matches(tu)
                 val isTimeFormat = Regex("^\\d{1,2}:\\d{2}$").matches(t)
-
                 var matchedTime = false
                 when {
-                    isFlightNumber -> {
-                        if (flight.flightNumber == tu) matchedTime = true
-                    }
-                    isTimeFormat -> {
-                        if (flight.departTime == t || flight.arrivalTime == t) matchedTime = true
-                    }
-                    else -> {
-                        if (flight.flightNumber.contains(t) || flight.departTime.contains(t)) matchedTime = true
-                    }
+                    isFlightNumber -> if (flight.flightNumber == tu) matchedTime = true
+                    isTimeFormat -> if (flight.departTime == t || flight.arrivalTime == t) matchedTime = true
+                    else -> if (flight.flightNumber.contains(t) || flight.departTime.contains(t)) matchedTime = true
                 }
                 if (!matchedTime) continue
             }
-
-            val matchedFare = flight.fares.firstOrNull {
-                it.isAvailable && wantedCodes.contains(it.code)
-            } ?: continue
-
+            val matchedFare = flight.fares.firstOrNull { it.isAvailable && wantedCodes.contains(it.code) } ?: continue
             return Pair(flight, matchedFare)
         }
         return null
@@ -581,12 +817,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val headers = mutableMapOf(
-            "Authorization" to activeJwt, "x-d-token" to activeXdToken, "saa-session-id" to activeSaaSessionId,
-            "x-api-version" to apiVersion, "platform" to "Web", "version" to "27.2", "Accept" to "application/json",
-            "Content-Type" to "application/json", "Origin" to "https://www.saudia.com", "Referer" to referer,
+            "Authorization" to activeJwt,
+            "x-d-token" to activeXdToken,
+            "saa-session-id" to activeSaaSessionId,
+            "x-api-version" to apiVersion, "platform" to "Web", "version" to "27.2",
+            "Accept" to "application/json", "Content-Type" to "application/json",
+            "Origin" to "https://www.saudia.com", "Referer" to referer,
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
-            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7", "request-id" to "|$traceId.$spanId",
-            "traceparent" to "00-$traceId-$spanId-01", "x-datadog-origin" to "rum",
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "request-id" to "|$traceId.$spanId", "traceparent" to "00-$traceId-$spanId-01",
+            "x-datadog-origin" to "rum",
             "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
             "x-datadog-sampling-priority" to "1",
             "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
