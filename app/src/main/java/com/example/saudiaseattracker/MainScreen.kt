@@ -6,10 +6,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -32,7 +30,6 @@ import androidx.navigation.NavController
 @Composable
 fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val context = LocalContext.current
-    val activity = context as? Activity
 
     val steps by viewModel.steps.collectAsStateWithLifecycle()
     val isRunning by viewModel.isRunning.collectAsStateWithLifecycle()
@@ -42,12 +39,11 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val autoLoopActive by viewModel.autoLoopActive.collectAsStateWithLifecycle()
     val needsWebViewRefresh by viewModel.needsWebViewRefresh.collectAsStateWithLifecycle()
-    val autoCaptureMode by viewModel.autoCaptureMode.collectAsStateWithLifecycle()
     val lastCycle by viewModel.autoLoopLastCycle.collectAsStateWithLifecycle()
+    val sessionTimerSeconds by viewModel.sessionTimerSeconds.collectAsStateWithLifecycle()
 
     var showWebView by remember { mutableStateOf(false) }
     var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
-    var hyperSecondsLeft by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(Unit) {
         if (viewModel.hasToken()) viewModel.markSessionReady()
@@ -61,15 +57,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            val hyperExpiry = viewModel.sessionExpiryMs()
-            hyperSecondsLeft = ((hyperExpiry - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
-            kotlinx.coroutines.delay(1000)
-        }
-    }
-
-    // 🔥 WebView مخفي تماماً (خارج الشاشة + حجم 1x1)
+    // 🔥 WebView مخفي تماماً — 1x1 بكسل، خارج الشاشة، خلف كل شيء
     Box(modifier = Modifier.fillMaxSize()) {
         if (showWebView && reeseTokenForWebView != null) {
             WebViewTokenCapture(
@@ -95,15 +83,37 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ═══ شريط الحالة العلوي ═══
+            // ═══ شريط الحالة العلوي — مع عداد MM:SS ═══
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(sessionStatus, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("sid: ${if (viewModel.isSidReady()) "✅" else "⏳"}", fontSize = 11.sp)
-                            Text("reese84: ${hyperSecondsLeft}s", fontSize = 11.sp)
-                            if (autoLoopActive) Text("🔁 $lastCycle", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            // 🆔 sid
+                            Text(
+                                "sid: ${if (viewModel.isSidReady()) "✅" else "⏳"}",
+                                fontSize = 11.sp
+                            )
+                            // ⏱️ عداد 13 دقيقة MM:SS
+                            val minutes = sessionTimerSeconds / 60
+                            val seconds = sessionTimerSeconds % 60
+                            val timerText = if (sessionTimerSeconds > 0)
+                                "⏱️ ${String.format("%02d:%02d", minutes, seconds)}"
+                            else "⏱️ --:--"
+                            Text(
+                                timerText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    sessionTimerSeconds <= 0L -> Color(0xFFD32F2F)
+                                    sessionTimerSeconds < 60L -> Color(0xFFFF9800)
+                                    else -> Color(0xFF00C853)
+                                }
+                            )
+                            if (autoLoopActive) {
+                                Text("🔁 $lastCycle", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                     IconButton(onClick = { viewModel.refreshSession() }) {
@@ -211,7 +221,9 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     else viewModel.startAutoLoop()
                 },
                 modifier = Modifier.fillMaxWidth().height(64.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (autoLoopActive) Color(0xFFD32F2F) else Color(0xFF9C27B0))
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (autoLoopActive) Color(0xFFD32F2F) else Color(0xFF9C27B0)
+                )
             ) {
                 Text(
                     if (autoLoopActive) "⏹️ إيقاف البحث"
@@ -225,7 +237,10 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("👁️ وضع المراقبة", fontWeight = FontWeight.Bold)
-                        Text(if (viewModel.monitoringMode) "✅ يصل للدفع بدون إتمام" else "معطّل", fontSize = 11.sp)
+                        Text(
+                            if (viewModel.monitoringMode) "✅ يصل للدفع بدون إتمام" else "معطّل",
+                            fontSize = 11.sp
+                        )
                     }
                     Switch(viewModel.monitoringMode, { viewModel.monitoringMode = it }, enabled = !isRunning)
                 }
