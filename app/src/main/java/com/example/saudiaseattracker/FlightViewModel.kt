@@ -59,10 +59,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var activeCookie: String? = null
     private var activeSaaSessionId = ""
     private var activeXdToken = ""
-    private var jwtExpiryMs: Long = 0L
-    private var _sessionExpired = false
+    private var _sessionExpired = false  // يُفعّل عند 401/403
 
     private var autoLoopJob: Job? = null
+    private var timerJob: Job? = null
 
     private val hyperSession: HyperSessionManager by lazy {
         HyperSessionManager(
@@ -117,6 +117,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private val _autoCaptureMode = MutableStateFlow(false)
     val autoCaptureMode: StateFlow<Boolean> = _autoCaptureMode
 
+    // 🆕 عداد 13 دقيقة (بالميللي ثانية، يُحسب من expiryAt)
+    private val _sessionTimerSeconds = MutableStateFlow(0L)
+    val sessionTimerSeconds: StateFlow<Long> = _sessionTimerSeconds
+
     fun pushDebug(entry: DebugEntry) { DebugBus.emit(entry) }
     fun clearDebugLog() { _debugEntries.value = emptyList() }
     fun isSidReady(): Boolean = activeSaaSessionId.isNotBlank()
@@ -138,7 +142,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _autoCaptureMode.value = true
                 _needsWebViewRefresh.value = true
             } catch (e: Exception) {
-                _sessionStatus.value = "⚠️ تعذر التجهيز: ${e.message}"
+                _sessionStatus.value = "❌ جلسة الهايبر غير مفعلة"
             }
         }
     }
@@ -198,7 +202,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         activeJwt = jwt
         if (sid.isNotBlank()) activeSaaSessionId = sid
         activeCookie = hyperSession.getCookieHeader()
-        jwtExpiryMs = 0L // لم نعد نستخدم وقت انتهاء JWT في الواجهة
         addLog("🎉 JWT محفوظ — sid: ${if (sid.isNotBlank()) "✅" else "❌"}")
         markSessionReady()
         if (activeJwt.isNotBlank() && activeSaaSessionId.isNotBlank()) {
@@ -213,52 +216,105 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔁 حلقة البحث المستمرة — إيقاف تلقائي عند انتهاء الجلسة
+    //  ⏱️ عداد الجلسة — يقرأ من expiryAt كل ثانية
+    // ═══════════════════════════════════════════════════════════
+    private fun startSessionTimer() {
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            while (isActive && _autoLoopActive.value) {
+                val remaining = ((hyperSession.expiryAt() - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+                _sessionTimerSeconds.value = remaining
+                delay(1000)
+            }
+            _sessionTimerSeconds.value = 0
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🔁 حلقة البحث — مع نظام تجديد مزدوج (13 دقيقة OR 401)
     // ═══════════════════════════════════════════════════════════
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
         _autoLoopActive.value = true
         _needsWebViewRefresh.value = false
+        _sessionExpired = false
 
         autoLoopJob = viewModelScope.launch {
             addLog("🔁 بدء البحث المستمر...")
             _searchResponseText.value = "بدء البحث..."
 
+            // 🆕 جدّد Hyper بدايةً لضمان عداد صحيح
+            try {
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
+                activeCookie = hyperSession.getCookieHeader()
+            } catch (e: Exception) {
+                addLog("❌ فشل تجديد البداية: ${e.message}")
+            }
+
+            // 🆕 ابدأ العداد
+            startSessionTimer()
+
+            var attempt = 0
             while (isActive && _autoLoopActive.value) {
+                attempt++
                 try {
-                    // 1. التحقق من الجلسة قبل البحث
-                    withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
-                    
-                    if (!hyperSession.hasFreshToken() || activeSaaSessionId.isBlank() || _sessionExpired) {
-                        addLog("⏸️ إيقاف البحث — تجديد الجلسة...")
+                    // ═══ فحص الحاجة للتجديد (13د OR 401 OR sid مفقود) ═══
+                    val timerExpired = _sessionTimerSeconds.value <= 0L && hyperSession.expiryAt() > 0L
+                    val needRenew = _sessionExpired
+                        || timerExpired
+                        || activeSaaSessionId.isBlank()
+                        || !hyperSession.hasFreshToken()
+
+                    if (needRenew) {
+                        val reason = when {
+                            _sessionExpired -> "🚨 401/403 قبل العداد"
+                            timerExpired -> "⏰ انتهى عداد 13 دقيقة"
+                            activeSaaSessionId.isBlank() -> "⚠️ sid مفقود"
+                            else -> "⚠️ reese84 منتهي"
+                        }
+                        addLog("⏸️ إيقاف البحث — تجديد الجلسة ($reason)")
                         markSessionPreparing()
-                        
+                        _sessionExpired = false
+
+                        // 1) جدّد Hyper
                         withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                         activeCookie = hyperSession.getCookieHeader()
-                        
                         addLog("✅ reese84 جديد — فتح WebView في الخلفية...")
+
+                        // 2) افتح WebView في الخلفية
                         _needsWebViewRefresh.value = true
                         _autoCaptureMode.value = true
-                        
-                        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(1000) }
-                        
+                        var waited = 0
+                        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value && waited < 60) {
+                            delay(1000)
+                            waited++
+                        }
+
+                        // 3) تحقق من نجاح التقاط sid
                         if (!hyperSession.hasFreshToken() || activeSaaSessionId.isBlank()) {
                             addLog("⚠️ فشل التجديد — إعادة المحاولة...")
                             delay(5000)
                             continue
                         }
-                        
-                        _sessionExpired = false
+
+                        addLog("✅ الجلسة جُددت — استئناف البحث (عداد جديد)")
                         markSessionReady()
-                        addLog("✅ الجلسة جُددت — استئناف البحث")
+                        // العداد سيعيد القراءة تلقائياً من expiryAt الجديد
+                        continue
                     }
 
-                    // 2. محاولة بحث واحدة
+                    // ═══ محاولة بحث ═══
                     val flight = searchUntilFound(max = 1)
-                    
+
                     if (!_autoLoopActive.value) break
 
-                    // 3. معالجة النتيجة
+                    // إذا 401 حصل، الجولة القادمة ستجدد
+                    if (_sessionExpired) {
+                        addLog("🚨 401 أثناء البحث — إعادة الجولة للتجديد")
+                        continue
+                    }
+
+                    // ═══ معالجة النتيجة ═══
                     if (flight != null) {
                         addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
                         clearResults()
@@ -268,34 +324,35 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _autoLoopActive.value = false
                             break
                         } else {
-                            addLog("❌ فشل الحجز — إعادة في الدورة القادمة")
+                            addLog("❌ فشل الحجز — إعادة في الجولة القادمة")
                             delay(10000)
                         }
                     } else {
-                        if (_sessionExpired) {
-                            addLog("🚨 انتهت الجلسة أثناء البحث — جاري التجديد...")
-                            continue // سيدخل في فرع التجديد بالأعلى
-                        } else {
-                            delay(Random.nextLong(5000L, 8000L))
-                        }
+                        delay(Random.nextLong(5_000L, 8_000L))
                     }
                 } catch (e: Exception) {
-                    addLog("❌ خطأ: ${e.message}")
+                    addLog("❌ خطأ في الجولة: ${e.message}")
                     delay(5000)
                 }
             }
             _autoLoopActive.value = false
+            _sessionTimerSeconds.value = 0
+            addLog("⏹️ توقف البحث")
         }
     }
 
     fun stopAutoLoop() {
         autoLoopJob?.cancel(); autoLoopJob = null
-        _autoLoopActive.value = false; _needsWebViewRefresh.value = false; _autoCaptureMode.value = false
-        addLog("⏹️ تم الإيقاف")
+        timerJob?.cancel(); timerJob = null
+        _autoLoopActive.value = false
+        _needsWebViewRefresh.value = false
+        _autoCaptureMode.value = false
+        _sessionTimerSeconds.value = 0
+        addLog("⏹️ تم الإيقاف يدوياً")
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  💳 تنفيذ الحجز الكامل مع التحقق من السلة
+    //  💳 تنفيذ الحجز
     // ═══════════════════════════════════════════════════════════
     private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
         try {
@@ -310,12 +367,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val actualFare = cartDetails.second
                 val priceMismatch = kotlin.math.abs(actualPrice - flight.price) > 1.0
                 val fareMismatch = actualFare.isNotBlank() && actualFare != flight.fareFamily
-
-                if (priceMismatch || fareMismatch) {
-                    addLog("⚠️ تحذير: السلة مختلفة!")
-                } else {
-                    addLog("✅ السلة مطابقة: $actualFare @ $actualPrice SAR")
-                }
+                if (priceMismatch || fareMismatch) addLog("⚠️ تحذير: السلة مختلفة!")
+                else addLog("✅ السلة مطابقة: $actualFare @ $actualPrice SAR")
             }
 
             setStep("cart", StepStatus.SUCCESS, "$cid | ${flight.fareFamily} @ ${flight.price} SAR")
@@ -337,10 +390,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             _finalPnr.value = ord.first; _finalSadad.value = ord.second
             setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}")
 
-            if (monitoringMode) {
-                setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط")
-                return true
-            }
+            if (monitoringMode) { setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط"); return true }
 
             setStep("payment", StepStatus.RUNNING)
             if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); return false }
@@ -353,17 +403,15 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔍 البحث — يرجع null فوراً إذا انتهت الجلسة (401/403)
+    //  🔍 البحث — يرجع null فوراً عند 401/403
     // ═══════════════════════════════════════════════════════════
     private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
-        _sessionExpired = false
         var attempt = 0
         val wantedTime = FlightData.normalizeTime(flightData.departureTime)
         val wantedCodes = FareFamilies.FARE_CODE_MAP[flightData.cabinClass] ?: emptyList()
 
         while (attempt < max) {
             if (!_autoLoopActive.value) return null
-            
             attempt++
             setStep("search", StepStatus.RUNNING, "محاولة $attempt")
             _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
@@ -401,12 +449,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (resp.isSuccessful) {
                     val body = resp.body() ?: continue
                     val flights = parseAirBounds(body)
-
                     val match = findMatchingFlight(flights, wantedTime, wantedCodes)
                     val matchedFlightNumber = match?.first?.flightNumber
                     val matchedFareCode = match?.second?.code
 
-                    // عرض الرحلات فقط
                     _searchResponseText.value = buildString {
                         appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
                         appendLine()
@@ -452,5 +498,151 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         return null
     }
 
-    // ... بقية الدوال المساعدة (parseAirBounds, findMatchingFlight, buildHeaders, ...) كما هي ...
-    // سأتركها كما هي في الكود الكامل أدناه للحفاظ على الطول.
+    private fun parseAirBounds(response: SaudiaResponse): List<ParsedFlight> {
+        val groups = response.data?.airBoundGroups ?: return emptyList()
+        val flights = mutableListOf<ParsedFlight>()
+        for (group in groups) {
+            val bd = group.boundDetails ?: continue
+            val segments = bd.segments ?: continue
+            if (segments.isEmpty()) continue
+            val flightId = segments[0].flightId ?: continue
+            val fnMatch = Regex("SEG-([A-Z]{2}\\d+)-").find(flightId)
+            val flightNumber = fnMatch?.groupValues?.get(1) ?: "?"
+            val dtMatch = Regex("-(\\d{4})$").find(flightId)
+            val timeRaw = dtMatch?.groupValues?.get(1) ?: "0000"
+            val departTime = "${timeRaw.substring(0, 2)}:${timeRaw.substring(2, 4)}"
+            val fares = mutableListOf<ParsedFare>()
+            for (ab in group.airBounds ?: emptyList()) {
+                val code = ab.fareFamilyCode ?: "?"
+                val isSoldOut = ab.status?.value == "soldOut"
+                val avail = ab.availabilityDetails?.firstOrNull()
+                val quota = avail?.quota ?: 0
+                val statusCode = avail?.statusCode ?: ""
+                val isAvailable = !isSoldOut && quota > 0 && statusCode == "HK"
+                val price = (ab.airOffer?.totalPrice?.value ?: 0.0) / 100.0
+                fares.add(ParsedFare(code, quota, statusCode, price, isAvailable, ab.airBoundId ?: ""))
+            }
+            flights.add(ParsedFlight(
+                flightNumber = flightNumber, departTime = departTime,
+                origin = bd.origin ?: "", destination = bd.destination ?: "",
+                isDirect = segments.size == 1, stops = segments.size - 1, fares = fares
+            ))
+        }
+        return flights
+    }
+
+    private fun findMatchingFlight(flights: List<ParsedFlight>, wantedTime: String, wantedCodes: List<String>): Pair<ParsedFlight, ParsedFare>? {
+        for (flight in flights) {
+            if (flightData.directOnly && !flight.isDirect) continue
+            if (wantedTime.isNotBlank() && flight.departTime != wantedTime) continue
+            val matchedFare = flight.fares.firstOrNull { it.isAvailable && wantedCodes.contains(it.code) } ?: continue
+            return Pair(flight, matchedFare)
+        }
+        return null
+    }
+
+    private fun buildHeaders(apiVersion: String, referer: String = "https://www.saudia.com/"): Map<String, String> {
+        val traceId = UUID.randomUUID().toString().replace("-", "")
+        val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
+        val headers = mutableMapOf(
+            "Authorization" to activeJwt, "x-d-token" to activeXdToken, "saa-session-id" to activeSaaSessionId,
+            "x-api-version" to apiVersion, "platform" to "Web", "version" to "27.2", "Accept" to "application/json",
+            "Content-Type" to "application/json", "Origin" to "https://www.saudia.com", "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "Accept-Language" to "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7", "request-id" to "|$traceId.$spanId",
+            "traceparent" to "00-$traceId-$spanId-01", "x-datadog-origin" to "rum",
+            "x-datadog-parent-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
+            "x-datadog-sampling-priority" to "1",
+            "x-datadog-trace-id" to Random.nextLong(1000000000000000000L, Long.MAX_VALUE).toString(),
+            "browserid" to "db9387ab-b6f2-4d1a-9a08-0a55ac7a89d9", "channel" to "MOBILE_WEB"
+        )
+        if (!activeCookie.isNullOrBlank()) headers["Cookie"] = activeCookie!!
+        return headers
+    }
+
+    private fun saveCookiesFromResponse(response: Response<*>) {
+        val setCookieHeaders = response.headers().values("Set-Cookie")
+        if (setCookieHeaders.isEmpty()) return
+        val cookieMap = mutableMapOf<String, String>()
+        activeCookie?.split(";")?.forEach { pair ->
+            val parts = pair.trim().split("=", limit = 2)
+            if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
+        }
+        setCookieHeaders.forEach { header ->
+            val firstPart = header.split(";").first().trim()
+            val parts = firstPart.split("=", limit = 2)
+            if (parts.size == 2) cookieMap[parts[0].trim()] = parts[1].trim()
+        }
+        activeCookie = cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
+    private suspend fun createCart(airBoundId: String): String? = try {
+        val r = RetrofitClient.api.createCart(headers = buildHeaders("2"), request = CreateCartRequest(listOf(airBoundId)))
+        saveCookiesFromResponse(r)
+        if (!r.isSuccessful) null else {
+            val bodyStr = r.body()?.string() ?: ""
+            JSONObject(bodyStr).optJSONObject("data")?.optString("id")?.takeIf { it.isNotEmpty() } ?: JSONObject(bodyStr).optString("id")
+        }
+    } catch (e: Exception) { null }
+
+    private suspend fun fetchCartDetails(cid: String): Pair<Double, String>? = try {
+        val r = RetrofitClient.api.getCartDetails(cid, headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"))
+        saveCookiesFromResponse(r)
+        if (!r.isSuccessful) null else {
+            val bodyStr = r.body()?.string() ?: ""
+            val json = JSONObject(bodyStr)
+            var price = 0.0
+            var fareFamily = ""
+            val data = json.optJSONObject("data")
+            val groups = data?.optJSONArray("airBoundGroups")
+            if (groups != null && groups.length() > 0) {
+                val group = groups.optJSONObject(0)
+                val airBounds = group?.optJSONArray("airBounds")
+                if (airBounds != null && airBounds.length() > 0) {
+                    val ab = airBounds.optJSONObject(0)
+                    fareFamily = ab?.optString("fareFamilyCode", "") ?: ""
+                    price = (ab?.optJSONObject("airOffer")?.optJSONObject("totalPrice")?.optDouble("value", 0.0) ?: 0.0) / 100.0
+                }
+            }
+            Pair(price, fareFamily)
+        }
+    } catch (e: Exception) { null }
+
+    private suspend fun confirmPassenger(cid: String): Boolean = try {
+        val p = passengerData
+        val payload = """{"passengerTypeCode":"ADT","gender":"${p.gender}","dateOfBirth":"${p.dateOfBirth}","names":[{"firstName":"${p.firstName}","lastName":"${p.lastName}","title":"${p.title}","nameType":"universal"}],"regulatoryDetails":[{"regulatoryApisType":"ApisDetailRegulatoryDocument","regulatoryDocument":{"number":"${p.nationalId}","name":{"firstName":"${p.firstName.uppercase()}","lastName":"${p.lastName.uppercase()}","nameType":"universal"},"nationalityCode":"${p.nationality}","gender":"${p.gender}","birthDate":"${p.dateOfBirth}","documentType":"identityCard"}}]}"""
+        val r = RetrofitClient.api.updateTravelerRaw(cid, "SKH-1-EXT", headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"), request = payload.toRequestBody("application/json".toMediaType()))
+        saveCookiesFromResponse(r); r.code() == 200
+    } catch (e: Exception) { false }
+
+    private suspend fun addExtension(cid: String): Boolean = try {
+        val body = """[{"content":"eyJzdGF0dXMiOiJWRVJJRklFRCIsImhlYWx0aENoZWNrU3RhdHVzIjoiTk9fUkVTUE9OU0UifQ==","travelerId":"SKH-1-EXT","extensionType":"TextExtension","name":"YQENSTATUS"}]"""
+        val r = RetrofitClient.api.addCartExtension(cid, guestOfficeId = "JEDSV08AA", headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"), request = body.toRequestBody("application/json".toMediaType()))
+        saveCookiesFromResponse(r); r.isSuccessful
+    } catch (e: Exception) { false }
+
+    private suspend fun saveContacts(cid: String): Boolean = try {
+        val p = passengerData
+        val body = """[{"address":"${p.email}","category":"personal","contactType":"Email","purpose":"notification","lang":"ar","travelerIds":["SKH-1-EXT"]},{"address":"${p.email}","category":"personal","contactType":"Email","purpose":"standard"},{"category":"personal","contactType":"Phone","countryPhoneExtension":"+966","number":"${p.phone}","deviceType":"mobile","purpose":"notification","lang":"ar","travelerIds":["SKH-1-EXT"]},{"category":"personal","contactType":"Phone","countryPhoneExtension":"+966","number":"${p.phone}","deviceType":"mobile","purpose":"standard"}]"""
+        val r = RetrofitClient.api.saveContacts(cid, headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"), request = body.toRequestBody("application/json".toMediaType()))
+        saveCookiesFromResponse(r); r.isSuccessful
+    } catch (e: Exception) { false }
+
+    private suspend fun createOrder(cid: String): Pair<String, String>? = try {
+        val r = RetrofitClient.api.createOrderRaw(cid, headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"), request = "{}".toRequestBody("application/json".toMediaType()))
+        saveCookiesFromResponse(r)
+        if (!r.isSuccessful) null else {
+            val b = r.body()?.string() ?: return null
+            val pnr = Regex("\"id\"\\s*:\\s*\"([A-Z0-9]{4,8})\"").find(b)?.groupValues?.get(1) ?: return null
+            val sadad = Regex("\"numericId\"\\s*:\\s*\"([0-9]{10,14})\"").find(b)?.groupValues?.get(1) ?: ""
+            Pair(pnr, sadad)
+        }
+    } catch (e: Exception) { null }
+
+    private suspend fun submitPayment(pnr: String): Boolean = try {
+        val p = passengerData
+        val body = """{"orderPaymentRequest":{"paymentRequests":[{"paymentMethod":{"paymentType":"CustomPayment","id":"SADAD"}}]},"emailParameters":{"displayParameters":{"alharamain":true,"baggage":true,"bookingCom":true,"eatmarna":false,"electronicVisa":false,"plusgrade":true,"rental":true,"seat":true,"wifi":true,"onDemandTeasers":[]}},"isCardholderAbsent":false,"isQueuePlacementEnabled":false}"""
+        val r = RetrofitClient.api.submitPayment(pnr, p.lastName, headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"), request = body.toRequestBody("application/json".toMediaType()))
+        saveCookiesFromResponse(r); r.isSuccessful
+    } catch (e: Exception) { false }
+}
