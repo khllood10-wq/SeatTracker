@@ -88,7 +88,45 @@ object RetrofitClient {
     private const val BASE_URL = "https://dapi.saudia.com/"
 
     private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder().build()
+        OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val req = chain.request()
+                val t0 = System.currentTimeMillis()
+                val resp = chain.proceed(req)
+                val dt = System.currentTimeMillis() - t0
+
+                // التقاط الطلب
+                val reqBody = try {
+                    val buf = okio.Buffer()
+                    req.body?.writeTo(buf)
+                    buf.readString(Charsets.UTF_8)
+                } catch (e: Exception) { "(unreadable: ${e.message})" }
+
+                // التقاط الرد بدون استهلاكه
+                val respBody = try {
+                    resp.peekBody(200_000).string()
+                } catch (e: Exception) { "(unreadable: ${e.message})" }
+
+                DebugBus.emit(
+                    DebugEntry(
+                        source = DebugSource.RETROFIT,
+                        method = req.method,
+                        url = req.url.toString(),
+                        statusCode = resp.code,
+                        title = "${req.method} ${req.url.encodedPath} → ${resp.code} (${dt}ms)",
+                        headers = req.headers.joinToString("\n") { "  ${it.first}: ${it.second.take(200)}" },
+                        body = buildString {
+                            appendLine("═══ REQUEST (${reqBody.length}c) ═══")
+                            appendLine(reqBody.take(4000))
+                            appendLine()
+                            appendLine("═══ RESPONSE (${respBody.length}c) ═══")
+                            appendLine(respBody.take(8000))
+                        }
+                    )
+                )
+                resp
+            }
+            .build()
     }
 
     val api: SaudiaApi by lazy {
