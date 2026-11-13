@@ -40,25 +40,36 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
     val pnr by viewModel.finalPnr.collectAsStateWithLifecycle()
     val sadad by viewModel.finalSadad.collectAsStateWithLifecycle()
     val searchResponse by viewModel.searchResponseText.collectAsStateWithLifecycle()
+    val jsLogText by viewModel.jsLogText.collectAsStateWithLifecycle()
+    val sessionStatus by viewModel.sessionStatus.collectAsStateWithLifecycle()
     val autoLoopActive by viewModel.autoLoopActive.collectAsStateWithLifecycle()
     val needsWebViewRefresh by viewModel.needsWebViewRefresh.collectAsStateWithLifecycle()
     val autoCaptureMode by viewModel.autoCaptureMode.collectAsStateWithLifecycle()
     val lastCycle by viewModel.autoLoopLastCycle.collectAsStateWithLifecycle()
 
-    val clipboard = LocalClipboardManager.current
     var showWebView by remember { mutableStateOf(false) }
     var reeseTokenForWebView by remember { mutableStateOf<String?>(null) }
+    var jwtMinutesLeft by remember { mutableLongStateOf(0L) }
+    var hyperSecondsLeft by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(Unit) {
         if (viewModel.hasToken()) viewModel.markSessionReady()
         else viewModel.markSessionPreparing()
     }
 
-    // ✅ الآن: عندما تُشعل needsWebViewRefresh، يكون reese84 جديداً بفضل refreshHyperThenCapture
     LaunchedEffect(needsWebViewRefresh) {
         if (needsWebViewRefresh && reeseTokenForWebView == null && !showWebView) {
             val t = viewModel.showWebViewCapture()
             if (t != null) { reeseTokenForWebView = t; showWebView = true }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            jwtMinutesLeft = viewModel.jwtRemainingMinutes()
+            val hyperExpiry = viewModel.sessionExpiryMs()
+            hyperSecondsLeft = ((hyperExpiry - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+            kotlinx.coroutines.delay(1000)
         }
     }
 
@@ -70,6 +81,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                 viewModel.onWebViewJwtCaptured(jwt, sid)
                 showWebView = false; reeseTokenForWebView = null
             },
+            onLog = { msg -> viewModel.appendJsLog(msg) },
             onCancel = { showWebView = false; reeseTokenForWebView = null; viewModel.dismissWebView() }
         )
         return
@@ -84,22 +96,25 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // شريط الحالة العلوي
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("✈️ حجز تلقائي", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Surface(
-                color = if (autoLoopActive) Color(0xFF00C853) else Color(0xFF607D8B),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    if (autoLoopActive) "● يعمل $lastCycle" else "○ متوقف",
-                    color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+        // ═══ شريط الحالة العلوي ═══
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(sessionStatus, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("JWT: ${if (jwtMinutesLeft > 0) "${jwtMinutesLeft}د" else "❌"}", fontSize = 11.sp)
+                        Text("reese84: ${hyperSecondsLeft}s", fontSize = 11.sp)
+                        Text("sid: ${if (viewModel.isSidReady()) "✅" else "⏳"}", fontSize = 11.sp)
+                        if (autoLoopActive) Text("🔁 $lastCycle", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                IconButton(onClick = { viewModel.refreshSession() }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "تجديد Hyper", tint = Color(0xFFFFA726))
+                }
             }
         }
 
-        // مستطيل البحث
+        // ═══ مستطيل حالة البحث ═══
         Card(
             Modifier.fillMaxWidth().heightIn(min = 100.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -122,7 +137,24 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // مستطيل المرحلة الحالية
+        // ═══ مستطيل JS Logs ═══
+        Card(
+            Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 150.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.5f)),
+            border = BorderStroke(1.dp, Color.Green.copy(alpha = 0.5f))
+        ) {
+            Column(Modifier.padding(8.dp).verticalScroll(rememberScrollState())) {
+                Text("🌐 JS Logs (WebView)", color = Color.Green, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Text(
+                    if (jsLogText.isEmpty()) "بانتظار بدء الاتصال..." else jsLogText,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color.White
+                )
+            }
+        }
+
+        // ═══ مستطيل المرحلة الحالية ═══
         Card(
             Modifier.fillMaxWidth().height(110.dp),
             colors = CardDefaults.cardColors(
@@ -171,7 +203,7 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // PNR/SADAD
+        // ═══ PNR/SADAD ═══
         if (pnr.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
@@ -182,7 +214,10 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
                     Text("💳 SADAD: $sadad", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
                     Spacer(Modifier.height(8.dp))
                     Button(
-                        onClick = { clipboard.setText(AnnotatedString(sadad)) },
+                        onClick = { 
+                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SADAD", sadad))
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853))
                     ) {
@@ -192,39 +227,18 @@ fun MainScreen(navController: NavController, viewModel: FlightViewModel) {
             }
         }
 
-        // الأزرار
-        Button(
-            onClick = { viewModel.refreshSession() },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFA726))
-        ) {
-            Text("🔄 تجديد reese84 (Hyper)", fontWeight = FontWeight.Bold)
-        }
-
-        // ✅ زر JWT اليدوي: الآن يجدد Hyper أولاً ثم يفتح WebView
-        Button(
-            onClick = { viewModel.refreshHyperThenCapture(manual = true) },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
-        ) {
-            Text("🌐 تجديد + التقاط JWT", fontWeight = FontWeight.Bold)
-        }
-
+        // ═══ الأزرار ═══
         Button(
             onClick = {
                 if (autoLoopActive) viewModel.stopAutoLoop()
-                else {
-                    if (!viewModel.isJwtFresh(0)) viewModel.addLog("⚠️ لا JWT — افتح WebView أولاً")
-                    else viewModel.startAutoLoop()
-                }
+                else viewModel.startAutoLoop()
             },
-            enabled = viewModel.isJwtFresh(0) || autoLoopActive,
             modifier = Modifier.fillMaxWidth().height(64.dp),
             colors = ButtonDefaults.buttonColors(containerColor = if (autoLoopActive) Color(0xFFD32F2F) else Color(0xFF9C27B0))
         ) {
             Text(
-                if (autoLoopActive) "⏹️ إيقاف الحلقة التلقائية"
-                else "🔁 بدء الحلقة التلقائية",
+                if (autoLoopActive) "⏹️ إيقاف البحث"
+                else "🔁 بدء البحث",
                 fontWeight = FontWeight.Bold, fontSize = 15.sp
             )
         }
