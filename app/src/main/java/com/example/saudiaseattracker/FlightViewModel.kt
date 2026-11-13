@@ -247,85 +247,74 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _autoCaptureMode.value = false
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🔁 الحلقة التلقائية — تحديث مستمر (5-8 ثوانٍ بين المحاولات)
+    // ═══════════════════════════════════════════════════════════
     fun startAutoLoop() {
         if (autoLoopJob?.isActive == true) return
         _autoLoopActive.value = true
         _needsWebViewRefresh.value = false
 
         autoLoopJob = viewModelScope.launch {
-            addLog("🔁 بدء البحث...")
+            addLog("🔁 بدء البحث (تحديث مستمر كل 5-8 ثوانٍ)...")
             _searchResponseText.value = "بدء البحث..."
-            var cycle = 0
 
-            while (isActive && _autoLoopActive.value) {
-                cycle++
-                val cycleTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
-                _autoLoopLastCycle.value = "#$cycle @ $cycleTime"
-                addLog("🔄 دورة #$cycle")
+            try {
+                // إعادة الجلسة إذا لزم
+                withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
+                if (activeCookie.isNullOrBlank()) activeCookie = hyperSession.getCookieHeader()
 
-                try {
-                    withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
-                    if (activeCookie.isNullOrBlank()) activeCookie = hyperSession.getCookieHeader()
-
-                    if (!isJwtFresh(minRemainingMs = 5 * 60_000L) || activeSaaSessionId.isBlank()) {
-                        addLog("⏸️ توقف البحث — تجديد الجلسة الكاملة...")
-                        withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
-                        activeCookie = hyperSession.getCookieHeader()
-                        addLog("✅ reese84 جديد — فتح WebView...")
-                        _needsWebViewRefresh.value = true
-                        _autoCaptureMode.value = true
-                        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(2000) }
-                        if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
-                            addLog("⏸️ فشل التجديد — إيقاف")
-                            break
-                        }
-                        addLog("✅ الجلسة جُددت — استئناف البحث")
+                if (!isJwtFresh(minRemainingMs = 5 * 60_000L) || activeSaaSessionId.isBlank()) {
+                    addLog("⏸️ توقف البحث — تجديد الجلسة الكاملة...")
+                    withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
+                    activeCookie = hyperSession.getCookieHeader()
+                    addLog("✅ reese84 جديد — فتح WebView...")
+                    _needsWebViewRefresh.value = true
+                    _autoCaptureMode.value = true
+                    while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(2000) }
+                    if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
+                        addLog("⏸️ فشل التجديد — إيقاف")
+                        _autoLoopActive.value = false
+                        return@launch
                     }
-
-                    addLog("🔍 البحث...")
-                    _searchResponseText.value = "جاري البحث عن الرحلة..."
-                    val flight = searchUntilFound(max = 1)
-
-                    if (flight == null && (!isJwtFresh(0) || activeSaaSessionId.isBlank())) {
-                        addLog("⏸️ انتهت الجلسة أثناء البحث — تجديد كامل...")
-                        withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
-                        activeCookie = hyperSession.getCookieHeader()
-                        addLog("✅ reese84 جديد — فتح WebView...")
-                        _needsWebViewRefresh.value = true
-                        _autoCaptureMode.value = true
-                        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value) { delay(2000) }
-                        if (!isJwtFresh(0) || activeSaaSessionId.isBlank()) {
-                            addLog("⏸️ فشل التجديد — إيقاف")
-                            break
-                        }
-                        addLog("✅ الجلسة جُددت — العودة للبحث فوراً")
-                        continue
-                    }
-
-                    if (flight == null) {
-                        addLog("⚠️ لم توجد الرحلة — انتظار 10 دقائق")
-                    } else {
-                        addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
-                        clearResults()
-                        val success = executeBooking(flight)
-                        if (success) {
-                            _autoLoopActive.value = false
-                            break
-                        }
-                    }
-                } catch (e: Exception) {
-                    addLog("❌ خطأ في الدورة: ${e.message}")
+                    addLog("✅ الجلسة جُددت — بدء البحث")
                 }
-                addLog("⏳ انتظار 10 دقائق...")
-                delay(10 * 60_000L)
+
+                addLog("🔍 البحث المستمر...")
+                // 🔥 max = Int.MAX_VALUE — الحلقة داخلية مستمرة
+                val flight = searchUntilFound(max = Int.MAX_VALUE, isLoop = true)
+
+                if (!_autoLoopActive.value) {
+                    addLog("⏹️ تم إيقاف البحث")
+                    return@launch
+                }
+
+                if (flight == null) {
+                    addLog("⚠️ توقف البحث — إعادة المحاولة")
+                    _autoLoopActive.value = false
+                    return@launch
+                }
+
+                addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
+                clearResults()
+                val success = executeBooking(flight)
+                if (success) {
+                    addLog("🎉 انتهى الحجز بنجاح")
+                } else {
+                    addLog("❌ فشل الحجز")
+                }
+            } catch (e: Exception) {
+                addLog("❌ خطأ: ${e.message}")
+            } finally {
+                _autoLoopActive.value = false
             }
-            _autoLoopActive.value = false
         }
     }
 
     fun stopAutoLoop() {
         autoLoopJob?.cancel(); autoLoopJob = null
         _autoLoopActive.value = false; _needsWebViewRefresh.value = false; _autoCaptureMode.value = false
+        addLog("⏹️ تم الإيقاف")
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -335,11 +324,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         try {
             setStep("search", StepStatus.SUCCESS, "${flight.price} SAR")
 
-            // ═══ 1. إنشاء السلة + التحقق ═══
             setStep("cart", StepStatus.RUNNING)
             val cid = createCart(flight.airBoundId) ?: run { setStep("cart", StepStatus.FAILED); return false }
 
-            // 🆕 فحص محتوى السلة (السعر + الفئة)
             val cartDetails = fetchCartDetails(cid)
             if (cartDetails != null) {
                 val actualPrice = cartDetails.first
@@ -351,19 +338,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     addLog("⚠️ تحذير: السلة مختلفة!")
                     addLog("   طلبنا: ${flight.fareFamily} @ ${flight.price} SAR")
                     addLog("   السلة: $actualFare @ $actualPrice SAR")
-                    _searchResponseText.value = buildString {
-                        appendLine("⚠️ تحذير: بيانات السلة مختلفة عن المطلوبة")
-                        appendLine()
-                        appendLine("🎯 المطلوب:")
-                        appendLine("   الفئة: ${flight.fareFamily}")
-                        appendLine("   السعر: ${flight.price} SAR")
-                        appendLine()
-                        appendLine("📦 الفعلي في السلة:")
-                        appendLine("   الفئة: ${actualFare.ifBlank { "غير محدد" }}")
-                        appendLine("   السعر: $actualPrice SAR")
-                        appendLine()
-                        appendLine("Cart ID: $cid")
-                    }
                 } else {
                     addLog("✅ السلة مطابقة: $actualFare @ $actualPrice SAR")
                 }
@@ -371,22 +345,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
             setStep("cart", StepStatus.SUCCESS, "$cid | ${flight.fareFamily} @ ${flight.price} SAR")
 
-            // ═══ 2. المسافر ═══
             setStep("passenger", StepStatus.RUNNING)
             if (!confirmPassenger(cid)) { setStep("passenger", StepStatus.FAILED); return false }
             setStep("passenger", StepStatus.SUCCESS)
 
-            // ═══ 3. التفعيل ═══
             setStep("extension", StepStatus.RUNNING)
             if (!addExtension(cid)) { setStep("extension", StepStatus.FAILED); return false }
             setStep("extension", StepStatus.SUCCESS)
 
-            // ═══ 4. الاتصال ═══
             setStep("contacts", StepStatus.RUNNING)
             if (!saveContacts(cid)) { setStep("contacts", StepStatus.FAILED); return false }
             setStep("contacts", StepStatus.SUCCESS)
 
-            // ═══ 5. الطلب ═══
             setStep("order", StepStatus.RUNNING)
             val ord = createOrder(cid) ?: run { setStep("order", StepStatus.FAILED); return false }
             _finalPnr.value = ord.first; _finalSadad.value = ord.second
@@ -397,7 +367,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return true
             }
 
-            // ═══ 6. السداد ═══
             setStep("payment", StepStatus.RUNNING)
             if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); return false }
             setStep("payment", StepStatus.SUCCESS, "✅ SADAD: ${ord.second}")
@@ -423,7 +392,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 _searchResponseText.value = "بدء البحث..."
                 setStep("search", StepStatus.RUNNING)
-                val flight = searchUntilFound(max = 3)
+                val flight = searchUntilFound(max = 3, isLoop = false)
                 if (flight == null) {
                     setStep("search", StepStatus.FAILED); _isRunning.value = false; return@launch
                 }
@@ -435,9 +404,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🔍 البحث الذكي — عرض جميع الرحلات دائماً
+    //  🔍 البحث الذكي — تحديث مستمر + عرض الرحلات
     // ═══════════════════════════════════════════════════════════
-    private suspend fun searchUntilFound(max: Int = 100): FoundFlightDetails? {
+    private suspend fun searchUntilFound(max: Int = 100, isLoop: Boolean = false): FoundFlightDetails? {
         var attempt = 0
 
         val wantedTime = FlightData.normalizeTime(flightData.departureTime)
@@ -446,8 +415,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         addLog("🎯 بحث: وقت=${wantedTime.ifBlank { "أي" }} | فئة=${FareFamilies.displayName(flightData.cabinClass)} | مباشر=${flightData.directOnly}")
 
         while (attempt < max) {
+            // ⏹️ فحص الإيقاف
+            if (isLoop && !_autoLoopActive.value) {
+                addLog("⏹️ تم إيقاف البحث بواسطة المستخدم")
+                return null
+            }
+
             attempt++
-            setStep("search", StepStatus.RUNNING, "محاولة $attempt/$max")
+            setStep("search", StepStatus.RUNNING, "محاولة $attempt")
             _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
 
             try {
@@ -470,7 +445,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 saveCookiesFromResponse(resp)
 
                 if (resp.code() == 401) {
-                    _searchResponseText.value = "🚨 انتهت الجلسة (401)"
+                    _searchResponseText.value = "🚨 انتهت الجلسة (401) — تجديد..."
                     jwtExpiryMs = 0L
                     return null
                 }
@@ -482,35 +457,34 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (resp.isSuccessful) {
                     val body = resp.body() ?: continue
                     val flights = parseAirBounds(body)
-                    addLog("📡 استلمنا ${flights.size} رحلة")
 
                     val match = findMatchingFlight(flights, wantedTime, wantedCodes)
                     val matchedFlightNumber = match?.first?.flightNumber
                     val matchedFareCode = match?.second?.code
 
+                    // ═══ عرض الرحلات فقط (بدون السطور العلوية) ═══
                     _searchResponseText.value = buildString {
                         appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
-                        appendLine("🎯 المطلوب: وقت=${wantedTime.ifBlank { "أي" }} | فئة=${wantedCodes.joinToString(",")} | مباشر=${if (flightData.directOnly) "✅" else "❌"}")
-                        appendLine("────────────────────────")
                         appendLine()
 
-                        flights.forEachIndexed { idx, f ->
-                            val isMatched = f.flightNumber == matchedFlightNumber
-                            val prefix = if (isMatched) "🎯" else "  "
-                            val directStr = if (f.isDirect) "مباشر" else "${f.stops}st"
+                        if (flights.isEmpty()) {
+                            appendLine("⚠️ لم تُستخرج أي رحلة")
+                        } else {
+                            flights.forEachIndexed { idx, f ->
+                                val isMatched = f.flightNumber == matchedFlightNumber
+                                val prefix = if (isMatched) "🎯" else "  "
+                                val directStr = if (f.isDirect) "مباشر" else "${f.stops}st"
 
-                            appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime} | $directStr")
+                                appendLine("$prefix ${idx + 1}. ${f.flightNumber} @ ${f.departTime} | $directStr")
 
-                            f.fares.forEach { fare ->
-                                val status = if (fare.isAvailable) "✅" else "❌"
-                                val star = if (isMatched && fare.code == matchedFareCode) " ⬅ المختارة" else ""
-                                appendLine("     $status ${fare.code} | ${fare.price} SAR | quota=${fare.quota}$star")
+                                f.fares.forEach { fare ->
+                                    val status = if (fare.isAvailable) "✅" else "❌"
+                                    val star = if (isMatched && fare.code == matchedFareCode) " ⬅ المختارة" else ""
+                                    appendLine("     $status ${fare.code} | ${fare.price} SAR | quota=${fare.quota}$star")
+                                }
+                                appendLine()
                             }
-                            appendLine()
                         }
-
-                        appendLine("────────────────────────")
-                        if (match != null) appendLine("✅ تم العثور على مطابقة") else appendLine("⚠️ لا مطابقة — سيُعاد المحاولة")
                     }
 
                     if (match != null) {
@@ -526,15 +500,19 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             airBoundId = fare.airBoundId
                         )
                     } else {
-                        addLog("⚠️ لا مطابقة — ${flights.size} رحلة تم فحصها")
+                        addLog("⚠️ لا مطابقة (محاولة $attempt) — ${flights.size} رحلة")
                     }
                 } else {
-                    _searchResponseText.value = "⚠️ استجابة غير متوقعة: HTTP ${resp.code()}"
+                    _searchResponseText.value = "⚠️ HTTP ${resp.code()}"
                 }
             } catch (e: Exception) {
-                _searchResponseText.value = "❌ خطأ في الاتصال:\n${e.message}"
+                _searchResponseText.value = "❌ خطأ:\n${e.message}"
             }
-            if (attempt < max) delay(Random.nextLong(5_000L, 8_000L))
+
+            // ⏱️ انتظار 5-8 ثوانٍ بين المحاولات
+            if (attempt < max) {
+                delay(Random.nextLong(5_000L, 8_000L))
+            }
         }
         return null
     }
@@ -651,26 +629,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     } catch (e: Exception) { null }
 
-    /**
-     * 🆕 يجلب تفاصيل السلة للتحقق من السعر والفئة الفعلية
-     */
     private suspend fun fetchCartDetails(cid: String): Pair<Double, String>? = try {
         val r = RetrofitClient.api.getCartDetails(
             cartId = cid,
             headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails")
         )
         saveCookiesFromResponse(r)
-        if (!r.isSuccessful) {
-            addLog("⚠️ فحص السلة فشل: HTTP ${r.code()}")
-            null
-        } else {
+        if (!r.isSuccessful) null else {
             val bodyStr = r.body()?.string() ?: ""
             val json = JSONObject(bodyStr)
-
             var price = 0.0
             var fareFamily = ""
-
-            // محاولة 1: data.airBoundGroups[0].airBounds[0]
             val data = json.optJSONObject("data")
             val groups = data?.optJSONArray("airBoundGroups")
             if (groups != null && groups.length() > 0) {
@@ -684,21 +653,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         ?.optDouble("value", 0.0) ?: 0.0) / 100.0
                 }
             }
-
-            // محاولة 2: data.airOffer.totalPrice مباشرة
             if (price == 0.0) {
                 price = (data?.optJSONObject("airOffer")
                     ?.optJSONObject("totalPrice")
                     ?.optDouble("value", 0.0) ?: 0.0) / 100.0
             }
-
-            addLog("📦 السلة: fare=$fareFamily | price=$price")
             Pair(price, fareFamily)
         }
-    } catch (e: Exception) {
-        addLog("❌ فحص السلة خطأ: ${e.message}")
-        null
-    }
+    } catch (e: Exception) { null }
 
     private suspend fun confirmPassenger(cid: String): Boolean = try {
         val p = passengerData
