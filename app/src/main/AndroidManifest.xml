@@ -2,24 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ═══════════════════════════════════════════════════
-         صلاحيات الشبكة والأساسيات
-         ═══════════════════════════════════════════════════ -->
+    <!-- ═══ صلاحيات الشبكة والأساسيات ═══ -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
-    <!-- ═══════════════════════════════════════════════════
-         صلاحيات الخلفية والطاقة
-         ═══════════════════════════════════════════════════ -->
+    <!-- ═══ صلاحيات الخلفية والطاقة ═══ -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
-    <!-- ═══════════════════════════════════════════════════
-         صلاحية Shizuku (فقط هذه — لا تضف INTERACT_ACROSS_USERS_FULL هنا!)
-         ═══════════════════════════════════════════════════ -->
+    <!-- ═══ Shizuku (فقط صلاحية واحدة) ═══ -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
     <application
@@ -36,29 +29,25 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.SaudiaSeatTracker"
-            android:windowSoftInputMode="adjustResize">
+            android:theme="@style/Theme.SaudiaSeatTracker">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- ═══════════════════════════════════════════════════
-             Shizuku Integration
-             ═══════════════════════════════════════════════════ -->
+        <!-- ═══ Shizuku V3 Support ═══ -->
         <meta-data
             android:name="moe.shizuku.client.V3_SUPPORT"
-            android:value="true"
-            tools:replace="android:value" />
+            android:value="true" />
 
+        <!-- ═══ Shizuku Provider (بدون android:permission!) ═══ -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
             android:enabled="true"
             android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+            android:multiprocess="false" />
 
     </application>
 
