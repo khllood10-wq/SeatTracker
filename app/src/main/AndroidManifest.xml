@@ -9,8 +9,10 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- 🆕 صلاحية Shizuku -->
+    <!-- ★ صلاحية Shizuku الأساسية -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- ★ صلاحية إضافية مطلوبة لعمل ShizukuProvider -->
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     <application
         android:allowBackup="true"
@@ -33,13 +35,18 @@
             </intent-filter>
         </activity>
 
-        <!-- 🆕 Shizuku Provider -->
+        <!-- ★ إعدادات Shizuku الضرورية -->
+        <meta-data
+            android:name="moe.shizuku.client.V3_SUPPORT"
+            android:value="true"
+            tools:replace="android:value" />
+
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
-            android:multiprocess="false"
             android:enabled="true"
             android:exported="true"
+            android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     </application>
