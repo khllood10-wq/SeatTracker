@@ -20,7 +20,6 @@ android {
             useSupportLibrary = true
         }
 
-        // قراءة مفتاح Hyper
         buildConfigField("String", "HYPER_API_KEY", "\"${System.getenv("HYPER_API_KEY") ?: ""}\"")
     }
 
@@ -45,10 +44,6 @@ android {
         buildConfig = true
     }
     packaging {
-        jniLibs {
-            useLegacyPackaging = true // 👈 مهم جداً لاستخراج ملفات .so من مكتبة httpcloak
-            pickFirsts += "**/*.so"
-        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/DEPENDENCIES"
@@ -77,25 +72,21 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
-    // الشبكة - نستخدم OkHttp للاتصال بـ Hyper Solutions فقط
+    // Networking
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // 👇 مكتبة httpcloak المحلية (لانتحال بصمة Chrome في طلبات السعودية)
-    implementation(files("libs/httpcloak-release.aar"))
-
-    // 👇 مكتبة AndroidX WebKit (ضرورية لدالة addDocumentStartJavaScript)
+    // ✅ WebView مطلوب لالتقاط JWT
     implementation("androidx.webkit:webkit:1.11.0")
 
-dependencies {
-    // ... كل التبعيات الحالية
-    
-    // 🆕 Shizuku للتحكم بالطيران تلقائياً
+    // ✅ Shizuku للتحكم بوضع الطيران
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
-}
+
+    // ❌ حُذفت: implementation(files("libs/httpcloak-release.aar"))
+
     // اختبارات
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
