@@ -72,15 +72,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var _consecutiveSilentBlocks = 0
     private var _totalSilentBlocksInSession = 0
 
-    // 🆕 عداد محاولات التجديد بعد 403
+    // عداد محاولات التجديد بعد 403
     private var _renewAttemptsAfter403 = 0
 
-    // Throttling
+    // Throttling — سرعة ثابتة 2-5s + توقف استباقي فقط
     private val _requestTimestamps = mutableListOf<Long>()
     private val THROTTLE_WINDOW_MS = 10 * 60_000L
-    private val THROTTLE_WARN_THRESHOLD = 25
     private val THROTTLE_STOP_THRESHOLD = 40
     private val THROTTLE_STOP_DURATION_MS = 15_000L
+
+    // 🆕 Hyper Renewal — كل 10 دقائق بدلاً من انتهاء العداد
+    private var _lastHyperRenewTime = 0L
+    private val HYPER_RENEW_INTERVAL_MS = 10 * 60_000L
 
     // WakeLock + WifiLock
     private var wakeLock: PowerManager.WakeLock? = null
@@ -216,23 +219,34 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         wifiLock = null
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 Throttling — سرعة ثابتة 2-5s + توقف استباقي (بدون تبطيء)
+    // ═══════════════════════════════════════════════════════════
     private suspend fun calculateThrottleDelay(): Long {
         val now = System.currentTimeMillis()
         _requestTimestamps.removeAll { it < now - THROTTLE_WINDOW_MS }
         val recentCount = _requestTimestamps.size
 
         return when {
-            recentCount < THROTTLE_WARN_THRESHOLD -> Random.nextLong(3_000L, 5_000L)
-            recentCount < THROTTLE_STOP_THRESHOLD -> {
-                addLog("🐢 تبطيء: $recentCount/$THROTTLE_STOP_THRESHOLD")
-                Random.nextLong(6_000L, 8_000L)
-            }
+            // سرعة ثابتة 2-5 ثوانٍ
+            recentCount < THROTTLE_STOP_THRESHOLD -> Random.nextLong(2_000L, 5_000L)
+
+            // توقف استباقي عند 40 طلب
             else -> {
-                addLog("⏸️ توقف: $recentCount")
-                _searchResponseText.value = "⏸️ توقف استباقي ($recentCount طلب)\n\n⏳ انتظار 15 ثانية...\n✅ يحميك من الحظر"
+                addLog("⏸️ توقف استباقي: $recentCount طلب")
+                _searchResponseText.value = buildString {
+                    appendLine("⏸️ توقف استباقي ($recentCount طلب)")
+                    appendLine()
+                    appendLine("📊 تجاوزت $THROTTLE_STOP_THRESHOLD طلب في 10 دقائق")
+                    appendLine("⏳ انتظار 15 ثانية لكسر النمط...")
+                    appendLine("🔄 ثم تصفير العداد — استئناف فوري")
+                    appendLine()
+                    appendLine("✅ يحميك من الحظر قبل حدوثه")
+                }
                 delay(THROTTLE_STOP_DURATION_MS)
                 _requestTimestamps.clear()
-                Random.nextLong(3_000L, 5_000L)
+                addLog("🔄 تصفير العداد — استئناف")
+                Random.nextLong(2_000L, 5_000L)
             }
         }
     }
@@ -270,7 +284,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             return false
         }
 
-        // ═══ 1. تفعيل الطيران ═══
         _searchResponseText.value = buildString {
             appendLine("✈️ تفعيل وضع الطيران...")
             appendLine()
@@ -293,38 +306,34 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             return false
         }
 
-        // ═══ 2. انتظار 15 ثانية ═══
         _searchResponseText.value = "✈️ الطيران مُفعّل\n\n⏳ انتظار 15 ثانية..."
         for (i in 15 downTo 1) {
             _searchResponseText.value = "✈️ الطيران مُفعّل\n\n⏳ انتظار $i ثانية..."
             delay(1000)
         }
 
-        // ═══ 3. إيقاف الطيران + تفعيل البيانات ═══
         _searchResponseText.value = "📶 إيقاف الطيران + تفعيل البيانات..."
         ShizukuHelper.disableAirplaneMode()
         delay(1500)
         ShizukuHelper.enableMobileData()
 
-        // ═══ 4. انتظار الشبكة ═══
         _searchResponseText.value = "📶 انتظار الشبكة...\n\n⏳ 12 ثانية..."
         for (i in 12 downTo 1) {
             _searchResponseText.value = "📶 انتظار الشبكة...\n\n⏳ $i ثانية..."
             delay(1000)
         }
 
-        // ═══ 5. تجديد reese84 ═══
         _searchResponseText.value = "🔄 تجديد reese84..."
         try {
             withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
             activeCookie = hyperSession.getCookieHeader()
+            _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset timer
             addLog("✅ reese84 جديد")
         } catch (e: Exception) {
             _searchResponseText.value = "❌ فشل تجديد reese84\n\n${e.message}"
             return false
         }
 
-        // ═══ 6. التقاط JWT جديد ═══
         _searchResponseText.value = "🌐 التقاط JWT جديد..."
         _needsWebViewRefresh.value = true
         _autoCaptureMode.value = true
@@ -339,7 +348,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             return false
         }
 
-        // ═══ 7. تصفير كل العدادات ═══
         _renewAttemptsAfter403 = 0
         _consecutiveSilentBlocks = 0
         _requestTimestamps.clear()
@@ -394,6 +402,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 markSessionPreparing()
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
+                _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset timer
                 markSessionReady()
                 addLog("✅ تم تجديد reese84")
             } catch (e: Exception) {
@@ -433,16 +442,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _totalSilentBlocksInSession = 0
         _renewAttemptsAfter403 = 0
         _requestTimestamps.clear()
+        _lastHyperRenewTime = 0L  // 🆕 سيُحدَّث بعد التجديد الأول
 
         acquireWakeLocks()
 
         autoLoopJob = viewModelScope.launch {
-            addLog("🔁 بدء البحث المستمر...")
+            addLog("🔁 بدء البحث المستمر (2-5s)...")
             _searchResponseText.value = "بدء البحث..."
 
             try {
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                 activeCookie = hyperSession.getCookieHeader()
+                _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset after initial renew
             } catch (e: Exception) {
                 addLog("❌ فشل تجديد البداية: ${e.message}")
             }
@@ -452,13 +463,18 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             while (isActive && _autoLoopActive.value) {
                 try {
                     val timerExpired = _sessionTimerSeconds.value <= 0L && hyperSession.expiryAt() > 0L
-                    val needRenew = _sessionExpired || timerExpired || activeSaaSessionId.isBlank() || activeJwt.isBlank() || !hyperSession.hasFreshToken()
+                    // 🆕 فحص انتهاء 10 دقائق Hyper
+                    val hyperIntervalExpired = _lastHyperRenewTime > 0L &&
+                            (System.currentTimeMillis() - _lastHyperRenewTime) >= HYPER_RENEW_INTERVAL_MS
+                    val needRenew = _sessionExpired || timerExpired || hyperIntervalExpired ||
+                            activeSaaSessionId.isBlank() || activeJwt.isBlank() || !hyperSession.hasFreshToken()
 
                     if (needRenew) {
                         val reason = when {
                             _sessionExpired && _lastErrorCode == 401 -> "🚨 401 — انتهت الجلسة"
                             _sessionExpired && _lastErrorCode == 403 -> "🚨 403 — محاولة $_renewAttemptsAfter403/3"
                             _sessionExpired && _lastErrorCode == 200 -> "🛡️ حظر صامت"
+                            hyperIntervalExpired -> "⏱️ 10 دقائق Hyper — تجديد دوري"
                             timerExpired -> "⏰ انتهى العداد"
                             activeSaaSessionId.isBlank() -> "⚠️ sid مفقود"
                             activeJwt.isBlank() -> "⚠️ JWT مفقود"
@@ -485,6 +501,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         try {
                             withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                             activeCookie = hyperSession.getCookieHeader()
+                            _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset timer
                         } catch (e: Exception) {
                             addLog("❌ فشل reese84: ${e.message}")
                             delay(10000)
@@ -664,9 +681,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _requestTimestamps.removeAll { it < nowMs - THROTTLE_WINDOW_MS }
                 val recentCount = _requestTimestamps.size
                 val counterStatus = when {
-                    recentCount < THROTTLE_WARN_THRESHOLD -> "🟢 $recentCount/$THROTTLE_WARN_THRESHOLD (سرعة كاملة)"
-                    recentCount < THROTTLE_STOP_THRESHOLD -> "🟡 $recentCount/$THROTTLE_STOP_THRESHOLD (تبطيء)"
-                    else -> "🔴 $recentCount/$THROTTLE_STOP_THRESHOLD (توقف)"
+                    recentCount < THROTTLE_STOP_THRESHOLD ->
+                        "🟢 $recentCount/$THROTTLE_STOP_THRESHOLD (سرعة كاملة 2-5s)"
+                    else ->
+                        "🔴 $recentCount/$THROTTLE_STOP_THRESHOLD (توقف)"
                 }
 
                 _searchResponseText.value = buildString {
