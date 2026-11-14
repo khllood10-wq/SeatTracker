@@ -71,14 +71,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var _consecutiveSilentBlocks = 0
     private var _totalSilentBlocksInSession = 0
 
-    // 🆕 Throttling — نافذة 10 دقائق
-    private val _requestTimestamps = mutableListOf<Long>()
-    private val THROTTLE_WINDOW_MS = 10 * 60_000L        // 10 دقائق
-    private val THROTTLE_WARN_THRESHOLD = 25             // 25 طلب → تبطيء
-    private val THROTTLE_STOP_THRESHOLD = 40             // 40 طلب → توقف
-    private val THROTTLE_STOP_DURATION_MS = 15_000L      // 🆕 15 ثانية فقط
+    // 🆕 عداد محاولات التجديد بعد 403
+    private var _renewAttemptsAfter403 = 0
 
-    // 🆕 WakeLock + WifiLock
+    // Throttling
+    private val _requestTimestamps = mutableListOf<Long>()
+    private val THROTTLE_WINDOW_MS = 10 * 60_000L
+    private val THROTTLE_WARN_THRESHOLD = 25
+    private val THROTTLE_STOP_THRESHOLD = 40
+    private val THROTTLE_STOP_DURATION_MS = 15_000L
+
+    // WakeLock + WifiLock
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -149,6 +152,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun clearDebugLog() { _debugEntries.value = emptyList() }
     fun isSidReady(): Boolean = activeSaaSessionId.isNotBlank()
     fun hasToken(): Boolean = hyperSession.hasFreshToken() && activeSaaSessionId.isNotBlank() && activeJwt.isNotBlank()
+    fun isShizukuReady(): Boolean = ShizukuHelper.isReady() && ShizukuHelper.isPermissionGranted()
+    fun requestShizukuPermission() = ShizukuHelper.requestPermission()
 
     init {
         viewModelScope.launch {
@@ -181,108 +186,168 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 WakeLock + WifiLock — للعمل في الخلفية
-    // ═══════════════════════════════════════════════════════════
     private fun acquireWakeLocks() {
-        if (wakeLock?.isHeld == true) {
-            addLog("🔋 WakeLock نشط مسبقاً")
-            return
-        }
-
+        if (wakeLock?.isHeld == true) return
         try {
             val pm = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "SaudiaSeatTracker::SearchWakeLock"
-            ).apply {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SaudiaSeatTracker::SearchWakeLock").apply {
                 setReferenceCounted(false)
                 acquire(3 * 60 * 60 * 1000L)
             }
-            addLog("✅ WakeLock مُفعّل — المعالج لن ينام")
-        } catch (e: Exception) {
-            addLog("⚠️ WakeLock فشل: ${e.message}")
-        }
+            addLog("✅ WakeLock مُفعّل")
+        } catch (e: Exception) { addLog("⚠️ WakeLock: ${e.message}") }
 
         try {
-            val wm = getApplication<Application>().applicationContext
-                .getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val wm = getApplication<Application>().applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             @Suppress("DEPRECATION")
-            wifiLock = wm.createWifiLock(
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                "SaudiaSeatTracker::SearchWifiLock"
-            ).apply {
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "SaudiaSeatTracker::WifiLock").apply {
                 setReferenceCounted(false)
                 acquire()
             }
-            addLog("✅ WifiLock مُفعّل — الواي فاي نشط")
-        } catch (e: Exception) {
-            addLog("⚠️ WifiLock فشل: ${e.message}")
-        }
+            addLog("✅ WifiLock مُفعّل")
+        } catch (e: Exception) { addLog("⚠️ WifiLock: ${e.message}") }
     }
 
     private fun releaseWakeLocks() {
-        try {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
-        } catch (e: Exception) {}
-        try {
-            if (wifiLock?.isHeld == true) wifiLock?.release()
-        } catch (e: Exception) {}
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (e: Exception) {}
+        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (e: Exception) {}
         wakeLock = null
         wifiLock = null
-        addLog("🔓 WakeLock + WifiLock مُحرّران")
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 Throttling — نافذة 10 دقائق + توقف 15ث + تصفير فوري
-    // ═══════════════════════════════════════════════════════════
     private suspend fun calculateThrottleDelay(): Long {
         val now = System.currentTimeMillis()
         _requestTimestamps.removeAll { it < now - THROTTLE_WINDOW_MS }
-
         val recentCount = _requestTimestamps.size
-        val oldestAge = if (_requestTimestamps.isNotEmpty())
-            (now - _requestTimestamps.first()) / 1000 else 0L
-
-        addLog("📊 Throttle: $recentCount طلب | أقدم: ${oldestAge}s")
 
         return when {
-            recentCount < THROTTLE_WARN_THRESHOLD -> {
-                // سرعة كاملة 3-5 ثوانٍ
-                Random.nextLong(3_000L, 5_000L)
-            }
+            recentCount < THROTTLE_WARN_THRESHOLD -> Random.nextLong(3_000L, 5_000L)
             recentCount < THROTTLE_STOP_THRESHOLD -> {
-                // تبطيء 6-8 ثوانٍ
-                addLog("🐢 تبطيء: $recentCount/${THROTTLE_STOP_THRESHOLD}")
-                _searchResponseText.value = buildString {
-                    appendLine("🐢 تبطيء استباقي")
-                    appendLine()
-                    appendLine("📊 الطلبات في آخر 10 دقائق: $recentCount/${THROTTLE_STOP_THRESHOLD}")
-                    appendLine("⏱️ الفاصل الآن: 6-8 ثوانٍ")
-                    appendLine("💡 عند الوصول لـ ${THROTTLE_STOP_THRESHOLD} → توقف 15 ثانية")
-                    appendLine()
-                    appendLine("✅ يحميك من الحظر")
-                }
+                addLog("🐢 تبطيء: $recentCount/$THROTTLE_STOP_THRESHOLD")
                 Random.nextLong(6_000L, 8_000L)
             }
             else -> {
-                // 🆕 توقف 15 ثانية + تصفير فوري
-                addLog("⏸️ توقف: $recentCount طلب — انتظار 15ث ثم تصفير")
-                _searchResponseText.value = buildString {
-                    appendLine("⏸️ توقف استباقي (${recentCount} طلب)")
-                    appendLine()
-                    appendLine("📊 تجاوزت ${THROTTLE_STOP_THRESHOLD} طلب في 10 دقائق")
-                    appendLine("⏳ انتظار 15 ثانية لكسر النمط...")
-                    appendLine("🔄 ثم تصفير العداد — استئناف بسرعة كاملة")
-                    appendLine()
-                    appendLine("✅ هذا يحميك من الحظر قبل حدوثه")
-                }
-                delay(THROTTLE_STOP_DURATION_MS)   // 15 ثانية
-                _requestTimestamps.clear()          // 🆕 تصفير فوري
-                addLog("🔄 تصفير العداد — استئناف بسرعة كاملة")
+                addLog("⏸️ توقف: $recentCount")
+                _searchResponseText.value = "⏸️ توقف استباقي ($recentCount طلب)\n\n⏳ انتظار 15 ثانية...\n✅ يحميك من الحظر"
+                delay(THROTTLE_STOP_DURATION_MS)
+                _requestTimestamps.clear()
                 Random.nextLong(3_000L, 5_000L)
             }
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 وضع الطيران التلقائي — التتابع الكامل
+    // ═══════════════════════════════════════════════════════════
+    private suspend fun performAirplaneModeRenewal(): Boolean {
+        if (!ShizukuHelper.isReady()) {
+            _searchResponseText.value = buildString {
+                appendLine("❌ Shizuku غير جاهز")
+                appendLine()
+                appendLine("📌 السبب: IP مُعلَّم من Imperva")
+                appendLine("🔧 التجديد العادي لا يحل المشكلة")
+                appendLine()
+                appendLine("💡 الحل:")
+                appendLine("  1️⃣ شغّل Shizuku")
+                appendLine("  2️⃣ امنح التطبيق صلاحية Shizuku")
+                appendLine("  3️⃣ أعد المحاولة")
+            }
+            return false
+        }
+
+        if (!ShizukuHelper.isPermissionGranted()) {
+            _searchResponseText.value = buildString {
+                appendLine("⚠️ صلاحية Shizuku مطلوبة")
+                appendLine()
+                appendLine("📌 السبب: IP مُعلَّم من Imperva")
+                appendLine("🔧 نحتاج Shizuku لتفعيل الطيران تلقائياً")
+                appendLine()
+                appendLine("💡 امنح الصلاحية من النافذة المنبثقة")
+                appendLine("ثم اضغط \"بدء البحث\" مجدداً")
+            }
+            ShizukuHelper.requestPermission()
+            return false
+        }
+
+        // ═══ 1. تفعيل الطيران ═══
+        _searchResponseText.value = buildString {
+            appendLine("✈️ تفعيل وضع الطيران...")
+            appendLine()
+            appendLine("📌 السبب: 3 محاولات 403 متتالية")
+            appendLine("📌 Imperva يرفض IP الحالي")
+            appendLine()
+            appendLine("🔧 الحل التلقائي (Shizuku):")
+            appendLine("  1️⃣ تفعيل الطيران ← الآن")
+            appendLine("  2️⃣ انتظار 15 ثانية")
+            appendLine("  3️⃣ تفعيل البيانات")
+            appendLine("  4️⃣ انتظار إعادة الاتصال")
+            appendLine("  5️⃣ تجديد reese84 + JWT")
+            appendLine("  6️⃣ استئناف البحث")
+        }
+        addLog("✈️ تفعيل الطيران (Shizuku)...")
+
+        if (!ShizukuHelper.enableAirplaneMode()) {
+            _searchResponseText.value = "❌ فشل تفعيل الطيران\n\nتأكد من Shizuku وصلاحياته"
+            addLog("❌ فشل تفعيل الطيران")
+            return false
+        }
+
+        // ═══ 2. انتظار 15 ثانية ═══
+        _searchResponseText.value = "✈️ الطيران مُفعّل\n\n⏳ انتظار 15 ثانية..."
+        for (i in 15 downTo 1) {
+            _searchResponseText.value = "✈️ الطيران مُفعّل\n\n⏳ انتظار $i ثانية..."
+            delay(1000)
+        }
+
+        // ═══ 3. إيقاف الطيران + تفعيل البيانات ═══
+        _searchResponseText.value = "📶 إيقاف الطيران + تفعيل البيانات..."
+        ShizukuHelper.disableAirplaneMode()
+        delay(1500)
+        ShizukuHelper.enableMobileData()
+
+        // ═══ 4. انتظار الشبكة ═══
+        _searchResponseText.value = "📶 انتظار الشبكة...\n\n⏳ 12 ثانية..."
+        for (i in 12 downTo 1) {
+            _searchResponseText.value = "📶 انتظار الشبكة...\n\n⏳ $i ثانية..."
+            delay(1000)
+        }
+
+        // ═══ 5. تجديد reese84 ═══
+        _searchResponseText.value = "🔄 تجديد reese84..."
+        try {
+            withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
+            activeCookie = hyperSession.getCookieHeader()
+            addLog("✅ reese84 جديد")
+        } catch (e: Exception) {
+            _searchResponseText.value = "❌ فشل تجديد reese84\n\n${e.message}"
+            return false
+        }
+
+        // ═══ 6. التقاط JWT جديد ═══
+        _searchResponseText.value = "🌐 التقاط JWT جديد..."
+        _needsWebViewRefresh.value = true
+        _autoCaptureMode.value = true
+        var waited = 0
+        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value && waited < 60) {
+            delay(1000)
+            waited++
+        }
+
+        if (!hyperSession.hasFreshToken() || activeSaaSessionId.isBlank()) {
+            _searchResponseText.value = "❌ فشل التقاط JWT"
+            return false
+        }
+
+        // ═══ 7. تصفير كل العدادات ═══
+        _renewAttemptsAfter403 = 0
+        _consecutiveSilentBlocks = 0
+        _requestTimestamps.clear()
+        _sessionExpired = false
+        _lastErrorCode = 0
+
+        _searchResponseText.value = "✅ تم تغيير IP + تجديد الجلسة\n\n▶️ استئناف البحث..."
+        addLog("✅ اكتمل - استئناف البحث")
+        return true
     }
 
     fun markSessionReady() {
@@ -345,7 +410,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         if (sid.isNotBlank()) activeSaaSessionId = sid
         activeCookie = hyperSession.getCookieHeader()
         activeXdToken = hyperSession.getToken() ?: ""
-
         addLog("🎉 JWT محفوظ — sid: ${if (sid.isNotBlank()) "✅" else "❌"}")
         markSessionReady()
         if (activeJwt.isNotBlank() && activeSaaSessionId.isNotBlank()) {
@@ -366,12 +430,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _sessionExpired = false
         _consecutiveSilentBlocks = 0
         _totalSilentBlocksInSession = 0
+        _renewAttemptsAfter403 = 0
         _requestTimestamps.clear()
 
         acquireWakeLocks()
 
         autoLoopJob = viewModelScope.launch {
-            addLog("🔁 بدء البحث المستمر (3-5s + Throttling)...")
+            addLog("🔁 بدء البحث المستمر...")
             _searchResponseText.value = "بدء البحث..."
 
             try {
@@ -391,9 +456,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     if (needRenew) {
                         val reason = when {
                             _sessionExpired && _lastErrorCode == 401 -> "🚨 401 — انتهت الجلسة"
-                            _sessionExpired && _lastErrorCode == 403 -> "🚨 403 — محظور (Imperva)"
-                            _sessionExpired && _lastErrorCode == 200 -> "🛡️ حظر صامت (200-HTML)"
-                            timerExpired -> "⏰ انتهى عداد الجلسة"
+                            _sessionExpired && _lastErrorCode == 403 -> "🚨 403 — محاولة $_renewAttemptsAfter403/3"
+                            _sessionExpired && _lastErrorCode == 200 -> "🛡️ حظر صامت"
+                            timerExpired -> "⏰ انتهى العداد"
                             activeSaaSessionId.isBlank() -> "⚠️ sid مفقود"
                             activeJwt.isBlank() -> "⚠️ JWT مفقود"
                             else -> "⚠️ reese84 منتهي"
@@ -403,26 +468,24 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             appendLine("⚙️ تجديد الجلسة تلقائياً...")
                             appendLine()
                             appendLine("📌 السبب: $reason")
-                            appendLine()
-                            appendLine("🔧 الخطوات:")
-                            appendLine("  1️⃣ تجديد reese84 عبر Hyper")
-                            appendLine("  2️⃣ فتح WebView لالتقاط JWT")
-                            appendLine("  3️⃣ استئناف البحث")
-                            appendLine()
-                            appendLine("⏳ يرجى الانتظار...")
+                            if (_lastErrorCode == 403) {
+                                appendLine("📊 محاولات 403: $_renewAttemptsAfter403/3")
+                                if (_renewAttemptsAfter403 >= 2) {
+                                    appendLine()
+                                    appendLine("⚠️ بعد المحاولة القادمة → وضع الطيران تلقائياً")
+                                }
+                            }
                         }
 
                         addLog("⏸️ إيقاف — $reason")
                         markSessionPreparing()
                         _sessionExpired = false
-                        _lastErrorCode = 0
-                        _lastErrorMessage = ""
 
                         try {
                             withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                             activeCookie = hyperSession.getCookieHeader()
                         } catch (e: Exception) {
-                            addLog("❌ فشل تجديد reese84: ${e.message}")
+                            addLog("❌ فشل reese84: ${e.message}")
                             delay(10000)
                             continue
                         }
@@ -436,34 +499,33 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         if (!hyperSession.hasFreshToken() || activeSaaSessionId.isBlank()) {
-                            addLog("⚠️ فشل التجديد — إعادة المحاولة...")
+                            addLog("⚠️ فشل التجديد")
                             delay(10000)
                             continue
                         }
 
-                        addLog("✅ الجلسة جُددت — استئناف البحث")
+                        addLog("✅ الجلسة جُددت — استئناف")
                         markSessionReady()
                         continue
                     }
 
                     val throttleDelay = calculateThrottleDelay()
-
                     attempt++
                     val flight = searchAttempt(attempt)
 
                     if (!_autoLoopActive.value) break
 
                     if (_sessionExpired) {
-                        addLog("🚨 خطأ $_lastErrorCode — إعادة للتجديد")
+                        addLog("🚨 خطأ $_lastErrorCode — إعادة")
                         continue
                     }
 
                     if (flight != null) {
-                        addLog("✅ وجدت: ${flight.price} SAR — بدء الحجز")
+                        addLog("✅ وجدت: ${flight.price} SAR")
                         clearResults()
                         val success = executeBooking(flight)
                         if (success) {
-                            addLog("🎉 انتهى الحجز بنجاح")
+                            addLog("🎉 انتهى الحجز")
                             _autoLoopActive.value = false
                             break
                         } else {
@@ -475,7 +537,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 } catch (e: Exception) {
                     addLog("❌ خطأ في الجولة: ${e.message}")
-                    _searchResponseText.value = "❌ خطأ غير متوقع:\n${e.message}"
                     delay(5000)
                 }
             }
@@ -491,12 +552,9 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _needsWebViewRefresh.value = false
         _autoCaptureMode.value = false
         releaseWakeLocks()
-        addLog("⏹️ تم الإيقاف يدوياً")
+        addLog("⏹️ إيقاف يدوي")
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🛡️ كشف الحظر الصامت
-    // ═══════════════════════════════════════════════════════════
     private fun isSilentBlock(rawBody: String, contentType: String): Boolean {
         if (rawBody.isBlank()) return false
         if (contentType.contains("text/html", ignoreCase = true)) return true
@@ -516,81 +574,42 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         when {
             level == 1 -> {
                 _searchResponseText.value = buildString {
-                    appendLine("🛡️ حظر صامت #1 — محاولة $attempt")
+                    appendLine("🛡️ حظر صامت #1")
                     appendLine()
-                    appendLine("📌 Imperva أعاد صفحة HTML بدلاً من JSON")
-                    appendLine()
-                    appendLine("🔧 الإجراء الفوري:")
-                    appendLine("  1️⃣ تجديد reese84 (Hyper)")
-                    appendLine("  2️⃣ تجديد JWT (WebView)")
-                    appendLine("  3️⃣ استئناف البحث")
+                    appendLine("📌 Imperva أعاد HTML بدل JSON")
+                    appendLine("🔧 الإجراء: تجديد الجلسة")
                     appendLine()
                     appendLine("📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession")
                 }
-                addLog("🛡️ حظر صامت #1 — تجديد فوري")
+                addLog("🛡️ حظر صامت #1")
                 return true
             }
             level in 2..3 -> {
-                _searchResponseText.value = buildString {
-                    appendLine("🛡️ حظر صامت #$level — محاولة $attempt")
-                    appendLine()
-                    appendLine("📌 Imperva يرفض الطلبات بشكل متتالٍ")
-                    appendLine()
-                    appendLine("🔧 الإجراء المتدرج:")
-                    appendLine("  ⏳ انتظار 30 ثانية")
-                    appendLine("  🔄 ثم تجديد الجلسة")
-                    appendLine()
-                    appendLine("📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession")
-                }
-                addLog("🛡️ حظر #$level — انتظار 30ث")
+                _searchResponseText.value = "🛡️ حظر صامت #$level\n\n⏳ انتظار 30 ثانية...\n📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession"
+                addLog("🛡️ حظر #$level — 30ث")
                 delay(30_000)
                 return true
             }
             level == 4 -> {
-                _searchResponseText.value = buildString {
-                    appendLine("🛡️ حظر شديد #$level")
-                    appendLine()
-                    appendLine("📌 Imperva رفع درجة الشك تجاه IP")
-                    appendLine()
-                    appendLine("🔧 الإجراء:")
-                    appendLine("  ⏳ انتظار دقيقتين")
-                    appendLine("  🔄 ثم تجديد الجلسة")
-                    appendLine()
-                    appendLine("📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession")
-                }
-                addLog("🛡️ حظر #$level — انتظار دقيقتين")
+                _searchResponseText.value = "🛡️ حظر شديد #$level\n\n⏳ انتظار دقيقتين...\n📊 المتتالي: $level"
+                addLog("🛡️ حظر #$level — دقيقتين")
                 delay(120_000)
                 return true
             }
             else -> {
-                _searchResponseText.value = buildString {
-                    appendLine("🚨 حظر مستمر (#$level)")
-                    appendLine()
-                    appendLine("📌 Imperva يرفض جميع الطلبات من IP الحالي")
-                    appendLine()
-                    appendLine("📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession")
-                    appendLine()
-                    appendLine("🔧 الخيارات:")
-                    appendLine("  1️⃣ تغيير IP (VPN)")
-                    appendLine("  2️⃣ انتظار 5 دقائق")
-                    appendLine()
-                    appendLine("⏹️ تم إيقاف البحث تلقائياً")
-                }
-                addLog("🚨 حظر مستمر — إيقاف البحث")
+                _searchResponseText.value = "🚨 حظر مستمر (#$level)\n\n🔧 جرّب VPN أو انتظر 5 دقائق\n\n⏹️ تم إيقاف البحث"
+                addLog("🚨 حظر مستمر — إيقاف")
                 return false
             }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🔍 محاولة بحث
-    // ═══════════════════════════════════════════════════════════
     private suspend fun searchAttempt(attempt: Int): FoundFlightDetails? {
         val wantedTime = FlightData.normalizeTime(flightData.departureTime)
         val wantedCodes = FareFamilies.FARE_CODE_MAP[flightData.cabinClass] ?: emptyList()
 
         setStep("search", StepStatus.RUNNING, "محاولة $attempt")
-        _searchResponseText.value = "⏳ جاري إرسال الطلب... (محاولة $attempt)"
+        _searchResponseText.value = "⏳ إرسال الطلب... ($attempt)"
 
         _requestTimestamps.add(System.currentTimeMillis())
 
@@ -622,7 +641,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (isSilentBlock(rawBody, contentType)) {
                     _lastErrorCode = 200
-                    _lastErrorMessage = "حظر صامت (HTML بدل JSON)"
                     val shouldContinue = handleSilentBlock(attempt)
                     if (shouldContinue) {
                         _sessionExpired = true
@@ -633,6 +651,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 _consecutiveSilentBlocks = 0
+                _renewAttemptsAfter403 = 0  // 🆕 نجاح = تصفير
 
                 val body = resp.body() ?: return null
                 val flights = parseAirBounds(body)
@@ -640,17 +659,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val matchedFlightNumber = match?.first?.flightNumber
                 val matchedFareCode = match?.second?.code
 
-                // 🆕 عداد Throttling — دائماً في السطر الأول
                 val nowMs = System.currentTimeMillis()
                 _requestTimestamps.removeAll { it < nowMs - THROTTLE_WINDOW_MS }
                 val recentCount = _requestTimestamps.size
                 val counterStatus = when {
-                    recentCount < THROTTLE_WARN_THRESHOLD ->
-                        "🟢 $recentCount/${THROTTLE_WARN_THRESHOLD} طلب في 10د (سرعة كاملة)"
-                    recentCount < THROTTLE_STOP_THRESHOLD ->
-                        "🟡 $recentCount/${THROTTLE_STOP_THRESHOLD} طلب في 10د (تبطيء)"
-                    else ->
-                        "🔴 $recentCount/${THROTTLE_STOP_THRESHOLD} طلب في 10د (توقف)"
+                    recentCount < THROTTLE_WARN_THRESHOLD -> "🟢 $recentCount/$THROTTLE_WARN_THRESHOLD (سرعة كاملة)"
+                    recentCount < THROTTLE_STOP_THRESHOLD -> "🟡 $recentCount/$THROTTLE_STOP_THRESHOLD (تبطيء)"
+                    else -> "🔴 $recentCount/$THROTTLE_STOP_THRESHOLD (توقف)"
                 }
 
                 _searchResponseText.value = buildString {
@@ -658,7 +673,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     appendLine("📊 ${flights.size} رحلة | محاولة $attempt | HTTP ${resp.code()}")
                     appendLine()
                     if (flights.isEmpty()) {
-                        appendLine("⚠️ لم تُستخرج أي رحلة")
+                        appendLine("⚠️ لم تُستخرج رحلة")
                     } else {
                         flights.forEachIndexed { idx, f ->
                             val isMatched = f.flightNumber == matchedFlightNumber
@@ -677,7 +692,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (match != null) {
                     val (flight, fare) = match
-                    addLog("🎯 مطابقة: ${flight.flightNumber} @ ${flight.departTime} | ${fare.code}")
+                    addLog("🎯 مطابقة: ${flight.flightNumber}")
                     return FoundFlightDetails(
                         flightNumber = flight.flightNumber, date = flightData.date,
                         origin = flight.origin, destination = flight.destination,
@@ -688,32 +703,44 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return null
             }
 
-            if (resp.code() == 401) {
-                _lastErrorCode = 401
-                _lastErrorMessage = "انتهت الجلسة"
-                _searchResponseText.value = buildString {
-                    appendLine("🚨 HTTP 401 — Unauthorized")
-                    appendLine()
-                    appendLine("📌 السبب: JWT منتهي")
-                    appendLine()
-                    appendLine("🔧 الإجراء: تجديد الجلسة تلقائياً...")
+            // ═══════════════════════════════════════════
+            //  🆕 403 — النظام الذكي المتدرج
+            // ═══════════════════════════════════════════
+            if (resp.code() == 403) {
+                _renewAttemptsAfter403++
+                _lastErrorCode = 403
+                _lastErrorMessage = "محظور (Imperva)"
+
+                if (_renewAttemptsAfter403 >= 3) {
+                    // ═══ 3 محاولات فاشلة = IP مُعلَّم → طيران ═══
+                    addLog("🚨 3× 403 — تفعيل الطيران التلقائي")
+                    val success = performAirplaneModeRenewal()
+                    if (success) {
+                        return null // استئناف في الحلقة الرئيسية
+                    } else {
+                        _autoLoopActive.value = false
+                        return null
+                    }
                 }
-                addLog("🚨 401 — تجديد الجلسة")
+
+                _searchResponseText.value = buildString {
+                    appendLine("🚨 HTTP 403 — محاولة $_renewAttemptsAfter403/3")
+                    appendLine()
+                    appendLine("📌 Imperva رفض الطلب")
+                    appendLine()
+                    if (_renewAttemptsAfter403 < 3) {
+                        appendLine("🔧 جاري تجديد الجلسة...")
+                        appendLine("⚠️ بعد 3 محاولات → وضع الطيران تلقائياً")
+                    }
+                }
+                addLog("🚨 403 — تجديد ($_renewAttemptsAfter403/3)")
                 _sessionExpired = true
                 return null
             }
 
-            if (resp.code() == 403) {
-                _lastErrorCode = 403
-                _lastErrorMessage = "محظور (Imperva)"
-                _searchResponseText.value = buildString {
-                    appendLine("🚨 HTTP 403 — Forbidden")
-                    appendLine()
-                    appendLine("📌 السبب: Imperva رفض الطلب")
-                    appendLine()
-                    appendLine("🔧 الإجراء: تجديد reese84 + JWT...")
-                }
-                addLog("🚨 403 — تجديد الجلسة")
+            if (resp.code() == 401) {
+                _lastErrorCode = 401
+                _searchResponseText.value = "🚨 HTTP 401\n\n📌 JWT منتهي\n\n🔧 تجديد الجلسة..."
                 _sessionExpired = true
                 return null
             }
@@ -721,107 +748,54 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             if (resp.code() == 429) {
                 val retryAfter = resp.headers()["Retry-After"]?.toLongOrNull() ?: 60L
                 _lastErrorCode = 429
-                _lastErrorMessage = "عدد الطلبات كبير"
-                _searchResponseText.value = buildString {
-                    appendLine("🚨 HTTP 429 — Too Many Requests")
-                    appendLine()
-                    appendLine("⏱️ Retry-After: $retryAfter ثانية")
-                    appendLine()
-                    appendLine("🔧 الإجراء: انتظار $retryAfter ثانية...")
-                }
-                addLog("🚨 429 — انتظار ${retryAfter}ث")
+                _searchResponseText.value = "🚨 HTTP 429\n\n⏱️ انتظار $retryAfter ثانية..."
                 delay(retryAfter * 1000)
                 return null
             }
 
             if (resp.code() >= 500) {
                 _lastErrorCode = resp.code()
-                _lastErrorMessage = "خطأ في الخادم"
-                _searchResponseText.value = buildString {
-                    appendLine("🚨 HTTP ${resp.code()} — Server Error")
-                    appendLine()
-                    appendLine("🔧 الإجراء: انتظار 15 ثانية...")
-                }
-                addLog("🚨 ${resp.code()} — انتظار 15ث")
+                _searchResponseText.value = "🚨 HTTP ${resp.code()}\n\n⏳ انتظار 15 ثانية..."
                 delay(15000)
                 return null
             }
 
-            val errBody = try { resp.errorBody()?.string() ?: "" } catch (e: Exception) { "" }
-            _searchResponseText.value = buildString {
-                appendLine("⚠️ HTTP ${resp.code()}")
-                appendLine()
-                appendLine(errBody.take(400))
-            }
         } catch (e: IOException) {
-            _searchResponseText.value = buildString {
-                appendLine("🚨 خطأ شبكة")
-                appendLine()
-                appendLine("${e.message}")
-            }
-            addLog("🚨 شبكة: ${e.message}")
+            _searchResponseText.value = "🚨 خطأ شبكة\n\n${e.message}"
         } catch (e: Exception) {
-            _searchResponseText.value = buildString {
-                appendLine("🚨 خطأ غير متوقع")
-                appendLine()
-                appendLine("${e.javaClass.simpleName}: ${e.message}")
-            }
-            addLog("🚨 ${e.javaClass.simpleName}: ${e.message}")
+            _searchResponseText.value = "🚨 ${e.javaClass.simpleName}\n\n${e.message}"
         }
         return null
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  💳 تنفيذ الحجز
-    // ═══════════════════════════════════════════════════════════
     private suspend fun executeBooking(flight: FoundFlightDetails): Boolean {
         try {
             setStep("search", StepStatus.SUCCESS, "${flight.price} SAR")
-
             setStep("cart", StepStatus.RUNNING)
             val cid = createCart(flight.airBoundId) ?: run { setStep("cart", StepStatus.FAILED); return false }
-
-            val cartDetails = fetchCartDetails(cid)
-            if (cartDetails != null) {
-                val actualPrice = cartDetails.first
-                val actualFare = cartDetails.second
-                val priceMismatch = kotlin.math.abs(actualPrice - flight.price) > 1.0
-                val fareMismatch = actualFare.isNotBlank() && actualFare != flight.fareFamily
-                if (priceMismatch || fareMismatch) addLog("⚠️ تحذير: السلة مختلفة!")
-                else addLog("✅ السلة مطابقة: $actualFare @ $actualPrice SAR")
-            }
-
-            setStep("cart", StepStatus.SUCCESS, "$cid | ${flight.fareFamily} @ ${flight.price} SAR")
-
+            setStep("cart", StepStatus.SUCCESS, cid)
             setStep("passenger", StepStatus.RUNNING)
             if (!confirmPassenger(cid)) { setStep("passenger", StepStatus.FAILED); return false }
             setStep("passenger", StepStatus.SUCCESS)
-
             setStep("extension", StepStatus.RUNNING)
             if (!addExtension(cid)) { setStep("extension", StepStatus.FAILED); return false }
             setStep("extension", StepStatus.SUCCESS)
-
             setStep("contacts", StepStatus.RUNNING)
             if (!saveContacts(cid)) { setStep("contacts", StepStatus.FAILED); return false }
             setStep("contacts", StepStatus.SUCCESS)
-
             setStep("order", StepStatus.RUNNING)
             val ord = createOrder(cid) ?: run { setStep("order", StepStatus.FAILED); return false }
-
             _finalPnr.value = ord.first
             _finalSadad.value = ord.second
             lastBookedFlight = flight
-
             setStep("order", StepStatus.SUCCESS, "PNR: ${ord.first} | SADAD: ${ord.second}")
-
             if (monitoringMode) { setStep("payment", StepStatus.SKIPPED, "👁️ المراقبة فقط"); return true }
-
             setStep("payment", StepStatus.RUNNING)
             if (!submitPayment(ord.first)) { setStep("payment", StepStatus.FAILED); return false }
             setStep("payment", StepStatus.SUCCESS, "✅ SADAD: ${ord.second}")
             return true
         } catch (e: Exception) {
-            addLog("❌ خطأ في الحجز: ${e.message}")
+            addLog("❌ ${e.message}")
             return false
         }
     }
@@ -835,19 +809,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             val bd = group.boundDetails ?: continue
             val segments = bd.segments ?: continue
             if (segments.isEmpty()) continue
-
             val flightId = segments[0].flightId ?: continue
             val fnMatch = Regex("SEG-([A-Z]{2}\\d+)-").find(flightId)
             val flightNumber = fnMatch?.groupValues?.get(1) ?: "?"
             val dtMatch = Regex("-(\\d{4}-\\d{2}-\\d{2})-(\\d{4})$").find(flightId)
             val timeRaw = dtMatch?.groupValues?.get(2) ?: "0000"
             val departTime = timeRaw.substring(0, 2) + ":" + timeRaw.substring(2, 4)
-
             val flightInfo = flightDict[flightId]
             val arrivalDateTime = flightInfo?.arrival?.dateTime ?: ""
             val arrMatch = Regex("T(\\d{2}:\\d{2})").find(arrivalDateTime)
             val arrivalTime = arrMatch?.groupValues?.get(1) ?: "?"
-
             val fares = mutableListOf<ParsedFare>()
             for (ab in group.airBounds ?: emptyList()) {
                 val code = ab.fareFamilyCode ?: "?"
@@ -857,12 +828,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val statusCode = avail?.statusCode ?: ""
                 val isAvailable = !isSoldOut && quota > 0 && statusCode == "HK"
                 val priceValue = ab.prices?.totalPrices?.firstOrNull()?.total
-                    ?: ab.airOffer?.totalPrice?.value
-                    ?: 0.0
+                    ?: ab.airOffer?.totalPrice?.value ?: 0.0
                 val price = priceValue / 100.0
                 fares.add(ParsedFare(code, quota, statusCode, price, isAvailable, ab.airBoundId ?: ""))
             }
-
             flights.add(ParsedFlight(
                 flightNumber = flightNumber, departTime = departTime, arrivalTime = arrivalTime,
                 origin = bd.origin ?: "", destination = bd.destination ?: "",
@@ -898,9 +867,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val traceId = UUID.randomUUID().toString().replace("-", "")
         val spanId = UUID.randomUUID().toString().replace("-", "").take(16)
         val headers = mutableMapOf(
-            "Authorization" to activeJwt,
-            "x-d-token" to activeXdToken,
-            "saa-session-id" to activeSaaSessionId,
+            "Authorization" to activeJwt, "x-d-token" to activeXdToken, "saa-session-id" to activeSaaSessionId,
             "x-api-version" to apiVersion, "platform" to "Web", "version" to "27.2",
             "Accept" to "application/json", "Content-Type" to "application/json",
             "Origin" to "https://www.saudia.com", "Referer" to referer,
@@ -937,8 +904,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val r = RetrofitClient.api.createCart(headers = buildHeaders("2"), request = CreateCartRequest(listOf(airBoundId)))
         saveCookiesFromResponse(r)
         if (!r.isSuccessful) null else {
-            val bodyStr = r.body()?.string() ?: ""
-            JSONObject(bodyStr).optJSONObject("data")?.optString("id")?.takeIf { it.isNotEmpty() } ?: JSONObject(bodyStr).optString("id")
+            val s = r.body()?.string() ?: ""
+            JSONObject(s).optJSONObject("data")?.optString("id")?.takeIf { it.isNotEmpty() } ?: JSONObject(s).optString("id")
         }
     } catch (e: Exception) { null }
 
@@ -946,22 +913,17 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val r = RetrofitClient.api.getCartDetails(cid, headers = buildHeaders("2", "https://www.saudia.com/ar-SA/booking/passengerDetails"))
         saveCookiesFromResponse(r)
         if (!r.isSuccessful) null else {
-            val bodyStr = r.body()?.string() ?: ""
-            val json = JSONObject(bodyStr)
-            var price = 0.0
-            var fareFamily = ""
-            val data = json.optJSONObject("data")
-            val groups = data?.optJSONArray("airBoundGroups")
-            if (groups != null && groups.length() > 0) {
-                val group = groups.optJSONObject(0)
-                val airBounds = group?.optJSONArray("airBounds")
-                if (airBounds != null && airBounds.length() > 0) {
-                    val ab = airBounds.optJSONObject(0)
-                    fareFamily = ab?.optString("fareFamilyCode", "") ?: ""
-                    price = (ab?.optJSONObject("airOffer")?.optJSONObject("totalPrice")?.optDouble("value", 0.0) ?: 0.0) / 100.0
-                }
+            val s = r.body()?.string() ?: ""
+            val j = JSONObject(s)
+            var p = 0.0; var f = ""
+            val d = j.optJSONObject("data")
+            val g = d?.optJSONArray("airBoundGroups")
+            if (g != null && g.length() > 0) {
+                val ab = g.optJSONObject(0)?.optJSONArray("airBounds")?.optJSONObject(0)
+                f = ab?.optString("fareFamilyCode", "") ?: ""
+                p = (ab?.optJSONObject("airOffer")?.optJSONObject("totalPrice")?.optDouble("value", 0.0) ?: 0.0) / 100.0
             }
-            Pair(price, fareFamily)
+            Pair(p, f)
         }
     } catch (e: Exception) { null }
 
