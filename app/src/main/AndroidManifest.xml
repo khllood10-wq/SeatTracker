@@ -2,17 +2,25 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- ═══════════════════════════════════════════════════
+         صلاحيات الشبكة والأساسيات
+         ═══════════════════════════════════════════════════ -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- ★ صلاحية Shizuku الأساسية -->
+    <!-- ═══════════════════════════════════════════════════
+         صلاحيات الخلفية والطاقة
+         ═══════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- ═══════════════════════════════════════════════════
+         صلاحية Shizuku (فقط هذه — لا تضف INTERACT_ACROSS_USERS_FULL هنا!)
+         ═══════════════════════════════════════════════════ -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
-    <!-- ★ صلاحية إضافية مطلوبة لعمل ShizukuProvider -->
-    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     <application
         android:allowBackup="true"
@@ -28,14 +36,17 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.SaudiaSeatTracker">
+            android:theme="@style/Theme.SaudiaSeatTracker"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- ★ إعدادات Shizuku الضرورية -->
+        <!-- ═══════════════════════════════════════════════════
+             Shizuku Integration
+             ═══════════════════════════════════════════════════ -->
         <meta-data
             android:name="moe.shizuku.client.V3_SUPPORT"
             android:value="true"
