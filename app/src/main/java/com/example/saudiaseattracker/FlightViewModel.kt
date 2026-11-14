@@ -68,24 +68,20 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     private var _lastErrorCode: Int = 0
     private var _lastErrorMessage: String = ""
 
-    // عدادات الحظر الصامت
     private var _consecutiveSilentBlocks = 0
     private var _totalSilentBlocksInSession = 0
-
-    // عداد محاولات التجديد بعد 403
     private var _renewAttemptsAfter403 = 0
 
-    // Throttling — سرعة ثابتة 2-5s + توقف استباقي فقط
+    // Throttling — سرعة ثابتة 2-5s + توقف استباقي
     private val _requestTimestamps = mutableListOf<Long>()
     private val THROTTLE_WINDOW_MS = 10 * 60_000L
     private val THROTTLE_STOP_THRESHOLD = 40
     private val THROTTLE_STOP_DURATION_MS = 15_000L
 
-    // 🆕 Hyper Renewal — كل 10 دقائق بدلاً من انتهاء العداد
+    // 🆕 Hyper Renewal — كل 10 دقائق + WebView مع كل تجديد
     private var _lastHyperRenewTime = 0L
     private val HYPER_RENEW_INTERVAL_MS = 10 * 60_000L
 
-    // WakeLock + WifiLock
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -180,6 +176,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 addLog("🔄 تهيئة جلسة Hyper...")
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken() }
+                _lastHyperRenewTime = System.currentTimeMillis()
                 markSessionReady()
                 addLog("✅ جلسة Hyper جاهزة — فتح WebView تلقائياً...")
                 _autoCaptureMode.value = true
@@ -198,8 +195,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setReferenceCounted(false)
                 acquire(3 * 60 * 60 * 1000L)
             }
-            addLog("✅ WakeLock مُفعّل")
-        } catch (e: Exception) { addLog("⚠️ WakeLock: ${e.message}") }
+        } catch (e: Exception) {}
 
         try {
             val wm = getApplication<Application>().applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -208,8 +204,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 setReferenceCounted(false)
                 acquire()
             }
-            addLog("✅ WifiLock مُفعّل")
-        } catch (e: Exception) { addLog("⚠️ WifiLock: ${e.message}") }
+        } catch (e: Exception) {}
     }
 
     private fun releaseWakeLocks() {
@@ -219,19 +214,13 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         wifiLock = null
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 Throttling — سرعة ثابتة 2-5s + توقف استباقي (بدون تبطيء)
-    // ═══════════════════════════════════════════════════════════
     private suspend fun calculateThrottleDelay(): Long {
         val now = System.currentTimeMillis()
         _requestTimestamps.removeAll { it < now - THROTTLE_WINDOW_MS }
         val recentCount = _requestTimestamps.size
 
         return when {
-            // سرعة ثابتة 2-5 ثوانٍ
             recentCount < THROTTLE_STOP_THRESHOLD -> Random.nextLong(2_000L, 5_000L)
-
-            // توقف استباقي عند 40 طلب
             else -> {
                 addLog("⏸️ توقف استباقي: $recentCount طلب")
                 _searchResponseText.value = buildString {
@@ -240,8 +229,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                     appendLine("📊 تجاوزت $THROTTLE_STOP_THRESHOLD طلب في 10 دقائق")
                     appendLine("⏳ انتظار 15 ثانية لكسر النمط...")
                     appendLine("🔄 ثم تصفير العداد — استئناف فوري")
-                    appendLine()
-                    appendLine("✅ يحميك من الحظر قبل حدوثه")
                 }
                 delay(THROTTLE_STOP_DURATION_MS)
                 _requestTimestamps.clear()
@@ -251,58 +238,23 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 وضع الطيران التلقائي عبر Shizuku
-    // ═══════════════════════════════════════════════════════════
     private suspend fun performAirplaneModeRenewal(): Boolean {
         if (!ShizukuHelper.isReady()) {
-            _searchResponseText.value = buildString {
-                appendLine("❌ Shizuku غير جاهز")
-                appendLine()
-                appendLine("📌 السبب: IP مُعلَّم من Imperva")
-                appendLine("🔧 التجديد العادي لا يحل المشكلة")
-                appendLine()
-                appendLine("💡 الحل:")
-                appendLine("  1️⃣ شغّل Shizuku")
-                appendLine("  2️⃣ امنح التطبيق صلاحية Shizuku")
-                appendLine("  3️⃣ أعد المحاولة")
-            }
+            _searchResponseText.value = "❌ Shizuku غير جاهز\n\n📌 السبب: IP مُعلَّم من Imperva\n💡 الحل:\n  1️⃣ شغّل Shizuku\n  2️⃣ امنح التطبيق صلاحية\n  3️⃣ أعد المحاولة"
             return false
         }
 
         if (!ShizukuHelper.isPermissionGranted()) {
-            _searchResponseText.value = buildString {
-                appendLine("⚠️ صلاحية Shizuku مطلوبة")
-                appendLine()
-                appendLine("📌 السبب: IP مُعلَّم من Imperva")
-                appendLine("🔧 نحتاج Shizuku لتفعيل الطيران تلقائياً")
-                appendLine()
-                appendLine("💡 امنح الصلاحية من النافذة المنبثقة")
-                appendLine("ثم اضغط \"بدء البحث\" مجدداً")
-            }
+            _searchResponseText.value = "⚠️ صلاحية Shizuku مطلوبة\n\n📌 السبب: IP مُعلَّم\n💡 امنح الصلاحية ثم أعد المحاولة"
             ShizukuHelper.requestPermission()
             return false
         }
 
-        _searchResponseText.value = buildString {
-            appendLine("✈️ تفعيل وضع الطيران...")
-            appendLine()
-            appendLine("📌 السبب: 3 محاولات 403 متتالية")
-            appendLine("📌 Imperva يرفض IP الحالي")
-            appendLine()
-            appendLine("🔧 الحل التلقائي (Shizuku):")
-            appendLine("  1️⃣ تفعيل الطيران ← الآن")
-            appendLine("  2️⃣ انتظار 15 ثانية")
-            appendLine("  3️⃣ تفعيل البيانات")
-            appendLine("  4️⃣ انتظار إعادة الاتصال")
-            appendLine("  5️⃣ تجديد reese84 + JWT")
-            appendLine("  6️⃣ استئناف البحث")
-        }
+        _searchResponseText.value = "✈️ تفعيل وضع الطيران...\n\n📌 السبب: 3 محاولات 403 متتالية\n📌 Imperva يرفض IP الحالي"
         addLog("✈️ تفعيل الطيران (Shizuku)...")
 
         if (!ShizukuHelper.enableAirplaneMode()) {
             _searchResponseText.value = "❌ فشل تفعيل الطيران\n\nتأكد من Shizuku وصلاحياته"
-            addLog("❌ فشل تفعيل الطيران")
             return false
         }
 
@@ -327,7 +279,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         try {
             withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
             activeCookie = hyperSession.getCookieHeader()
-            _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset timer
+            _lastHyperRenewTime = System.currentTimeMillis()
             addLog("✅ reese84 جديد")
         } catch (e: Exception) {
             _searchResponseText.value = "❌ فشل تجديد reese84\n\n${e.message}"
@@ -402,7 +354,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 markSessionPreparing()
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
-                _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset timer
+                _lastHyperRenewTime = System.currentTimeMillis()
                 markSessionReady()
                 addLog("✅ تم تجديد reese84")
             } catch (e: Exception) {
@@ -442,7 +394,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _totalSilentBlocksInSession = 0
         _renewAttemptsAfter403 = 0
         _requestTimestamps.clear()
-        _lastHyperRenewTime = 0L  // 🆕 سيُحدَّث بعد التجديد الأول
+        _lastHyperRenewTime = 0L
 
         acquireWakeLocks()
 
@@ -453,7 +405,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                 activeCookie = hyperSession.getCookieHeader()
-                _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset after initial renew
+                _lastHyperRenewTime = System.currentTimeMillis()
             } catch (e: Exception) {
                 addLog("❌ فشل تجديد البداية: ${e.message}")
             }
@@ -463,9 +415,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             while (isActive && _autoLoopActive.value) {
                 try {
                     val timerExpired = _sessionTimerSeconds.value <= 0L && hyperSession.expiryAt() > 0L
-                    // 🆕 فحص انتهاء 10 دقائق Hyper
+                    // 🆕 كل 10 دقائق: تجديد Hyper + WebView
                     val hyperIntervalExpired = _lastHyperRenewTime > 0L &&
                             (System.currentTimeMillis() - _lastHyperRenewTime) >= HYPER_RENEW_INTERVAL_MS
+
                     val needRenew = _sessionExpired || timerExpired || hyperIntervalExpired ||
                             activeSaaSessionId.isBlank() || activeJwt.isBlank() || !hyperSession.hasFreshToken()
 
@@ -474,7 +427,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             _sessionExpired && _lastErrorCode == 401 -> "🚨 401 — انتهت الجلسة"
                             _sessionExpired && _lastErrorCode == 403 -> "🚨 403 — محاولة $_renewAttemptsAfter403/3"
                             _sessionExpired && _lastErrorCode == 200 -> "🛡️ حظر صامت"
-                            hyperIntervalExpired -> "⏱️ 10 دقائق Hyper — تجديد دوري"
+                            hyperIntervalExpired -> "⏱️ 10 دقائق — تجديد دوري"
                             timerExpired -> "⏰ انتهى العداد"
                             activeSaaSessionId.isBlank() -> "⚠️ sid مفقود"
                             activeJwt.isBlank() -> "⚠️ JWT مفقود"
@@ -487,10 +440,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                             appendLine("📌 السبب: $reason")
                             if (_lastErrorCode == 403) {
                                 appendLine("📊 محاولات 403: $_renewAttemptsAfter403/3")
-                                if (_renewAttemptsAfter403 >= 2) {
-                                    appendLine()
-                                    appendLine("⚠️ بعد المحاولة القادمة → وضع الطيران تلقائياً")
-                                }
                             }
                         }
 
@@ -498,16 +447,24 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         markSessionPreparing()
                         _sessionExpired = false
 
+                        // ═══ 1. تجديد Hyper (دائماً) ═══
                         try {
                             withContext(Dispatchers.IO) { hyperSession.ensureFreshToken(forceRenew = true) }
                             activeCookie = hyperSession.getCookieHeader()
-                            _lastHyperRenewTime = System.currentTimeMillis()  // 🆕 reset timer
+                            _lastHyperRenewTime = System.currentTimeMillis()
+                            addLog("✅ reese84 جُدد")
                         } catch (e: Exception) {
                             addLog("❌ فشل reese84: ${e.message}")
                             delay(10000)
                             continue
                         }
 
+                        // ═══ 2. WebView يُفتح دائماً (كل تجديد) ═══
+                        _searchResponseText.value = buildString {
+                            appendLine("🌐 فتح WebView لالتقاط JWT...")
+                            appendLine()
+                            appendLine("📌 السبب: تجديد الجلسة ($reason)")
+                        }
                         _needsWebViewRefresh.value = true
                         _autoCaptureMode.value = true
                         var waited = 0
@@ -517,13 +474,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         if (!hyperSession.hasFreshToken() || activeSaaSessionId.isBlank()) {
-                            addLog("⚠️ فشل التجديد")
+                            addLog("⚠️ فشل التقاط JWT — إعادة")
                             delay(10000)
                             continue
                         }
 
-                        addLog("✅ الجلسة جُددت — استئناف")
+                        _lastErrorCode = 0
                         markSessionReady()
+                        addLog("✅ الجلسة جُددت — استئناف")
                         continue
                     }
 
@@ -591,14 +549,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
         when {
             level == 1 -> {
-                _searchResponseText.value = buildString {
-                    appendLine("🛡️ حظر صامت #1")
-                    appendLine()
-                    appendLine("📌 Imperva أعاد HTML بدل JSON")
-                    appendLine("🔧 الإجراء: تجديد الجلسة")
-                    appendLine()
-                    appendLine("📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession")
-                }
+                _searchResponseText.value = "🛡️ حظر صامت #1\n\n📌 Imperva أعاد HTML بدل JSON\n🔧 الإجراء: تجديد الجلسة\n📊 المتتالي: $level | الإجمالي: $_totalSilentBlocksInSession"
                 addLog("🛡️ حظر صامت #1")
                 return true
             }
@@ -722,9 +673,6 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 return null
             }
 
-            // ═══════════════════════════════════════════
-            //  🆕 403 — النظام الذكي المتدرج + Shizuku
-            // ═══════════════════════════════════════════
             if (resp.code() == 403) {
                 _renewAttemptsAfter403++
                 _lastErrorCode = 403
@@ -733,12 +681,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 if (_renewAttemptsAfter403 >= 3) {
                     addLog("🚨 3× 403 — تفعيل الطيران التلقائي")
                     val success = performAirplaneModeRenewal()
-                    if (success) {
-                        return null
-                    } else {
-                        _autoLoopActive.value = false
-                        return null
-                    }
+                    if (!success) _autoLoopActive.value = false
+                    return null
                 }
 
                 _searchResponseText.value = buildString {
