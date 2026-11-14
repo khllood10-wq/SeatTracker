@@ -5,6 +5,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuRemoteProcess
 
 object ShizukuHelper {
     const val PERMISSION_REQUEST_CODE = 1001
@@ -28,93 +29,68 @@ object ShizukuHelper {
         }
     }
 
-    suspend fun enableAirplaneMode(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Method 1: Android 12+ (cmd connectivity)
-            var exitCode = -1
-            try {
-                val p1 = Shizuku.newProcess(arrayOf(
-                    "cmd", "connectivity", "airplane-mode", "enable"
-                ), null, null)
-                exitCode = p1.waitFor()
-                if (exitCode == 0) {
-                    Log.d(TAG, "✅ Airplane ON via cmd")
-                    return@withContext true
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "cmd connectivity failed, trying settings", e)
-            }
-
-            // Method 2: Fallback (settings + broadcast)
-            val p2 = Shizuku.newProcess(arrayOf(
-                "settings", "put", "global", "airplane_mode_on", "1"
-            ), null, null)
-            p2.waitFor()
-
-            val p3 = Shizuku.newProcess(arrayOf(
-                "am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE",
-                "--ez", "state", "true"
-            ), null, null)
-            p3.waitFor()
-
-            // Also disable data + wifi
-            try {
-                Shizuku.newProcess(arrayOf("svc", "data", "disable"), null, null).waitFor()
-                Shizuku.newProcess(arrayOf("svc", "wifi", "disable"), null, null).waitFor()
-            } catch (e: Exception) {}
-
-            Log.d(TAG, "✅ Airplane ON via settings")
-            true
+    // دالة مساعدة لتنفيذ أمر عبر Reflection
+    private fun execShizukuCommand(command: Array<String>): Boolean {
+        return try {
+            val clazz = Class.forName("rikka.shizuku.Shizuku")
+            val method = clazz.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(null, command, null, null) as ShizukuRemoteProcess
+            
+            // الانتظار حتى ينتهي الأمر
+            val exitCode = process.waitFor()
+            process.destroy()
+            
+            Log.d(TAG, "Command: ${command.joinToString(" ")} -> exit=$exitCode")
+            exitCode == 0
         } catch (e: Exception) {
-            Log.e(TAG, "enableAirplaneMode failed", e)
+            Log.e(TAG, "execShizukuCommand failed for: ${command.joinToString(" ")}", e)
             false
         }
+    }
+
+    suspend fun enableAirplaneMode(): Boolean = withContext(Dispatchers.IO) {
+        // الطريقة 1: Android 12+ (cmd connectivity)
+        if (execShizukuCommand(arrayOf("cmd", "connectivity", "airplane-mode", "enable"))) {
+            Log.d(TAG, "✅ Airplane ON via cmd")
+            return@withContext true
+        }
+
+        // الطريقة 2: Fallback (settings + broadcast)
+        var success = execShizukuCommand(arrayOf("settings", "put", "global", "airplane_mode_on", "1"))
+        execShizukuCommand(arrayOf("am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE", "--ez", "state", "true"))
+        
+        // تعطيل البيانات والواي فاي أيضاً
+        execShizukuCommand(arrayOf("svc", "data", "disable"))
+        execShizukuCommand(arrayOf("svc", "wifi", "disable"))
+        
+        Log.d(TAG, "✅ Airplane ON via settings (success=$success)")
+        success
     }
 
     suspend fun disableAirplaneMode(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            var exitCode = -1
-            try {
-                val p1 = Shizuku.newProcess(arrayOf(
-                    "cmd", "connectivity", "airplane-mode", "disable"
-                ), null, null)
-                exitCode = p1.waitFor()
-                if (exitCode == 0) {
-                    Log.d(TAG, "✅ Airplane OFF via cmd")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "cmd connectivity failed, trying settings", e)
-            }
-
-            if (exitCode != 0) {
-                val p2 = Shizuku.newProcess(arrayOf(
-                    "settings", "put", "global", "airplane_mode_on", "0"
-                ), null, null)
-                p2.waitFor()
-
-                val p3 = Shizuku.newProcess(arrayOf(
-                    "am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE",
-                    "--ez", "state", "false"
-                ), null, null)
-                p3.waitFor()
-            }
-
-            Log.d(TAG, "✅ Airplane OFF")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "disableAirplaneMode failed", e)
-            false
+        // الطريقة 1: Android 12+ (cmd connectivity)
+        if (execShizukuCommand(arrayOf("cmd", "connectivity", "airplane-mode", "disable"))) {
+            Log.d(TAG, "✅ Airplane OFF via cmd")
+            return@withContext true
         }
+
+        // الطريقة 2: Fallback (settings + broadcast)
+        var success = execShizukuCommand(arrayOf("settings", "put", "global", "airplane_mode_on", "0"))
+        execShizukuCommand(arrayOf("am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE", "--ez", "state", "false"))
+        
+        Log.d(TAG, "✅ Airplane OFF via settings (success=$success)")
+        success
     }
 
     suspend fun enableMobileData(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            Shizuku.newProcess(arrayOf("svc", "data", "enable"), null, null).waitFor()
-            Log.d(TAG, "✅ Mobile data enabled")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "enableMobileData failed", e)
-            false
-        }
+        val success = execShizukuCommand(arrayOf("svc", "data", "enable"))
+        Log.d(TAG, "✅ Mobile data enabled (success=$success)")
+        success
     }
 }
