@@ -23,6 +23,7 @@ import org.json.JSONObject
 import retrofit2.Response
 import java.io.IOException
 import java.util.UUID
+import kotlin.coroutines.coroutineContext
 import kotlin.random.Random
 
 data class PassengerData(
@@ -237,7 +238,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 وضع الطيران التلقائي — التتابع الكامل
+    //  🆕 وضع الطيران التلقائي عبر Shizuku
     // ═══════════════════════════════════════════════════════════
     private suspend fun performAirplaneModeRenewal(): Boolean {
         if (!ShizukuHelper.isReady()) {
@@ -328,7 +329,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         _needsWebViewRefresh.value = true
         _autoCaptureMode.value = true
         var waited = 0
-        while (_needsWebViewRefresh.value && isActive && _autoLoopActive.value && waited < 60) {
+        while (_needsWebViewRefresh.value && coroutineContext.isActive && _autoLoopActive.value && waited < 60) {
             delay(1000)
             waited++
         }
@@ -651,7 +652,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 _consecutiveSilentBlocks = 0
-                _renewAttemptsAfter403 = 0  // 🆕 نجاح = تصفير
+                _renewAttemptsAfter403 = 0
 
                 val body = resp.body() ?: return null
                 val flights = parseAirBounds(body)
@@ -704,7 +705,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             // ═══════════════════════════════════════════
-            //  🆕 403 — النظام الذكي المتدرج
+            //  🆕 403 — النظام الذكي المتدرج + Shizuku
             // ═══════════════════════════════════════════
             if (resp.code() == 403) {
                 _renewAttemptsAfter403++
@@ -712,11 +713,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 _lastErrorMessage = "محظور (Imperva)"
 
                 if (_renewAttemptsAfter403 >= 3) {
-                    // ═══ 3 محاولات فاشلة = IP مُعلَّم → طيران ═══
                     addLog("🚨 3× 403 — تفعيل الطيران التلقائي")
                     val success = performAirplaneModeRenewal()
                     if (success) {
-                        return null // استئناف في الحلقة الرئيسية
+                        return null
                     } else {
                         _autoLoopActive.value = false
                         return null
