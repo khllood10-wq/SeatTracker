@@ -89,6 +89,13 @@ dependencies {
     // 👇 مكتبة AndroidX WebKit (ضرورية لدالة addDocumentStartJavaScript)
     implementation("androidx.webkit:webkit:1.11.0")
 
+dependencies {
+    // ... كل التبعيات الحالية
+    
+    // 🆕 Shizuku للتحكم بالطيران تلقائياً
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+}
     // اختبارات
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
